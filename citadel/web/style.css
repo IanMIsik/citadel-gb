@@ -1,0 +1,396 @@
+/* Colour choices from here down (--bg, table text tone, negative-value red,
+   SP accent blue) are borrowed from the predecessor Electron app's own
+   custom.css (Zapdos, reference/zapdos-pricing-stack/custom.css) -- its
+   actual bespoke dark theme, not the generic third-party admin template it
+   also loaded, which we deliberately didn't touch. */
+:root {
+  color-scheme: dark;
+  --bg: #0c0c0c;
+  --panel: #171a21;
+  --border: #2a2e38;
+  --text: #e6e8eb;
+  --table-text: #b9bbb3;
+  --muted: #8a8f9a;
+  --offer: #e0645a;
+  --bid: #58b06a;
+  --accent: #4d8dff;
+  --sp-accent: #72c4f6;
+  --negative: #ff6666;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, Segoe UI, Roboto, sans-serif;
+  /* min-height, not height: a fixed height on a box shorter than its
+     (overflowing) content confuses which element the browser treats as
+     the actual scrolling container, which silently breaks
+     position: sticky on #now-delivering below. min-height still fills
+     the viewport on a short page without that side effect. */
+  min-height: 100%;
+}
+
+header {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+}
+
+header h1 { font-size: 0.95rem; margin: 0; }
+
+#connection-status { font-size: 0.7rem; }
+#connection-status.connected { color: var(--bid); }
+#connection-status.disconnected { color: var(--offer); }
+
+/* Same max-width as .period-card below, so the banner reads as part of
+   the same compact column of content rather than a full-width strip
+   sitting above a much narrower table. Sticky so it stays in view while
+   scrolling through the period cards below it -- background has to be
+   an opaque colour rather than the semi-transparent tint alone, or
+   scrolled-past table rows would show through it. */
+#now-delivering {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  padding: 0.5rem 0.75rem;
+  margin: 0.4rem;
+  max-width: 520px;
+  position: sticky;
+  top: 0.4rem;
+  z-index: 10;
+  background-color: #141c15;
+  background-image: linear-gradient(rgba(88, 176, 106, 0.1), rgba(88, 176, 106, 0.1));
+  border-bottom: 2px solid var(--bid);
+  border-radius: 6px;
+  flex-wrap: wrap;
+}
+
+.nd-label {
+  color: var(--bid);
+  font-size: 0.62rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.nd-sp { font-size: 1rem; font-weight: 700; color: var(--sp-accent); }
+.nd-niv { color: var(--muted); font-size: 0.8rem; }
+.nd-price { font-size: 1rem; font-weight: 700; margin-left: auto; }
+
+/* NIV made deliberately loud: a bold, larger figure plus a coloured
+   SHORT/LONG badge, rather than a plain inline number -- the negative-red
+   convention (data-sign) is reused for a long (negative) NIV; a positive
+   (short) one gets an equally confident green instead of staying neutral. */
+.niv-value { font-weight: 700; font-size: 1.05em; color: var(--bid); }
+.niv-value[data-sign^="-"] { color: var(--negative); }
+
+.niv-badge {
+  display: inline-block;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 0.03rem 0.4rem;
+  border-radius: 3px;
+  vertical-align: middle;
+}
+.niv-badge.niv-short { background: rgba(88, 176, 106, 0.18); color: var(--bid); }
+.niv-badge.niv-long { background: rgba(255, 102, 102, 0.18); color: var(--negative); }
+
+.nd-niv .niv-value { font-size: 1.15rem; }
+
+/* One vertical column of period cards, newest at the top. `align-items:
+   flex-start` stops cards stretching to the full window width -- each
+   one is only as wide as it needs to be for its two sub-columns (see
+   .period-card's own max-width below), same compact footprint the
+   original single-table-per-card layout had, just arranged vertically
+   instead of wrapping into a grid. */
+main#periods {
+  padding: 0.4rem;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.4rem;
+}
+
+.period-card {
+  width: 100%;
+  max-width: 520px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+/* The two sub-columns (unflagged / flagged) inside one period card, side
+   by side so both are visible at once instead of stacked top-to-bottom in
+   one shared table. */
+.ps-columns {
+  display: flex;
+  align-items: start;
+}
+
+.ps-column {
+  flex: 1;
+  min-width: 0;
+}
+
+.ps-column + .ps-column { border-left: 1px solid var(--border); }
+
+.ps-col-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+  width: 100%;
+  padding: 0.25rem 0.5rem;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  background: rgba(114, 196, 246, 0.1);
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: var(--sp-accent);
+  cursor: pointer;
+  text-align: left;
+}
+
+.ps-col-header.collapsed { color: var(--muted); background: transparent; }
+.ps-col-header .ps-col-total { font-weight: 700; }
+
+.period-header {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.3rem 0.5rem;
+  font-size: 0.75rem;
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+
+.sp-label { font-weight: 700; color: var(--sp-accent); }
+.sp-date { color: var(--muted); font-size: 0.68rem; }
+.sp-niv { color: var(--muted); margin-left: auto; }
+.sp-price { font-weight: 700; }
+
+table { width: 100%; border-collapse: collapse; font-size: 0.68rem; color: var(--table-text); }
+
+/* Fixed layout + explicit column widths: keeps columns narrow and
+   consistent instead of each one stretching to fit its widest cell (a
+   single long BM unit code would otherwise blow out every column). */
+.ps-table { table-layout: fixed; }
+.ps-table th:nth-child(1), .ps-table td:nth-child(1) { width: 46%; }
+.ps-table th:nth-child(2), .ps-table td:nth-child(2) { width: 19%; }
+.ps-table th:nth-child(3), .ps-table td:nth-child(3) { width: 19%; }
+.ps-table th:nth-child(4), .ps-table td:nth-child(4) { width: 16%; }
+
+th, td {
+  padding: 0.08rem 0.25rem;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  border-bottom: 1px solid var(--border);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Negative price/volume in red regardless of offer/bid direction --
+   borrowed convention (`td[data-sign^='-']`) from the predecessor app. */
+td[data-sign^="-"] { color: var(--negative); }
+
+th:first-child, td:first-child { text-align: left; }
+
+th {
+  color: var(--muted);
+  font-weight: 500;
+  font-size: 0.62rem;
+  background: var(--panel);
+}
+
+/* Unit names stay plain white/neutral -- direction is already conveyed by
+   the MWh figure's own sign (negative = bid, in red via the data-sign rule
+   above), matching the predecessor app (which never colour-coded bmunit by
+   direction either). */
+tr.offer-row td:first-child, tr.bid-row td:first-child { color: var(--text); }
+
+/* --- Cell styling borrowed from the predecessor Zapdos app's pricing-
+   stack table (reference/zapdos-pricing-stack/{styles,custom}.css): the
+   compact centred cell text -- adapted from its light theme (black text
+   on cyan) to ours (dark bg, accent-tinted highlight). The two-column
+   layout and its .ps-col-header/.ps-columns rules are defined further up,
+   next to main#periods. --- */
+
+.pricing-stack-text {
+  font-size: 0.66rem;
+  text-align: center !important;
+  vertical-align: middle;
+}
+
+.ps-hidden { display: none; }
+
+/* Narrow/portrait fallback -- stacks the two sub-columns instead of
+   keeping them side by side, since there isn't room for both at once,
+   and tightens text up further. */
+@media (max-width: 480px) {
+  .period-header { font-size: 0.7rem; }
+  table { font-size: 0.64rem; }
+  .ps-columns { flex-direction: column; }
+  .ps-column + .ps-column { border-left: none; border-top: 1px solid var(--border); }
+}
+
+/* --- Shared top nav between the pricing-stack and FPN Analytics pages --- */
+
+nav.top-nav {
+  display: flex;
+  gap: 0.25rem;
+  padding: 0 0.75rem 0.4rem;
+}
+
+nav.top-nav a {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-decoration: none;
+  color: var(--muted);
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+}
+
+nav.top-nav a.active { color: var(--sp-accent); background: rgba(114, 196, 246, 0.1); }
+nav.top-nav a:hover:not(.active) { color: var(--text); }
+
+/* --- FPN Analytics page: charts + heatmap tables, styled from the
+   original Zapdos app's own "fpn accuracy" page (its shared custom.css,
+   reference/zapdos-pricing-stack/custom.css) rather than from the
+   simplified card layout above -- the user specifically asked for this
+   page to follow that page's own look. Class/id names below (.graph-
+   container, .chart-legend, th.rotate) are kept the same as that source
+   on purpose, so the connection stays traceable. --- */
+
+main#fpn-page {
+  padding: 0.4rem 0.75rem 1.5rem;
+  max-width: 1400px;
+}
+
+.fpn-columns {
+  display: flex;
+  gap: 0.6rem;
+  align-items: flex-start;
+}
+
+.fpn-col {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+@media (max-width: 900px) {
+  .fpn-columns { flex-direction: column; }
+}
+
+.graph-container {
+  width: auto;
+  margin-bottom: 3px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  border-radius: 6px;
+  padding: 0.5rem;
+  position: relative;
+}
+
+.graph-container:has(.chartjs_canvas) { min-height: 200px; max-height: 340px; }
+.graph-container.tall { height: 380px; max-height: 380px; }
+
+.graph-container h2 {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--sp-accent);
+  margin: 0 0 0.3rem;
+}
+
+.chartjs_canvas { max-height: 300px; }
+
+.chart-legend {
+  list-style: none;
+  margin: 0.3rem 0 0;
+  padding: 0;
+  max-height: 120px;
+  overflow: auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.1rem 0.6rem;
+}
+
+.chart-legend li {
+  cursor: pointer;
+  font-size: 0.64rem;
+  color: var(--table-text);
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.chart-legend li span {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+
+.chart-legend li.strike { text-decoration: line-through; opacity: 0.5; }
+
+/* Decision-summary panel: the current niv_estimate and its drivers as a
+   row of plain numbers, for a trader glancing at this before a trade. */
+.decision-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem 1.2rem;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.5rem 0.75rem;
+}
+
+.decision-figure { display: flex; flex-direction: column; gap: 0.1rem; }
+.decision-figure .label { font-size: 0.6rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.decision-figure .value { font-size: 0.95rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+.decision-figure .value[data-sign^="-"] { color: var(--negative); }
+.decision-figure.headline .value { font-size: 1.3rem; color: var(--sp-accent); }
+.decision-figure.headline .value[data-sign^="-"] { color: var(--negative); }
+
+/* Rotated column headers -- for the wide by-fuel-type generation table,
+   where many narrow fuel-type columns need to fit without wrapping. */
+th.rotate {
+  height: 64px;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+th.rotate > div {
+  transform: translate(0px, 0px) rotate(180deg);
+  writing-mode: vertical-rl;
+  width: 20px;
+  padding: 2px 3px;
+}
+
+.fpn-table-wrap { overflow-x: auto; }
+.fpn-table-wrap table { width: max-content; min-width: 100%; }
+
+/* Heatmap-style conditional cell coloring, ported from Zapdos' own
+   [data-range]/[data-name] convention: a cell declares --percentile
+   (0-100, how extreme this value is among its own column) and the
+   colour ramps via hsla() instead of a handful of fixed buckets. */
+td[data-range] {
+  --opacity: calc(var(--percentile, 0) / 100 * 0.55);
+  background-color: hsla(0, 70%, 50%, var(--opacity, 0));
+  color: var(--text);
+}
+td[data-range="positive"] {
+  background-color: hsla(210, 70%, 55%, var(--opacity, 0));
+}
+td[data-range="negative"] {
+  background-color: hsla(0, 70%, 55%, var(--opacity, 0));
+}

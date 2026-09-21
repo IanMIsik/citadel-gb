@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Citadel — Pricing Stack</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header>
+    <h1>Pricing Stack</h1>
+    <span id="connection-status" class="disconnected">connecting…</span>
+  </header>
+  <nav class="top-nav">
+    <a href="/" class="active">Pricing Stack</a>
+    <a href="/fpn">FPN Analytics</a>
+  </nav>
+
+  <div id="now-delivering">
+    <span class="nd-label">Now delivering</span>
+    <span id="nd-sp" class="nd-sp">--</span>
+    <span id="nd-niv" class="nd-niv">NIV --</span>
+    <span id="nd-price" class="nd-price">--</span>
+  </div>
+
+  <main id="periods"></main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

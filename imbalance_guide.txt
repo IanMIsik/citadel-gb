@@ -1,0 +1,2794 @@
+ 
+ 
+25 June 2020 Version 15.0 
+© ELEXON Limited 2020 Page 1 of 59 
+ Guidance 
+ 
+Imbalance Pricing Guidance 
+A guide to electricity imbalance pricing in Great Britain 
+ 
+This document explains the electricity imbalance pricing (“cash out”) arrangements in the 
+Balancing and Settlement Code (BSC). 
+Section 1 is a summary of imbalance pricing. 
+Section 2 introduces the key concepts for imbalance pricing. 
+Section 3 covers the individual steps for calculating the energy imbalance 
+price. 
+Section 4 provides a worked example of the price calculation from start to 
+finish. 
+Section 5 covers the calculation of the Market Price. 
+Section 6 explains when imbalance charges are billed to Parties. 
+Section 7 details how imbalance pricing data is published. 
+Section 8 contains a glossary of terms. 
+Section 9 Appendix 1 – Reserve Scarcity Price method 
+Section 10 Appendix 2 – Demand Control Actions 
+Section 11 Appendix 3 – The method for calculating the BPA and SPA 
+ 
+Where a term is first defined it appears in the document in bold font. 
+Throughout the document you will find references to the relevant paragraphs of the BSC, 
+should you wish to use this document to help you interpret the BSC. 
+ 
+ 
+ 
+If you need help, or more 
+information, please email: 
+bscservicedesk@cgi.com  
+T: 0370 010 6950 
+ 
+Visit our website: 
+www.elexon.co.uk 
+Contact: Market Operations  
+market.operations@elexon.co.uk 
+25 June 2020 Version 15.0 
+© ELEXON Limited 2020 Page 2 of 59 
+Contents 
+ 
+1. Summary 3 
+2. Key concepts 5 
+3. How does pricing work? 14 
+4. Pricing calculation example 33 
+5. How does the Market Price work? 43 
+6. Imbalance charges 44 
+7. Imbalance pricing data 45 
+8. Glossary 46 
+9. Appendix 1 – The Reserve Scarcity Price 52 
+10. Appendix 2 – Demand Control actions 56 
+11. Appendix 3 – The BPA and SPA 57 
+ 
+25 June 2020 Version 15.0 
+© ELEXON Limited 2020 Page 3 of 59 
+1. Summary 
+Imbalance pricing (also known as “cash out”) is a key part of the wholesale trading 
+arrangements in Great Britain. This document explains why we have imbalance charges, 
+where they fit into the rest of the trading arrangements, how they are calculated and 
+when they are paid. The complete formal rules for imbalance settlement are contained in 
+the Balancing and Settlement Code (BSC). 
+The wholesale electricity market is set up so that organisations that require electricity for 
+their customers (Suppliers) enter into contracts with organisations that produce 
+electricity (Generators). Together we call these organisations BSC Parties or Parties. 
+However, the contracts between Parties do not always cover the generation or demand 
+requirements on the Transmission System. This is a problem, as electricity cannot be 
+stored economically in large quantities, and Power Station generation must always balance 
+out consumer demand plus energy lost as heat when electricity is transported 
+(Transmission Losses). To balance the Transmission System, National Electricity 
+Transmission System Operator (NETSO) acts as the System Operator (SO) and takes 
+balancing actions. A balancing action is an instruction to a Party, in accordance with 
+agreed rules, to either increase or decrease generation, or increase or decrease demand. 
+Parties need to submit notifications (Physical Notifications) for each half hour trading 
+period (what the BSC calls a Settlement Period) so that the SO can understand the 
+overall imbalance of the Transmission System. 
+Parties must also submit details of their contracts to the BSC Systems. After the end of the 
+Settlement Period, the BSC Systems compare a Party’s contracted (traded) volume with its 
+metered volume in order to determine its imbalance. If a Party is in imbalance of its 
+contracted volume then it will be subject to imbalance charges. 
+Imbalance prices 
+There are two energy imbalance prices for each Settlement Period. These are: 
+ System Buy Price (SBP); and  
+ System Sell Price (SSP). 
+However there is a single price calculation, so SBP will equal SSP in each Settlement 
+Period. ELEXON apply these prices to Parties’ imbalances to determine their imbalance 
+charges. A Party is out of balance when its contracted energy volume does not match its 
+physical production or consumption. 
+If a Party has under-generated or over-consumed compared to its contracted volume, it 
+will have to buy that shortfall of energy at SBP. 
+If a Party has over-generated or under-consumed compared to its contracted volume, it 
+will have to sell that extra energy at SSP. 
+ 
+For most periods the price calculation reflects the costs of balancing the Transmission 
+System for that Settlement Period.   These will depend on the system’s overall imbalance. 
+Where the Transmission System is long (too much electricity), the price calculation is based 
+on actions taken by the System Operator to reduce generation or increase demand.  
+Where the Transmission System is short (not enough electricity), the price calculation is 
+based on actions taken by the System Operator to increase generation or decrease demand.  
+25 June 2020 Version 15.0 
+© ELEXON Limited 2020 Page 4 of 59 
+However, not all balancing actions are used in the same way by the BSC Systems as the 
+SO does not take all balancing actions for the same reason. Some balancing actions are 
+taken purely to balance the half hour energy imbalance of the Transmission System. These 
+are ‘energy balancing’ actions. 
+Other balancing actions are taken for non-energy, system management reasons. These 
+are ‘system balancing’ actions. 
+Examples of system balancing actions are: 
+ Actions that are so small in volume they could be the result of rounding errors (De 
+Minimis Tagging); 
+ Actions which have no effect on the energy balancing of the System but lead to an 
+overall financial benefit for the System Operator (Arbitrage Tagging); 
+ Actions taken for locational balancing reasons (SO-Flagging); and 
+ Actions taken to correct short-term increases or decreases in generation/demand 
+(CADL Flagging). 
+We use a number of processes to minimise the price impact of system balancing actions 
+on the energy imbalance price calculation. They can be broadly grouped as: 
+ Flagging – identifying balancing actions that are potentially system balancing. Once 
+identified, we will use the Classification process to decide if they are system or energy 
+balancing; 
+ Classification – assessing the Flagged balancing actions against the Unflagged 
+balancing actions to determine whether they are likely to have been energy balancing 
+or system balancing. If a Flagged Action is more expensive than any Unflagged Action, 
+then we consider it to be a system balancing action and remove its price from the 
+calculation; and 
+ Tagging – completely removing both the price and volume of balancing actions so that 
+no part is used in the final calculation. 
+After completing these processes, we adjust the remaining balancing actions for 
+transmission losses and take a volume-weighted average to calculate the energy 
+imbalance price. 
+Where an imbalance price cannot be calculated following these steps, we use the Market 
+Price. This price reflects the wholesale price of electricity. See section 5 for further details 
+about this price.  
+Imbalance charges 
+ELEXON apply these imbalance prices to Parties’ imbalance volumes to determine their 
+imbalance charges. Parties are first billed for imbalance charges approximately one month 
+after the Settlement Day for which the charges were incurred. The BSC Systems carry out 
+subsequent Reconciliation Runs over the next 13 months, which update the imbalance 
+charges by replacing any estimated data with actual metered data. 
+25 June 2020 Version 15.0 
+© ELEXON Limited 2020 Page 5 of 59 
+2. Key concepts 
+The basic starting point 
+In the wholesale electricity market in Great Britain, organisations that require electricity for 
+their customers (Suppliers), enter into contracts with organisations that produce 
+electricity (Generators), sometimes through intermediaries called Non Physical 
+Traders. These types of organisation are called BSC Parties, or simply Parties. 
+The basic trading period for electricity is half an hour. Each day is split into 48 half hour 
+units (unless it is a day where the clocks change, which has either 46 or 50 half hours). 
+Each of these half hour units is called a Settlement Period. Suppliers will calculate the 
+estimated electricity requirements for their portfolio of customers for each Settlement 
+Period. They will then enter into contracts with generators in order that their customers 
+receive the correct quantity of electricity for each Settlement Period. 
+The complete formal rules for imbalance settlement are contained in the Balancing and 
+Settlement Code (BSC). 
+ 
+What is the Transmission System? 
+The Transmission System is the high voltage network that transports electricity 
+throughout Great Britain. The Transmission System delivers electricity to the lower voltage 
+Distribution Networks which in turn supply electricity to customers.  
+ 
+ 
+Transmission  
+System 
+Distribution  
+Network 
+GSP Group 
+Generation 
+Customers 
+Grid Supply Points 
+Customers 
+ 
+What is a Party? 
+A BSC Party is an 
+organisation that has 
+signed up to the 
+Balancing and 
+Settlement Code. 
+All licensed generators, 
+Suppliers and 
+Distributors are 
+required to sign the 
+BSC. Other companies 
+may choose to do so. 
+ 
+
+25 June 2020 Version 15.0 
+© ELEXON Limited 2020 Page 6 of 59 
+Why does the Transmission System need to be balanced? 
+Electricity cannot be stored economically in large quantities. This means that generation 
+must always equal demand plus energy lost as heat when electricity is transported 
+(Transmission Losses). If it does not, then the frequency of the Transmission System 
+moves away from the target frequency (50Hz) and the Transmission System becomes 
+unstable. 
+However, the contracts between Generators and Suppliers do not always completely 
+balance the Transmission System. This could be because: 
+ Suppliers may not always accurately predict demand; 
+ Generators may not always be able to tightly control their generation (for example 
+intermittent generation or plant tripping off the Transmission System); 
+ Problems can arise with transmission lines; 
+ The BSC does not require Parties to meet their contracts (although any Party which 
+does not will be subject to imbalance charges); and 
+ The market trades in half hour Settlement Periods, but the Transmission System must 
+balance at every instant.  
+Where the Transmission System is not balanced it is called imbalance. National Electricity 
+Transmission System Operator (NETSO) ensures the Transmission System is always 
+balanced. This job is known as system operation, and is managed by NETSO as the 
+System Operator (SO). 
+ 
+Physical Notifications, Contract Notifications and Gate Closure 
+In order to balance the Transmission System, the SO needs to know what generators 
+intend to generate, and what Suppliers intend to consume, for each Settlement Period. 
+The SO needs this information before the start of the Settlement Period so that it can 
+understand the Transmission System imbalance, plan how to balance it, and take 
+balancing actions.  
+Therefore, Generators and Suppliers submit Physical Notifications (PNs) for each 
+Balancing Mechanism Unit (BMU) (see right) to the SO for each Settlement Period. 
+And one hour before each Settlement Period the PNs of Parties are frozen. This is called 
+Gate Closure. At this point the PNs become Final Physical Notifications (FPNs). After 
+Gate Closure, Parties must try to adhere to the FPNs submitted to the SO. They should 
+only deviate from their FPN at the instruction of the SO. 
+Parties also submit Energy Contract Volume Notifications (ECVNs) to the BSC 
+Systems for each Settlement Period. The ECVNs notify the BSC Systems of Parties’ 
+contracted volumes, and can be submitted up to the start of the Settlement Period (the 
+Submission Deadline). We will use these contracted volumes later on when we calculate 
+Parties’ imbalances. 
+ 
+ 
+What are Balancing 
+Mechanism Units? 
+Balancing Mechanism 
+Units (BM Units or 
+BMUs) represent the 
+generation or 
+consumption at a 
+particular location. 
+Each Party is assigned 
+BMUs for their power 
+stations or areas of 
+demand. The BSC 
+Systems sum up a 
+Party’s BMU volumes 
+and contracts when 
+they carry out the 
+Settlement 
+calculations. 
+ 
+
+25 June 2020 Version 15.0 
+© ELEXON Limited 2020 Page 7 of 59 
+The diagram below shows Gate Closure for Settlement Period 24. 
+Gate Closure for Settlement Period 24 (SP24) 
+ 
+ 
+Transmission System net imbalance 
+Following Gate Closure, the SO is able to evaluate the net imbalance of the Transmission 
+System. The SO does this by assessing the FPNs of the generators and Suppliers and 
+comparing that assessment to its own forecasts for the Settlement Period. The 
+Transmission System’s net imbalance is also called the Transmission System length. 
+A 'long' Transmission System is one where there is more generation than demand. 
+A 'short' Transmission System is one where there is more demand than generation. 
+ 
+How does the System Operator balance the Transmission System? 
+The SO has a number of ways of balancing the Transmission System: the Trans European 
+Replacement Reserves Exchange (TERRE), the Balancing Mechanism and other balancing 
+contracts. Whatever mechanism the SO uses, it is trying to balance the Transmission 
+System as efficiently as possible. Ideally the SO would choose the cheapest balancing 
+action, then the next cheapest, then the next cheapest, and so on. However, this is not 
+always possible as the SO also considers: 
+ Technical limitations of the Power Station or demand manager - is it able to increase 
+or decrease generation/demand quickly enough to meet the requirement; and 
+ Technical limitations of the Transmission System - can the generation/demand be 
+transmitted to the part of the Transmission System where it is needed. 
+The SO submits balancing actions to the BSC Systems using: 
+ The Balancing Mechanism – for Bid Offer Acceptances (BOAs)and TERRE 
+instructions; and 
+ Balancing Services Adjustment Data (BSAD) – for balancing actions taken 
+outside of the Balancing Mechanism or TERRE. 
+The Balancing Mechanism operates after Gate Closure, whereas balancing actions 
+submitted through BSAD can be taken at any point. TERRE actions are communicated 
+through the Balancing Mechanism and relate to 15 minute delivery blocks. TERRE actions 
+may be instructed to fulfil a balancing need for the GB Transmission System or the 
+Transmission System of a different country that is connected to GB by an interconnector. 
+ 
+SP20 
+09.30 – 10.00 
+SP21 
+10.00 – 10.30 
+SP22 
+10.30 – 11.00 
+SP23 
+11.00 – 11.30 
+SP24 
+11.30 – 12.00 
+ECVNs can be submitted up to 
+the end of Settlement Period 23 
+FPNs can be submitted up to the 
+end of Settlement Period 21 
+Gate Closure for SP24 
+ Submission Deadline for SP24 
+25 June 2020 Version 15.0 
+© ELEXON Limited 2020 Page 8 of 59 
+Timing of the Balancing Mechanism, TERRE and BSAD 
+ 
+Ancillary Services and Commercial agreements 
+In addition to the Balancing Mechanism, TERRE and BSAD, the SO also uses Ancillary and 
+Commercial Services to balance the Transmission System. Ancillary and Commercial 
+Services cover: 
+ Reactive Power; 
+ Frequency Response; 
+ Black Start; and 
+ Reserve Services. 
+We do not normally consider these services when we calculate the energy imbalance 
+prices as they are ‘system balancing’ services. However, the SO does send data of the 
+volumes involved to the BSC Systems, so that the Parties that provide these services can 
+have their imbalance volumes suitably adjusted. This is called Applicable Balancing 
+Services Volume Data (ABSVD). 
+ 
+The Balancing Mechanism 
+The Balancing Mechanism operates from Gate Closure to real time and is managed by the 
+SO. It works in a similar way to an auction. Parties submit notices telling the SO how much 
+it would cost for them to deviate from their Final Physical Notification. These notices are 
+called Bids and Offers. 
+An Offer is a proposal to increase generation or reduce demand. 
+A Bid is a proposal to reduce generation or increase demand. 
+The SO assesses all the Bids and Offers for each Settlement Period and chooses the ones 
+that, alongside the balancing actions submitted through BSAD, best satisfy the balancing 
+requirements of the Transmission System. Participation in the Balancing Mechanism is 
+optional, and Parties that choose to do so must submit Bids and Offers before Gate 
+Closure for each Settlement Period. For each BM Unit, a Party can submit up to ten Bid-
+Offer Pairs. 
+ 
+Year ahead 
+ Day ahead 
+ One Hour 
+ Settlement 
+Period 
+Balancing Mechanism 
+BOAs 
+Balancing Services Adjustment Data 
+ BSAD 
+Month ahead 
+Gate 
+Closure  
+TERRE 
+instructions
+s 
+25 June 2020 Version 15.0 
+© ELEXON Limited 2020 Page 9 of 59 
+Each Bid-Offer Pair includes: 
+ An Offer Price - the price a Party wants to be paid per MWh for an increase in 
+generation or decrease in demand; 
+ A Bid Price - the price a Party wants to pay per MWh for a decrease in generation or an 
+increase in demand (although it is possible to submit negatively priced Bids, i.e. a Party 
+is paid to reduce generation); 
+ The Settlement Period for which the Bid/Offer applies (for example, between 20:00 and 
+20:30 on 24/07/2019); 
+ The upper and lower power levels between which the Bid/Offer applies (for example, 
+Bid-Offer +1 applies from FPN to 50MW above the FPN, Bid-Offer +2 applies from 
+50MW above FPN to 100MW above FPN). 
+ 
+Bids and Offers are submitted in pairs because this provides an undo mechanism for 
+Acceptances. For an Accepted Offer, the paired Bid price is the ‘undo’ option (and for a Bid 
+the associated Offer price is the ‘undo’ option). If the SO has already accepted the Offer, 
+this is the price SO will be paid per MWh to undo the acceptance. There’s usually a 
+difference between the two, which ensures that if a Party’s Bid or Offer is accepted and 
+then undone, they will still receive a payment. Below is an example of ten Bid-Offer Pairs. 
+ 
+Bid-Offer Pairs for a BM Unit 
+ 
+ 
+Settlement Period 
+150 MW 
+Operating volume 
+FPN 
+Pair + 5:  Offer Price £100/MWh 
+Bid Price £2/MWh 
+Pair + 1:  Offer Price £20/MWh 
+Bid Price £18/MWh 
+Pair + 4:  Offer Price £50/MWh 
+Bid Price £5/MWh 
+Pair + 3:  Offer Price £35/MWh 
+Bid Price £7/MWh 
+Pair + 2:  Offer Price £25/MWh 
+Bid Price £13/MWh 
+175 MW 
+200 MW 
+225 MW 
+250 MW 
+275 MW 
+Pair - 1:  Offer Price £25/MWh 
+Bid Price £20/MWh 
+Pair - 5:  Offer Price £7/MWh 
+Bid Price £2/MWh 
+Pair - 2:  Offer Price £20/MWh 
+Bid Price £15/MWh 
+Pair - 3:  Offer Price £15/MWh 
+Bid Price £10/MWh 
+Pair - 4:  Offer Price £10/MWh 
+Bid Price £5/MWh 
+25 MW 
+50 MW 
+75 MW 
+100 MW 
+125 MW 
+25 June 2020 Version 15.0 
+© ELEXON Limited 2020 Page 10 of 59 
+Bid Offer Acceptances (BOAs) 
+Accepted Bids and Offers are called Bid Offer Acceptances (BOAs). For each BOA, the 
+SO contacts the BM Unit directly and instructs it to deviate from its FPN via a set of ‘spot 
+points’. Each spot point represents the change in output away from FPN at a particular 
+time. 
+For example: 
+ Spot point 1 = 00:00, 100MW; 
+ Spot point 2 = 00:05, 195MW; 
+ Spot point 3 = 00:25, 195MW; and 
+ Spot point 4 = 00:30, 100MW. 
+ 
+Graphically this looks like this: 
+An Accepted Offer 
+ 
+Trans European Replacement Reserves Exchange (TERRE) Actions 
+Project TERRE created a central European platform for the trading of balancing energy 
+with transmission System Operators in nine participating countries, including GB. On the 
+central TERRE platform there is an hourly auction for 15 minute blocks of balancing 
+energy.  
+Transmission System Operators participating within TERRE will have the option to submit 
+to a Central Platform what their net balancing need is for each 15 minute block. They also 
+submit to the platform offers of balancing energy from individual Balancing Services 
+Providers within their Transmission System.  
+The central platform arranges an auction to match the offers of energy to the needs of the 
+participating SO’s and calculates a TERRE Clearing Price. Each transmission SO will then 
+have to instruct their Balancing Services Providers to deliver the needed energy.  
+In GB the SO will use the Balancing Mechanism to communicate these instructions to 
+Balancing Services Providers and to Settlement Systems. 
+ 
+ 
+ 
+FPN 
+200 MW 
+100 MW 
+175 MW 
+Settlement Period 
+FPN 
+ 
+100 MW 
+175 MW 
+Settlement Period 
+Pair + 1:  Offer Price £20/MWh 
+Bid Price £18/MWh 
+Pair + 2:  Offer Price £25/MWh 
+Bid Price £13/MWh 
+ 
+Interested in more 
+information on Project 
+TERRE? 
+Project TERRE was 
+implemented in June 
+2020. The full 
+modification report is 
+available on the 
+Modification P344 
+webpage. 
+There is also a TERRE 
+Guidance Note providing 
+guidance for BSC Parties 
+who may want to 
+participate in the EU 
+Replacement Reserve 
+Market and for those who 
+don’t how they will be 
+affected by these 
+arrangements. 
+ 
+
+25 June 2020 Version 15.0 
+© ELEXON Limited 2020 Page 11 of 59 
+Short Term Operating Reserve (STOR) 
+In addition to balancing actions available in the balancing mechanism, the SO can enter 
+into contracts with providers of balancing capacity to deliver when called upon. These 
+additional sources of power are referred to as reserve. Most of the reserve that the SO 
+procures is called Short Term Operating Reserve (STOR). 
+The SO procures STOR ahead of using it via a competitive tender process. Under STOR 
+contracts, availability payments are made to the balancing service provider in return for 
+the capacity being made available to the SO during specific times (STOR Availability 
+Windows). When STOR is called upon, the SO pays for it at a pre-agreed price (its 
+Utilisation Price).  Some STOR is dispatched in the Balancing Mechanism (BM STOR) 
+while some is dispatched separately (Non-BM STOR).  
+Because the Utilisation Price has been pre-agreed (sometimes many months before it is 
+actually used), and because STOR providers may also receive availability payments, 
+Utilisation Prices may be noticeably different to the price the SO may have paid had it 
+called upon a BM action.  Utilisation Prices may therefore not reflect the prevailing market 
+prices at the time of use. To correct this, we use a pricing mechanism to determine a 
+Reserve Scarcity Price (RSVP) and a process that sets the price for STOR actions to be 
+equal to the greater of its Utilisation Price and the RSVP.  
+Demand Control 
+The SO can use Demand Control actions as a last resort to balance the system, in the 
+rare event that there is insufficient capacity in the market to meet demand. If they are 
+used they will be included in the imbalance price calculation at a price of Value of Lost 
+Load (VoLL). 
+If the SO is unable to call on Bids and Offers in the BM or other Balancing Services to meet 
+the current demand, then it can instruct Demand Control as a last resort emergency action 
+to manage the situation. When it issues a Demand Control Instruction, it will instruct 
+the Distribution Network Operators to reduce demand on their Distribution Systems, either 
+through reducing voltage across the network and/or disconnecting consumers. 
+Balancing Services Adjustment Data (BSAD) 
+Balancing actions taken outside of the Balancing Mechanism are submitted to the BSC 
+Systems as Balancing Services Adjustment Data (BSAD). The SO specifies what 
+balancing actions are included in BSAD in the BSAD Methodology Statement. 
+BSAD is split into two components: 
+ Balancing Services Adjustment Actions (BSAA); and 
+ Buy Price Price Adjustment (BPA)/Sell Price Price Adjustment (SPA). 
+Balancing Services Adjustment Actions 
+The SO submits an individual Balancing Services Adjustment Action for each of the 
+following Balancing Services: 
+ Forward Contracts; 
+ Energy Related Products; 
+ Pre-Gate Closure Balancing Transactions (PGBTs); and 
+ System-to-System services, 
+ 
+What is Value of Lost 
+Load? 
+Value of Lost Load (VoLL) 
+is a defined parameter in 
+the BSC and is based on 
+an assessment of the 
+average value that 
+electricity consumers 
+attribute to the security 
+of supply. It is currently 
+set at£6,000/MWh. 
+VoLL and the process for 
+reviewing it are set out in 
+BSC Section T.1.12. 
+ 
+ 
+  
+Where in the BSC? 
+The processes relating to 
+Demand Control 
+Instructions are set out in 
+Section Q.6.9. 
+ 
+
+25 June 2020 Version 15.0 
+© ELEXON Limited 2020 Page 12 of 59 
+ Maximum Generation; 
+ System to Generator Operational Intertripping; 
+ Emergency de-energisation instructions;  
+ Demand Side Balancing Reserve; and 
+ Non-BM STOR. 
+ 
+Buy Price Price Adjustment (BPA)/Sell Price Price Adjustment (SPA) 
+The other part of BSAD is the Buy Price Price Adjustment (BPA) or the Sell Price Price 
+Adjustment (SPA). The BPA is added when the net imbalance of the Transmission System 
+is short. The SPA is added when the net imbalance of the Transmission System is long. 
+The BPA/SPA is a reflection of the costs to the SO of regulating reserve and BM start-up. It 
+does not have a volume. It simply adjusts the volume-weighted average price. 
+ 
+ 
+ 
+Party imbalances 
+A Party is in imbalance where its Contracted Volumes do not match its Metered Volumes 
+(once the BSC Systems have accounted for any BOAs on the Party’s BM Units – having a 
+Bid or Offer accepted will not put the Party into imbalance). 
+Imbalance prices 
+There are two energy imbalance prices for each Settlement Period. These are: 
+ System Buy Price (SBP); and  
+ System Sell Price (SSP). 
+However there is a single price calculation – so SBP will equal SSP in each settlement 
+period.  
+ELEXON apply these prices to Parties’ imbalances to determine their imbalance charges. A 
+Party is out of balance when its contracted energy volume does not match its physical 
+production or consumption. 
+If a Party has under-generated or over-consumed compared to its contracted volume, it 
+will have to buy that shortfall of energy at SBP. 
+If a Party has over-generated or under-consumed compared to its contracted volume, it 
+will have to sell that extra energy at SSP 
+ 
+For most periods the price calculation reflects the costs of balancing the Transmission 
+System for that Settlement Period. These will depend on the system’s overall imbalance. 
+Where the Transmission System is long (too much electricity), the price calculation is 
+based on actions taken by the System Operator to reduce generation or increase 
+demand.  
+25 June 2020 Version 15.0 
+© ELEXON Limited 2020 Page 13 of 59 
+Where the Transmission System is short (not enough electricity), the price calculation is 
+based on actions taken by the System Operator to increase generation or decrease 
+demand.  
+Section 3 explains how we calculate the energy imbalance price. Section 4 provides an 
+example of the energy imbalance price calculation based on a theoretical set of balancing 
+actions. 
+There is a different calculation for prices in the event that there are no actions left 
+following these steps. This is called the Market Price and reflects the wholesale price for 
+electricity. See section 5 for further details of this. 
+25 June 2020 Version 15.0 
+© ELEXON Limited 2020 Page 14 of 59 
+3. How does pricing work? 
+What do we use to calculate the energy imbalance price? 
+The BSC Systems calculate the energy imbalance price using balancing actions accepted 
+by the SO for that Settlement Period. 
+There are five types of balancing action: 
+ Bid Offer Acceptances (BOAs);Volume of GB need met (VGB); 
+ Replacement Reserve Aggregated Unpriced System Buy and Sell 
+Actions (RRAUSB and RRAUSS); 
+ Balancing Services Adjustment Actions (BSAAs); and 
+ Demand Control Actions. 
+ 
+Balancing actions either increase the energy or decrease the demand for energy on the 
+Transmission System; or decrease the energy on the Transmission System. 
+ 
+Which balancing actions to use? 
+We do not use all balancing actions in the same way, as the SO does not take all balancing 
+actions for the same reason. Some balancing actions are taken purely to balance the half 
+hourly energy imbalance of the Transmission System. These are ‘energy’ balancing 
+actions. 
+However, some balancing actions are taken for non-energy, system-management reasons. 
+These are ‘system’ balancing actions. 
+Examples of system balancing actions are: 
+ Actions that are so small in volume they could be the result of rounding errors (De 
+Minimis tagging); 
+ Actions which have no effect on the energy balancing of the System but lead to an 
+overall financial benefit for the SO (Arbitrage tagging); 
+ Actions taken for locational balancing reasons (SO-Flagging); and 
+ Actions taken to correct short-term increases or decreases in generation/demand 
+(CADL Flagging). 
+There are a number of actions which may be re-priced for the purposes of calculating the 
+imbalance price. These are:  
+ BOAs or BSAAs from STOR plant taken during STOR availability windows, in the 
+event that their Utilisation Payment is less than the Reserve Scarcity Price; and  
+ Demand Control in the event that the SO has to use this to balance the system.  
+We use a number of processes to minimise the price impact of system balancing actions 
+on the energy imbalance price calculation. They can be broadly grouped as: 
+ 
+Balancing actions or 
+System Actions? 
+In the BSC balancing 
+actions are called 
+‘System Actions’. This 
+is because they are 
+actions which balance 
+the Transmission 
+System. 
+ 
+
+25 June 2020 Version 15.0 
+© ELEXON Limited 2020 Page 15 of 59 
+ Flagging – identifying balancing actions that are potentially system balancing. Once 
+identified, we will use the Classification process to decide if they are system or energy 
+balancing; 
+ Classification – assessing the Flagged balancing Actions against the Unflagged 
+Actions to determine whether they are energy balancing or system balancing. If 
+Flagged Actions are more expensive than any Unflagged Action then we remove its 
+price; and 
+ Tagging – completely removing both the price and volume of balancing actions so that 
+no part is used in the final calculation. 
+ 
+This section describes the processes that remove the price impact of system balancing 
+actions, along with other processes that we use when calculating the energy imbalance 
+price. These are: 
+1. Submitting balancing actions 
+2. Determining the STOR action price  
+3. System Operator Flagging (SO-Flagging) 
+4. Emergency Instruction Flagging 
+5. Continuous Acceptance Duration Limit (CADL) Flagging 
+6. Ranked Sets 
+7. De Minimis Tagging 
+8. Arbitrage Tagging 
+9. Classification 
+10. NIV Tagging 
+11. Replacement Price 
+12. PAR Tagging 
+13. BPA/SPA 
+14. Transmission Loss Multiplier 
+15. Final energy imbalance price calculation 
+16. Default rules 
+17. Actions not included in the calculation of the energy imbalance price 
+ 
+25 June 2020 Version 15.0 
+© ELEXON Limited 2020 Page 16 of 59 
+How are balancing actions submitted to the BSC Systems? 
+Each Settlement Period, the SO sends the following balancing data to the BSC Systems:  
+ The Final Physical Notifications (FPN) submitted by Parties for their BM Units; 
+ The Bid–Offer Data submitted by Parties for their BM Units; 
+ Bid–Offer Acceptance data; 
+ Quarter Hour Volume of GB Need met; 
+ Quarter Hour Interconnector Schedule; 
+ Balancing Services Adjustment Data (BSAD); and  
+ Demand Control Instructions.  
+ 
+Balancing Services Adjustment Actions 
+Balancing actions taken outside of the Balancing Mechanism are submitted to the BSC 
+Systems using Balancing Services Adjustment Data (BSAD). The SO calculates BSAD in 
+accordance with the BSAD Methodology Statement which is required under its 
+Transmission Licence. 
+BSAD is made up of two parts: 
+ Balancing Services Adjustment Actions (disaggregated BSAD); and 
+ Buy Price Price Adjustment (BPA) / Sell Price Price Adjustment (SPA). 
+The BPA/SPA is used at the end of the process. 
+Explanation 
+Where the SO takes a balancing action outside the Balancing Mechanism, it submits it to 
+the BSC Systems as a Balancing Services Adjustment Action. 
+Each Balancing Services Adjustment Action has a: 
+ Balancing Services Adjustment Cost – value in £ (can be a NULL cost); 
+ Balancing Services Adjustment Volume – value in MWh; 
+ SO-Flag - either set to True/False; and 
+ STOR Provider Flag – either set to True/False. 
+ 
+Once the BSC Systems receive the Balancing Services Adjustment Action, they convert the 
+Balancing Services Adjustment Cost to a Balancing Services Adjustment Price by dividing 
+the Balancing Services Adjustment Cost by the Balancing Services Adjustment Volume: 
+ 
+)Volume(MWh
+Cost(£)h)Price(£/MW 
+ 
+  
+ 
+Where in the BSC? 
+The structure of 
+Balancing Services 
+Adjustment Actions is 
+described in Section 
+Q6.3.2. 
+The BSC Systems 
+calculation for 
+converting the 
+Balancing Services 
+Adjustment Cost to the 
+Balancing Services 
+Adjustment Price is in 
+Section Q6.3.2A. 
+Balancing Services 
+Adjustment Actions are 
+referred to throughout 
+Section T Annex T-1, 
+as they undergo all but 
+one of the calculation 
+processes. 
+ 
+
+25 June 2020 Version 15.0 
+© ELEXON Limited 2020 Page 17 of 59 
+Trans European Replacement Reserves Exchange (TERRE) Actions 
+Energy Balancing Volumes relating to TERRE instructions are aggregated into three types 
+of actions:  
+ Volume of GB need met (VGB) – priced at the TERRE Clearing Price; 
+ Replacement Reserve Aggregated Unpriced System Buy Actions (RRAUSB) – 
+priced at £0/MWh; and  
+ Replacement Reserve Aggregated Unpriced System Sell Actions (RRAUSS) 
+– priced at £0/MWh. 
+When the SO gives TERRE instructions to a Balancing Services Provider the resulting 
+energy balancing volumes could be to: 
+ Fulfil a need for balancing energy for GB; 
+ Fulfil a need for balancing energy for a different Transmission System; or 
+ To help a unit ramp up or down to deliver the required balancing energy need. 
+We only want the price energy that helped to meet GB need to be reflected in the 
+Imbalance Price Calculation, this is the Volume of GB need met (VGB). Balancing 
+energy resulting from TERRE instructions that did not meet the GB need are aggregated 
+into Replacement Reserve Aggregated Unpriced System Buy and Sell Actions 
+(RRAUSB and RRAUSS).  
+All TERRE action types will be included in the calculation of the Imbalance Price and 
+subject to the Flagging and Tagging processes (Section 3). 
+ 
+Where in the BSC? 
+The calculations for 
+deriving VGB, RRAUSB 
+and RRAUSS actions is 
+set out in Annex T-1. 
+ 
+
+25 June 2020 Version 15.0 
+© ELEXON Limited 2020 Page 18 of 59 
+Determining STOR Action Prices 
+Explanation  
+There are times when the use of STOR plant to balance the system can have a dampening 
+effect on imbalance prices. This is because of how it is procured and paid for. See 
+Appendix 1 for further detail.  
+To correct this, we use a pricing mechanism to calculate the Reserve Scarcity Price 
+(RSVP). The RSVP is designed to respond to capacity margins so that it rises as the 
+system gets tighter (the gap between available and required generation narrows). It is 
+calculated using a measure of system reliability called Loss of Load Probability (LoLP). 
+LoLP is a value between 0 and 1, and represents a measure of scarcity in available 
+generation capacity, as calculated by the System Operator at Gate Closure. The RSVP is 
+determined by multiplying the LoLP by the price of disconnections, Value of Lost Load 
+(VoLL). 
+All actions from STOR providers are included in the calculation of Imbalance Prices but 
+whether a STOR action is re-priced depends firstly on whether the STOR action was taken 
+during a STOR Availability Window.  A STOR Availability Window is the window of time 
+when STOR plant are required to make their capacity available to the SO. Whether an 
+action is re-priced will also depend on the level of its Utilisation Payment compared to the 
+RSVP for that half-hour. STOR actions taken during STOR Availability windows are included 
+in the calculation of imbalance prices as individual actions, with a price which is the 
+greater of: 
+ The Utilisation Price for the action – i.e. the price that STOR capacity is paid when it 
+is called upon; and  
+ The Reserve Scarcity Price (RSVP). 
+Re-priced STOR actions are then treated like other BOAs for the next steps of price 
+calculation (ranking, tagging, etc). Actions from STOR plant outside the STOR Availability 
+Windows are not re-priced. 
+Example 
+In the following example, the De-Rated Margin at Gate Closure is 1,238MW. This 
+corresponded to a LOLP of 0.0334, as determined by the Loss of Load Probability 
+Calculation Statement. This produces an RSP of £200.40/MWh (0.0334 * £6,000). As these 
+actions took place during a STOR Availability Window, they are re-priced where the RSP is 
+greater than their Utilisation Prices.  
+ 
+ 
+ 
+Offer 
+30MWh at £220/MWh 
+BSAA - Buy 
+15MWh at £50/MWh 
+Offer 
+30MWh at £220/MWh 
+BSAA - Buy 
+15MWh at £200.40/MWh 
+Key 
+STOR provider flagged 
+First Stage Unflagged 
+Re-priced 
+Not re-priced 
+ 
+What is LOLP? 
+Loss of Load Probability 
+(LOLP) is a measure of 
+system reliability, 
+calculated by The System 
+Operator for each 
+Settlement Period. 
+ 
+The System Operator’s 
+methodology is set out in 
+the Loss of Load 
+Probability Calculation 
+Statement 
+ 
+ 
+Where in the BSC? 
+The process for re-pricing 
+STOR actions is set out in 
+Section T.3.14, and the 
+process for determining 
+the RSP is set out in 
+section T.3.13. 
+ 
+
+25 June 2020 Version 15.0 
+© ELEXON Limited 2020 Page 19 of 59 
+NULL priced Balancing Services Adjustment Actions 
+Balancing Services Adjustment Actions that result from intertrips are submitted with a 
+NULL cost (and therefore a NULL Price). This is because intertrip-related Balancing 
+Services Adjustment Actions do not have a cost/price available in the required timescales. 
+NULL priced Balancing Services Adjustment Actions are always classified as Second 
+Stage Flagged balancing actions and are unpriced. However, if NULL priced Balancing 
+Services Adjustment Actions enter the Net Imbalance Volume they will be subject to a 
+Replacement Price. 
+ 
+System Operator Flagging 
+Explanation 
+System Operator Flagging (SO-Flagging) is the process that identifies BOAs and 
+Balancing Services Adjustment Actions that are potentially taken for system balancing 
+reasons. The SO-Flagging process is documented in the System Management Action 
+Flagging Methodology Statement which is required under National Grid Electricity 
+System Operator (NETSO)’s Transmission Licence. 
+For BOAs, the SO flags when it believes the BOA may be impacted by a transmission 
+constraint. 
+For Balancing Services Adjustment Actions, the SO also flags when it believes the 
+balancing action was impacted by a transmission constraint. It also has two additional 
+reasons for flagging a Balancing Services Adjustment Action: 
+ Any system-to-system balancing service over an Interconnector which is used to avoid 
+adverse effects arising on the GB Transmission System from significant load profile 
+changes; and 
+ Any system-to-system balancing service over an Interconnector which is used by 
+another country’s Transmission System Operator (TSO) for the purposes of resolving a 
+system operation issue. 
+ 
+For the purposes of the Classification process, an SO-Flagged balancing action is a First 
+Stage Flagged balancing action. 
+What is a transmission constraint? 
+A transmission constraint is any limit on the ability of the Transmission System, or any 
+part of it, to transmit power to a location which demands it.  
+Transmission constraints arise from: 
+ The need not to exceed the thermal rating of any asset forming part of the 
+Transmission System (preventing the lines getting too hot); 
+ The need to maintain voltages on the Transmission System; and/or 
+ The need to maintain the transient and dynamic stability of electricity plant, equipment 
+and systems directly or indirectly connected to the Transmission System. 
+ 
+ 
+Where in the BSC? 
+The SO-Flagging process 
+is described in Section T 
+Annex T-1 paragraph 3. 
+ 
+ 
+What is an 
+intertrip? 
+An intertrip is a circuit-
+breaker that, when 
+activated, disconnects a 
+generator or demand 
+from the Transmission 
+System. This might be to 
+relieve localised network 
+overloads, maintain 
+system stability, manage 
+system voltages and/or 
+ensure quick restoration 
+of the Transmission 
+System. 
+ 
+
+25 June 2020 Version 15.0 
+© ELEXON Limited 2020 Page 20 of 59 
+Emergency Flagging 
+Explanation 
+The SO issues Emergency Instructions to Power Stations (and potentially customers) in 
+circumstances when there is a specific requirement to isolate a Generating Unit, Power 
+Station or customer demand from the Transmission System. For example, an emergency 
+could occur if there was a fire or breakdown of a piece of Transmission System equipment, 
+or if there were a major incident that affected part of the Transmission System. 
+Emergency Instructions are inserted into the energy imbalance price calculation as BOAs. 
+The SO is able to flag or not flag Emergency Instructions, depending on whether they 
+were issued for system balancing reasons. 
+A flagged Emergency Instruction is called ‘Emergency Flagged’. Emergency Flagged 
+actions are treated in an identical way to SO-Flagged BOAs and are First Stage Flagged 
+balancing actions. 
+An unflagged Emergency instruction is called an ‘Emergency Acceptance’. Emergency 
+Acceptances are treated in an identical way to unflagged BOAs and are First Stage 
+Unflagged balancing actions. 
+ 
+Continuous Acceptance Duration Limit (CADL) Flagging 
+Explanation 
+The SO may need to accept short-duration actions to cater for a sudden increase/decrease 
+in generation or demand. We consider these actions to be potentially system balancing. 
+This is because they are taken in order to balance the Transmission System in real time 
+and may not be required to balance the energy on the Transmission System over the half 
+hour Settlement Period. 
+In order to distinguish between such short-duration actions we apply a rule called the 
+Continuous Acceptance Duration Limit (CADL). It is a time limit for BOAs. If a BOA is 
+part of a series of acceptances on the same BM Unit which is less than the CADL it will be 
+flagged. A CADL Flagged BOA is a First Stage Flagged action. 
+The CADL parameter may be altered by the BSC Panel (with Ofgem’s approval) from time 
+to time after consultation with the SO and Parties. CADL is currently equal to 10 minutes, 
+as on 1 April 2019 it reduced from 15 minutes.  
+Below is an example of CADL Flagging with two BOAs for different BM Units, one less than 
+CADL and one more than CADL. The Boa which is less than the CADL becomes Flagged. 
+CADL Flagging example  
+ 
+£40/MWh 
+100MWh 
+£60/MWh 
+50MWh 
+CADL 
+ 30 mins 
+£40/MWh 
+100MWh 
+£60/MWh 
+50MWh 
+CADL 
+ 30 mins 
+First Stage Flagged 
+First Stage Unflagged 
+Key 
+Before CADL flagging 
+ After CADL flagging 
+ 
+Where in the BSC? 
+The Continuous 
+Acceptance Duration 
+Limit is defined in Section 
+T paragraph 1.9. 
+The CADL Flagging 
+process is described in 
+Section T Annex T-1 
+paragraphs 3 and 12. 
+ 
+ 
+Where in the BSC? 
+Emergency Instructions 
+are defined in Section 
+Q5.1.3(b), Q5.3.1(d) and 
+Q5.3.1(e). 
+The use of Emergency 
+Flagged actions and 
+Emergency Acceptances 
+in the energy imbalance 
+price calculation is 
+described in Section T 
+Annex T-1 paragraph 5. 
+ 
+
+25 June 2020 Version 15.0 
+© ELEXON Limited 2020 Page 21 of 59 
+Ranked Sets 
+Once the BSC Systems have received all the balancing actions, they are ranked in price 
+order in two separate Ranked Sets: 
+ The Sell Ranked Set includes all the sell balancing actions which reduce 
+generation on the Transmission System or increase demand; and 
+ The Buy Ranked Set includes all the buy balancing actions which increase 
+generation on the Transmission System or reduce demand. 
+ 
+When ranking in price order, we always consider how expensive a balancing action is to 
+the Transmission System. The cheapest balancing action is ranked first and the most 
+expensive balancing action is ranked last. 
+For a buy balancing action, the higher the price the more expensive the action. So a 
+£10/MWh buy balancing action will be ranked before a £20/MWh buy balancing action. 
+For a sell balancing action, the lower the price the more expensive the action. This is 
+because the price is what a Party will pay per MWh to reduce their generation or increase 
+demand. So a £20/MWh sell balancing action will be ranked before a £10/MWh sell 
+balancing action. 
+Below is an example of actions being separated out into the Buy Ranked Set and the Sell 
+Ranked Set. 
+Unranked balancing actions 
+ 
+ 
+The above diagram is unranked. The next diagram shows how balancing actions have 
+been ranked into a Buy Ranked Set and a Sell Ranked Set. We show the ranking orders in 
+opposite directions. 
+First Stage Flagged 
+First Stage Unflagged 
+Bid 
+50MWh at £27/MWh 
+Bid 
+75MWh at £25/MWh 
+Bid 
+40MWh at £23/MWh 
+Bid 
+30MWh at £35/MWh 
+BSAA - Sell 
+50MWh at £24/MWh 
+Offer 
+30MWh at £60/MWh 
+Offer 
+70MWh at £50/MWh 
+Offer 
+120MWh at £40/MWh 
+Offer 
+25MWh at £120/MWh 
+Offer 
+30MWh at £30/MWh 
+Offer 
+0.5MWh at £70/MWh 
+BSAA - Buy 
+55MWh at £170/MWh 
+BSAA - Buy 
+35MWh at £70/MWh 
+Offer 
+60MWh at £320/MWh 
+Offer 
+50MWh at £140/MWh 
+Offers 
+ Bids 
+Key 
+25 June 2020 Version 15.0 
+© ELEXON Limited 2020 Page 22 of 59 
+Ranked balancing actions 
+ 
+ 
+Bid 
+50MWh at £27/MWh 
+Bid 
+75MWh at £25/MWh 
+Bid 
+30MWh at £35/MWh 
+BSAA - Sell 
+50MWh at £24/MWh 
+Offer 
+30MWh at £60/MWh 
+Offer 
+70MWh at £50/MWh 
+Offer 
+120MWh at £40/MWh 
+Offer 
+25MWh at £120/MWh 
+Offer 
+30MWh at £30/MWh 
+Offer 
+0.5MWh at £70/MWh 
+BSAA - Buy 
+55MWh at £170/MWh 
+BSAA - Buy 
+35MWh at £70/MWh 
+Offer 
+60MWh at £320/MWh 
+Offer 
+50MWh at £140/MWh 
+Buy Ranked Set 
+Sell Ranked Set 
+First Stage  
+Flagged 
+First Stage 
+Unflagged 
+Key 
+Ranking 
+order 
+Ranking 
+order 
+Bid 
+40MWh at £23/MWh 
+25 June 2020 Version 15.0 
+© ELEXON Limited 2020 Page 23 of 59 
+De Minimis Tagging 
+Explanation 
+De Minimis Tagging removes all balancing actions (BOAs and Balancing Services 
+Adjustment Actions) with a volume less than the De Minimis Acceptance Threshold 
+(DMAT). The Panel can alter the DMAT (with Ofgem’s approval) following consultation 
+with the SO and Parties. The DMAT reduced from 1MWh to 0.1MWh on 1 April 2019. 
+De Minimis Tagging removes potentially ‘false’ actions created due to the finite accuracy of 
+the systems used to calculate Bid and Offer Volumes. All balancing actions less than DMAT 
+are completely removed from the calculation of the energy imbalance price, i.e. both the 
+price and volume of a De Minimis tagged BOA are excluded. 
+Example of a De Minimis Tagged Offer  
+Ranked Set before   Ranked Set after 
+ 
+ 
+ 
+In this example the 0.01MWh at £60/MWh Offer is removed by De Minimis Tagging. 
+ 
+Offer 
+70MWh at £50/MWh 
+Offer 
+120MWh at £40/MWh 
+Offer 
+30MWh at £30/MWh 
+Offer 
+70MWh at £70/MWh 
+Offer 
+0.01MWh at £60/MWh 
+Offer 
+70MWh at £50/MWh 
+Offer 
+120MWh at £40/MWh 
+Offer 
+30MWh at £30/MWh 
+Offer 
+70MWh at £70/MWh 
+Offer 
+0.01MWh at £60/MWh 
+ 
+Where in the BSC? 
+BSC Section T1.8 defines 
+the DMAT and the Panel 
+revision process. 
+The De Minimis tagging 
+process is described in 
+Annex T-1 paragraph 6. 
+ 
+
+25 June 2020 Version 15.0 
+© ELEXON Limited 2020 Page 24 of 59 
+Arbitrage Tagging 
+Explanation 
+Arbitrage occurs when the price of a buy balancing action (an accepted Offer or a buy 
+Balancing Services Adjustment Action) is either the same or lower than the price of a sell 
+balancing action (an accepted Bid or a sell Balancing Services Adjustment Action). It is 
+considered arbitrage because the SO can ‘purchase’ the buy balancing action in the same 
+instant as it ‘sells’ the sell balancing action, and makes an immediate profit for no net 
+change of energy on the Transmission System. 
+In cases of arbitrage, equivalent volumes of sell balancing actions and buy balancing 
+actions are excluded from the energy imbalance price calculation.   
+An example of a Bid and an Offer which would be subject to arbitrage is shown below: 
+ 
+Example of BOAs which would be Arbitrage Tagged 
+ 
+Here a generator is willing to increase generation by 30MWh for just £10/MWh, whilst 
+there is another generator who is willing to pay £15/MWh to decrease generation by 
+30MWh. It is considered that, in an efficient market, these two generators would have 
+traded with each other. Therefore the equal volumes (30MWh) are removed from the Buy 
+and Sell Ranked Sets.  
+ 
+Offer 
+30MWh at £10/MWh 
+Bid 
+30MWh at £15/MWh 
+ 
+Where in the BSC? 
+The Arbitrage Tagging 
+process is described in 
+Annex T-1 paragraphs 7 
+and 13. 
+ 
+
+25 June 2020 Version 15.0 
+© ELEXON Limited 2020 Page 25 of 59 
+Classification 
+Explanation 
+Classification determines which First Stage Flagged balancing actions become Second 
+Stage Flagged, or Second Stage Unflagged. This is the main way that the BSC Systems 
+decide if the price of a flagged action is representative of market conditions or not. Second 
+stage flagged actions have prices which may distort the imbalance price market signal if 
+not replaced by the Replacement Price.  
+Classification occurs independently for the Buy Ranked Set and the Sell Ranked Set. Before 
+Classification, a balancing action will be either a: 
+ First Stage Unflagged balancing action – an energy balancing action; or 
+ First Stage Flagged balancing action – a potentially system balancing action (SO-
+Flagged, Emergency Flagged or CADL Flagged). 
+During Classification, each First Stage Flagged balancing action is compared to the most 
+expensive First Stage Unflagged balancing action in the respective Ranked Set (Buy or 
+Sell). 
+If a First Stage Flagged balancing action has a more expensive price than the most 
+expensive First Stage Unflagged balancing action it is considered a system balancing 
+action and so becomes Second Stage Flagged. 
+If a First Stage Flagged balancing action has a less expensive price than the most 
+expensive First Stage Unflagged balancing action it is considered an energy balancing 
+action and stays Second Stage Unflagged. 
+ 
+The example on the next page shows Classification at work. 
+ 
+Where in the BSC? 
+Section T Annex T-1 
+paragraph 8 describes 
+the Classification process. 
+ 
+
+25 June 2020 Version 15.0 
+© ELEXON Limited 2020 Page 26 of 59 
+In the example below, the 10MWh buy balancing action becomes Second Stage Unflagged 
+as it is less expensive than the most expensive First Stage Unflagged balancing action (the 
+£120/MWh Volume of GB need met (VGB)). All other First Stage Flagged balancing actions 
+become Second Stage Flagged actions as they are more expensive than the most 
+expensive Unflagged balancing action. 
+Following the Classification process, a balancing action will either be a: 
+ Second Stage Unflagged balancing action – A balancing action which keeps its 
+original price; or 
+ Second Stage Flagged balancing action – A balancing action which will be repriced 
+by the Replacement Price. 
+ 
+Other Classification rules  
+ Upon Classification, any First Stage Unflagged balancing actions are automatically 
+classified as Second Stage Unflagged balancing actions. 
+ If there are no First Stage Unflagged balancing actions in a Ranked Set, all balancing 
+actions are classified as Second Stage Flagged balancing actions. 
+ A NULL-priced Balancing Services Adjustment Action is always classified as a Second 
+Stage Flagged balancing action. 
+ 
+25 June 2020 Version 15.0 
+© ELEXON Limited 2020 Page 27 of 59 
+NIV Tagging 
+Explanation 
+Net Imbalance Volume (NIV) Tagging occurs following Classification and works by 
+netting off the Buy and Sell Ranked Sets. The most expensive balancing actions are netted 
+off first and are referred to as NIV Tagged. The NIV Tagging will leave either a net volume 
+of Buy balancing actions, or Sell balancing actions. This is the NIV for a Settlement Period. 
+Example of NIV Tagging 
+ 
+In the example the Sell Ranked Set is NIV Tagged along with the Second Stage Flagged 
+35MWh Balancing Services Adjustment Action (BSAA) and 10MWh of the Second Stage 
+Flagged 30MWh Offer.  
+ 
+When the Transmission System is short, and the SO balances the system by accepting 
+a greater volume of buy balancing actions than sell balancing actions, the NIV will be 
+positive. 
+When the Transmission System is long, and the SO balances the system by accepting a 
+greater volume of sell balancing actions than buy balancing actions, the NIV will be 
+negative. 
+ 
+Offer 
+200MWh at £40/MWh 
+Offer 
+5MWh at £100/MWh 
+BSAA - Buy 
+35MWh at £300/MWh 
+BSAA - Buy 
+15MWh at £50/MWh 
+Offer 
+30MWh at £200/MWh 
+Buy Ranked Set pre-NIV tagging 
+Sell Ranked Set pre-NIV tagging 
+NIV 
+Offer 
+200MWh at £40/MWh 
+Offer 
+5MWh at £100/MWh 
+BSAA - Buy 
+15MWh at £50/MWh 
+Offer 
+20MWh at £200/MWh 
+Bid 
+15MWh at £7/MWh 
+Bid 
+12MWh at £1/MWh 
+BSAA - Sell 
+18MWh at £4/MWh 
+Second Stage 
+Flagged 
+Second Stage 
+Unflagged 
+Key 
+ 
+Where in the BSC? 
+NIV Tagging is described 
+in Section T Annex T-1 
+paragraph 9 and 14. 
+ 
+
+25 June 2020 Version 15.0 
+© ELEXON Limited 2020 Page 28 of 59 
+Replacement Price 
+Explanation 
+Where Second Stage Flagged volume exists in the NIV it must be assigned a Replacement 
+Price. The Replacement Price is calculated from a volume-weighted average of the most 
+expensively priced 1MWh of unflagged (and therefore priced) actions. This 
+parameter is the Replacement Price Average Reference Volume (RPAR). 
+An example of the Replacement Price process is shown below. In the example, the Second 
+Stage Flagged 20MWh Offer requires a Replacement Price. To calculate the Replacement 
+Price we use the most expensive 1MWh of priced balancing actions. In the example below 
+the Replacement Price is £120/MWh (the price of the most expensive priced 1MWh) and 
+this is applied to the Second Stage Flagged volume. 
+Example of a Replacement Price situation 
+ 
+ 
+Once the Replacement Price has been assigned, the NIV stack may have to be re-ranked 
+to keep the actions in the price order. 
+ 
+Re-priced 
+Key 
+Second Stage Flagged 
+Second Stage Unflagged 
+Offer 
+30MWh at £120/MWh 
+Offer 
+5MWh at £100/MWh 
+BSAA - Buy 
+20MWh at £200 
+BSAA - Buy 
+15MWh at £100/MWh 
+Offer 
+30MWh at £120/MWh 
+Offer 
+5MWh at £100/MWh 
+BSAA - Buy 
+20MWh at £120/MWh 
+BSAA - Buy 
+15MWh at £100/MWh 
+ 
+Where in the BSC? 
+RPAR is defined in 
+Section T1.11. 
+The Replacement Price 
+Process is described in 
+Section T Annex T-1 
+paragraphs 10 and 15. 
+ 
+
+25 June 2020 Version 15.0 
+© ELEXON Limited 2020 Page 29 of 59 
+PAR Tagging 
+Explanation 
+The last tagging process is Price Average Reference (PAR) Tagging. The energy imbalance 
+price is calculated based on the volume-weighted average of a defined volume of the most 
+expensive actions remaining. This defined volume is the Price Average Reference 
+Volume (PAR) and is 1 MWh. PAR Tagging is applied such that: 
+ Where the System is short, the imbalance price is calculated as a volume-weighted 
+average of not more than 1 MWh of the most expensive actions in the NIV (i.e. up to 1 
+MWh of highest priced buy balancing actions); and 
+ Where the System is long, the imbalance price is calculated as a volume-weighted 
+average of not more than 1 MWh of the most expensive actions in the NIV (i.e. up to 1 
+MWh of lowest priced sell balancing actions). 
+The purpose of the PAR Tagging mechanism is to more closely align the energy imbalance 
+price with the price of the marginal energy balancing action (i.e. the most expensive action 
+taken by the SO to balance total energy supply and demand). 
+Example of PAR Tagging 
+ 
+ 
+ 
+NIV 
+Offer 
+150MWh at £35/MWh 
+VGB 
+60MWh at £115/MWh 
+BSAA - Buy 
+300MWh at £56/MWh 
+Second Stage 
+Unflagged 
+Key 
+Offer 
+50MWh at £153/MWh 
+PAR Volume 
+Offer 
+1MWh at £153/MWh 
+ 
+Where in the BSC? 
+PAR is defined in Section 
+T1.10. 
+The PAR process is 
+described in Section T 
+Annex T-1 paragraphs 11 
+and 16. 
+ 
+
+25 June 2020 Version 15.0 
+© ELEXON Limited 2020 Page 30 of 59 
+Buy Price Price Adjustment (BPA)/Sell Price Price Adjustment 
+(SPA) 
+Explanation 
+The other part of BSAD used for the energy imbalance price calculation is the BPA/SPA. 
+Only one is used for each Settlement Period. The BPA is used when the Transmission 
+System is short (and the NIV is positive), and the SPA is used when the Transmission 
+System is long (and the NIV is negative).  
+The BPA is a reflection of the costs to the SO of regulating reserve and BM start-up. The 
+SPA is made up of option fees for negative reserve and forward contracts. For further 
+details of the BPA/SPA, see Appendix 3 or the BSAD Methodology Statement. 
+ 
+For example: 
+Volume-weighted average for a short Settlement Period X on an example day = 
+£30/MWh 
+Buy Price Adjustment for Settlement Period X on example day = £6.50/MWh 
+System Buy Price = 30 + 6.50 = £36.50/MWh 
+ 
+ 
+Where in the BSC? 
+The requirement for the 
+Transmission Company to 
+send BPA/SPA in BSAD is 
+in Section Q6.3.2. 
+The BPA/SPA is then 
+used in the final 
+calculation in Section 
+T4.4.2(a) and T4.4.3(a). 
+ 
+
+25 June 2020 Version 15.0 
+© ELEXON Limited 2020 Page 31 of 59 
+Transmission Loss Multipliers (TLMs) 
+Once PAR Tagging has been completed, the balancing actions still remaining will be used  
+in the final calculation. At this stage they need to be adjusted for transmission losses. 
+What are transmission losses? 
+When electricity is transmitted over the Transmission System some energy is ‘lost’ (e.g. as 
+heat). The energy lost from the Transmission System is commonly referred to as 
+‘transmission losses’. 
+The total losses are the total energy lost from the Transmission System at any given time, 
+which equates to the difference between total metered generation and total metered 
+consumption. 
+How are transmission losses allocated? 
+Transmission Losses are allocated by scaling up or down the Metered Volume of each non 
+interconnector BM Unit. We do this via Transmission Loss Multipliers (TLMs). 
+For each Settlement Period there are two TLMs calculated for each Zone, a Delivering 
+TLM and an Offtaking TLM. The Delivering TLM applies to all non interconnector BM Units 
+that are part of a Delivering Trading Unit (net exporter) in a specific Zone. This scales 
+down the Metered Volumes. The Offtaking TLM applies to all non interconnector BM 
+Units that are part of an Offtaking Trading Unit (net importer) in a specific Zone. This 
+scales up the consumption of these units. 
+There are 14 Zones in total. The Zones are a geographic area in which the following lie: 
+ a GSP Group (there being no more than one GSP Group in any one Zone); 
+ any part of an Offshore Transmission System which connects directly to that GSP 
+Group; and/or 
+ any part of an Offshore Transmission System which connects to the onshore AC 
+Transmission System at a point within the geographic area of that GSP Group.  
+Interconnector BM Units are assigned a TLM of 1 and are therefore exempt from 
+Transmission Losses. 
+The TLM adjusted Metered Volume for each BM Unit is described as the BM Unit’s 
+‘Credited Energy’. 
+The Metered Volumes of Interconnector BM Units are not scaled for transmission losses. 
+Where do we use transmission losses in imbalance pricing? 
+The BOAs used to calculate the energy imbalance price are adjusted for transmission 
+losses. This is done in the final calculation (see below). Balancing Services Adjustment 
+Actions are adjusted by the SO before they are sent to the BSC Systems. 
+Final energy imbalance price calculation 
+For the final energy imbalance price calculation we take a volume-weighted average of the 
+balancing actions, adjust them for transmission losses and add on the BPA/SPA. Section 4 
+describes an example of how we do this. 
+ 
+ 
+Where in the BSC? 
+The transmission losses 
+calculations are defined 
+in Section T2 and Annex 
+T-2. The TLM is then 
+used in the final 
+calculation in Section 
+T4.4.2(a) and T4.4.3(a). 
+ 
+
+25 June 2020 Version 15.0 
+© ELEXON Limited 2020 Page 32 of 59 
+Default rules – what happens when there is not enough priced 
+volume? 
+There are a number of default rules which apply when the data needed to carry out the 
+pricing method is not available. 
+Replacement Price 
+In the situation where there is no Second Stage Unflagged Volume in the RPAR volume, 
+the Replacement Price will be calculated using the Market Price for that Settlement Period. 
+See Section 5 for an explanation of the Market Price pricing method. 
+NIV and PAR 
+Where there are no actions left in the NIV, the energy imbalance price will be set to equal 
+the Market Price.  
+In the situation where the volume of balancing actions is less than the PAR volume, the 
+energy imbalance price will be a volume-weighted average of the system actions 
+(whatever their volume). 
+In the situation where the Market Price is zero and the NIV is made up of 100% Second 
+Stage Flagged actions, the energy imbalance price will be also be zero. 
+LOLP and the Reserve Scarcity Price  
+If the SO doesn’t have a Gate Closure De-rated Margin Value to produce a Final LoLP 
+Value, then it uses the next available De-rated Margin value (e.g. the two hours ahead 
+forecast) to calculate a Final LoLP Value. Where no De-rated Margin Value is available to 
+produce a Final LoLP Value, then LoLP will be null. This means that RSVP will be nil. 
+ 
+Actions not included in the calculation of the energy imbalance 
+price 
+Applicable Balancing Services Volume Adjustment Data (ABSVD) 
+Applicable Balancing Services Volume Adjustment Data (ABSVD) are volume adjustments 
+to BM Units that are instructed by the SO to provide automatic frequency response and 
+other non-BM balancing actions which are not accounted for elsewhere (and therefore 
+these BM Units are in imbalance of their notified position). These volumes are identified 
+post-event by the SO. The volume calculated is removed from the Party’s Energy Account 
+and entered into the SO account. ABSVD is not included in the calculation of the energy 
+imbalance price, as it is currently not possible to calculate the volume adjustments within 
+the timescales for reporting the energy imbalance price (15 minutes after the end of the 
+Settlement Period). 
+ 
+25 June 2020 Version 15.0 
+© ELEXON Limited 2020 Page 33 of 59 
+4. Pricing calculation example 
+This section provides an example of the energy imbalance price calculation based on a 
+theoretical set of balancing actions. 
+Energy imbalance price calculation processes 
+This example will, step by step, go through the following nine stages of the calculation: 
+1. Receive Balancing Actions (Includes SO-Flagging, CADL Flagging, Emergency Flagging); 
+2. Determine STOR action price; 
+3. Rank Buy Ranked Set and Sell Ranked Set; 
+4. De Minimis Tagging and Arbitrage Tagging; 
+5. Classification; 
+6. Net Imbalance Volume (NIV) Tagging; 
+7. Replacement Price; 
+8. Price Average Reference Volume (PAR) Tagging; 
+9. Buy Price Price Adjustment (BPA) / Sell Price Price Adjustment (SPA); and 
+10. Transmission Loss Multiplier and the energy imbalance price calculation. 
+ 
+25 June 2020 Version 15.0 
+© ELEXON Limited 2020 Page 34 of 59 
+1. Receive Balancing Actions (Includes SO-Flagging, CADL 
+Flagged, Emergency Flagged) 
+For each Settlement Period, the SO matches demand to generation in real time by using 
+balancing actions (BOAs, TERRE Instructions and Balancing Services Adjustment Actions).  
+BSC Systems aggregate TERRE Instruction volumes into Volume of GB need met (VGA), 
+Replacement Reserve Aggregated Unpriced System Buy Actions (RRAUSB), and 
+Replacement Reserve Aggregated Unpriced System Sell Actions (RRAUSS). 
+The SO flags BOA’s balancing actions potentially impacted by system balancing issues (SO 
+Flagging), as well as actions which have come from STOR providers (STOR Provider 
+Flags). The BSC Systems flag actions which have duration less than CADL. SO-Flagged and 
+CADL Flagged actions are collectively called First Stage Flagged balancing actions. In the 
+example below, First Stage Flagged balancing actions are shown in blue stripes and First 
+Stage Unflagged actions are shown in orange.  STOR Provider Flagged actions are shown 
+in green. For simplicity the volumes are not shown to scale. 
+ 
+ 
+Offer 
+30MWh at £120/MWh 
+Offer 
+5MWh at £100/MWh 
+Offer 
+40MWh at £300/MWh 
+Offer 
+10MWh at £10/MWh 
+Offer 
+100MWh at £20/MWh 
+Offer 
+10MWh at £40/MWh 
+Offer 
+0.01MWh at £50/MWh 
+VGB 
+50MWh at £30/MWh 
+Bid 
+10MWh at £15/MWh 
+Bid 
+20MWh at -£30/MWh 
+RRAUSS 
+30MWh at £0/MWh 
+BSAA - Buy 
+80MWh at £150/MWh 
+BSAA - Buy 
+15MWh at £100/MWh 
+BSAA - Sell 
+10MWh at £4/MWh 
+First Stage Flagged 
+First Stage Unflagged 
+STOR Provider flagged 
+Key 
+Offers 
+ Bids 
+Balancing Services 
+Adjustment Actions 
+(BSAA) 
+25 June 2020 Version 15.0 
+© ELEXON Limited 2020 Page 35 of 59 
+2. Determine STOR action price 
+STOR actions are identified by the System Operator using a STOR Provider Flag. For BM 
+STOR the capacity’s bid offer acceptance (BOA) is flagged. Volumes for non-BM STOR are 
+fed into the imbalance price as a Balancing Service Adjustment Action (BSAA), and these 
+will also receive a STOR Provider Flag.  
+Actions derived from BOAs and BSAAs that are STOR Provider Flagged, and that are 
+accepted during STOR Availability Windows are included in the calculation of imbalance 
+prices as individual STOR actions, with a price which is the greater of: 
+ The Utilisation Price for an action (the price that STOR capacity is paid when it is 
+called upon); and 
+ The Reserve Scarcity Price (RSP), as determined by LoLP*VoLL.  
+The Loss of Load Probability is determined using the De-rated Margin, in accordance with 
+the Loss of Load Probability Calculation Statement. That LoLP is then multiplied by Value 
+of VoLL to determine the RSP.  
+In the example below, two actions have been flagged by the System Operator as having 
+come from STOR providers, and the Settlement Period is during a STOR Availability 
+window. The De-rated Margin at Gate Closure is 1,238MW, and this corresponds to a LoLP 
+of 0.0334, as determined by the LoLP Calculation Statement. The Reserve Scarcity Price is 
+therefore £200.40 (0.00334*£6,000).  
+ 
+STOR actions then become first stage unflagged, and are treated like other BOAs and 
+BSAAs for the next steps of price calculation (ranking, tagging, etc). Actions from STOR 
+plant outside the STOR Availability Windows are not re-priced.  
+ 
+Offer 
+30MWh at £220/MWh 
+BSAA - Buy 
+15MWh at £50/MWh 
+Offer 
+30MWh at £220/MWh 
+BSAA - Buy 
+15MWh at £200.40/MWh 
+Key 
+STOR provider flagged 
+First Stage Unflagged 
+Re-priced 
+Not re-priced 
+ 
+What is De-Rated 
+Margin? 
+De-rated Margin is a 
+measure of the excess 
+supply on the system, 
+which has been adjusted 
+to take account of the 
+likely availability of plant, 
+specific to each type of 
+generation technology. It 
+reflects the proportion of 
+an electricity source 
+which is likely to be 
+technically available to 
+generate when needed. 
+ 
+
+25 June 2020 Version 15.0 
+© ELEXON Limited 2020 Page 36 of 59 
+3. Formulate the Ranked Sets of balancing actions 
+The balancing actions are separated into those that increase the energy on the 
+Transmission System (buy balancing actions) and those that decrease the energy on the 
+Transmission System (sell balancing actions). They are then ranked in price order - least 
+expensive balancing action ranked first, and most expensive balancing action ranked last. 
+In the diagram below, the direction of the Sell Ranked Set is opposite (the most expensive 
+balancing action is at the bottom) to the direction of the Buy Ranked Set (the most 
+expensive balancing action is at the top). The price ranking is indicated by the arrows. 
+ 
+ 
+ 
+Offer 
+30MWh at £120/MWh 
+Offer 
+5MWh at £100/MWh 
+Offer 
+40MWh at £300/MWh 
+Offer 
+10MWh at £10/MWh 
+Offer 
+100MWh at £20/MWh 
+Offer 
+10MWh at £40/MWh 
+Offer 
+0.01MWh at £50/MWh 
+VGB 
+50MWh at £30/MWh 
+Bid 
+10MWh at £15/MWh 
+Bid 
+20MWh at -£30/MWh 
+RRAUSS  
+30MWh at £0/MWh 
+BSAA - Buy 
+80MWh at £150/MWh 
+BSAA - Buy 
+15MWh at £100/MWh 
+BSAA - Sell 
+10MWh at £4/MWh 
+First Stage Flagged 
+First Stage Unflagged 
+Key 
+25 June 2020 Version 15.0 
+© ELEXON Limited 2020 Page 37 of 59 
+4. Remove De Minimis and Arbitrage actions 
+Balancing actions which are less than DMAT are removed from the price stack. In the 
+example below one action (0.01MWh at £50/MWh) is removed by De Minimis Tagging. 
+In the example there is also a £10/MWh Offer and a £15/MWh Bid which can be removed 
+though Arbitrage Tagging. Arbitrage Tagging removes equal volumes from each Ranked 
+Set. 
+ 
+ 
+ 
+ 
+Offer 
+30MWh at £120/MWh 
+Offer 
+5MWh at £100/MWh 
+Offer 
+40MWh at £300/MWh 
+Offer 
+10MWh at £10/MWh 
+Offer 
+100MWh at £20/MWh 
+Offer 
+10MWh at £40/MWh 
+Offer 
+0.01MWh at £50/MWh 
+VGB 
+50MWh at £30/MWh 
+Bid 
+10MWh at £15/MWh 
+Bid 
+20MWh at -£30/MWh 
+RRAUSS 
+30MWh at £0/MWh 
+BSAA - Buy 
+80MWh at £150/MWh 
+BSAA - Buy 
+15MWh at £100/MWh 
+BSAA - Sell 
+10MWh at £4/MWh 
+First Stage Flagged 
+First Stage Unflagged 
+Key 
+De Minimis 
+Arbitrage 
+Arbitrage 
+25 June 2020 Version 15.0 
+© ELEXON Limited 2020 Page 38 of 59 
+5. Classification 
+Balancing actions which are First Stage Unflagged are energy balancing actions and so are 
+reclassified as Second Stage Unflagged balancing actions.  
+For each of the First Stage Flagged balancing actions, the BSC Systems consider whether 
+there is a more expensive First Stage Unflagged balancing action. If there is, the First 
+Stage Flagged balancing action is classified as a Second Stage Unflagged balancing action. 
+If there is not, then the First Stage Flagged balancing action is classified as a Second 
+Stage Flagged balancing action. 
+In this example, the 10MWh at £40/MWh balancing action becomes Second Stage 
+Unflagged. 
+ 
+ 
+ 
+Offer 
+30MWh at £120/MWh 
+Offer 
+5MWh at £100/MWh 
+Offer 
+40MWh at £300/MWh 
+Offer 
+100MWh at £20/MWh 
+Offer 
+10MWh at £40/MWh 
+VGB 
+50MWh at £30/MWh 
+Bid 
+20MWh at -£30/MWh 
+RRAUSS 
+30MWh at £0/MWh 
+BSAA - Buy 
+80MWh at £150/MWh 
+BSAA - Buy 
+15MWh at £100/MWh 
+BSAA - Sell 
+10MWh at £4/MWh 
+First Stage Flagged 
+First Stage Unflagged 
+Key 
+Offer 
+30MWh at £120/MWh 
+Offer 
+5MWh at £100/MWh 
+Offer 
+40MWh at £300/MWh 
+unpriced 
+Offer 
+100MWh at £20/MWh 
+Offer 
+10MWh at £40/MWh 
+Offer 
+50MWh at £30/MWh 
+Bid 
+20MWh at -£30/MWh  
+RRAUSS  
+30MWh at £0/MWh 
+BSAA - Buy 
+35MWh at £150/MWh 
+unpriced 
+BSAA - Buy 
+15MWh at £100/MWh 
+Second Stage Flagged 
+Second Stage Unflagged 
+BSAA - Sell 
+10MWh at £4/MWh 
+ 
+25 June 2020 Version 15.0 
+© ELEXON Limited 2020 Page 39 of 59 
+6. Net Imbalance Volume (NIV) Tagging 
+In order to establish the NIV, the volume of the smaller Sell stack is removed from the top 
+of the larger Buy stack. The Sell stack has a volume of 60MWh. The corresponding volume 
+at the top of the Buy stack removes the top Offer (40MWh), and 20MWh of the next Offer. 
+ 
+ 
+ 
+Key 
+Offer 
+30MWh at £120/MWh 
+Offer 
+5MWh at £100/MWh 
+Offer 
+40MWh at £300/MWh  
+Offer 
+100MWh at £20/MWh 
+Offer 
+10MWh at £40/MWh 
+VGB 
+50MWh at £30/MWh 
+BSAA - Sell 
+10MWh at £4/MWh 
+ 
+BSAA - Buy 
+35MWh at £150/MWh  
+BSAA - Buy 
+15MWh at £100/MWh 
+Second Stage Flagged 
+Second Stage Unflagged 
+Offer 
+30MWh at £120/MWh 
+Offer 
+5MWh at £100/MWh 
+Offer 
+100MWh at £20/MWh 
+Offer 
+10MWh at £40/MWh 
+VGB 
+50MWh at £30/MWh 
+BSAA - Buy 
+15MWh at £150/MWh  
+BSAA - Buy 
+15MWh at £100/MWh 
+285MWh 
+60MWh 
+225MWh 
+RRAUSS  
+30MWh at £0/MWh 
+Bid 
+20MWh at -£30/MWh  
+25 June 2020 Version 15.0 
+© ELEXON Limited 2020 Page 40 of 59 
+7. Replacement Price 
+BSC Systems assign a Replacement Price to any Second Stage Flagged balancing actions. 
+In the example there is a Second Stage Flagged 15MWh balancing action. 
+The Replacement Price is calculated from a volume-weighted average of the most 
+expensive 1MWh of priced balancing actions. For this example, the most expensive 1MWh 
+of priced balancing actions is set at £120/MWh.  
+Once the Second Stage Flagged balancing action is repriced, it is considered as a Second 
+Stage Unflagged balancing action. 
+Once the Replacement Price process has been completed, all balancing actions are Second 
+Stage Unflagged. 
+ 
+Key 
+Second Stage Flagged 
+Second Stage Unflagged 
+Offer 
+30MWh at £120/MWh 
+Offer 
+5MWh at £100/MWh 
+Offer 
+100MWh at £20/MWh 
+Offer 
+10MWh at £40/MWh 
+VGB 
+50MWh at £30/MWh 
+BSAA - Buy 
+15MWh at £150/MWh  
+BSAA - Buy 
+15MWh at £100/MWh 
+Offer 
+30MWh at £120/MWh 
+Offer 
+5MWh at £100/MWh 
+Offer 
+100MWh at £20/MWh 
+Offer 
+10MWh at £40/MWh 
+VGB 
+50MWh at £30/MWh 
+BSAA - Buy 
+15MWh at £120/MWh 
+BSAA - Buy 
+15MWh at £100/MWh 
+Re-priced 
+25 June 2020 Version 15.0 
+© ELEXON Limited 2020 Page 41 of 59 
+8. Price Average Reference Volume (PAR) Tagging 
+The final tagging rule is PAR Tagging. With PAR Tagging, a volume-weighted average of 
+the 1MWh of most expensive actions is used to calculate the final energy imbalance price. 
+In the example the volume of the NIV is 225MWh and PAR Tagging will use the most 
+expensive 1MWh. 
+Where there are two actions with the same price that are both the most expensive tagged 
+action, PAR tagging will proportionally tag both actions to get the volume-weighted 
+average of the 1MWh of most expensive actions. 
+ 
+ 
+9. Buy Price Price Adjustment (BPA) / Sell Price Price 
+Adjustment (SPA) 
+The NIV is positive so we use the BPA (as opposed to the SPA). For this Settlement Period, 
+the BPA which the SO sent to us is £5/MWh. See Appendix 3 for more information about 
+how the SO calculates the BPA and SPA. 
+ 
+  
+Key 
+Second Stage Unflagged 
+Offer 
+30MWh at £120/MWh 
+Offer 
+5MWh at £100/MWh 
+Offer 
+100MWh at £20/MWh 
+Offer 
+10MWh at £40/MWh 
+VGB 
+50MWh at £30/MWh 
+BSAA - Buy 
+15MWh at £120/MWh 
+BSAA - Buy 
+15MWh at £100/MWh 
+Offer 
+0.667MWh at £120/MWh 
+PAR volume 
+  
+NIV 
+  
+BSAA - Buy 
+0.333MWh at £120/MWh 
+ 
+25 June 2020 Version 15.0 
+© ELEXON Limited 2020 Page 42 of 59 
+10. Transmission Loss Multiplier and final energy imbalance price 
+calculation  
+For this Settlement Period the Transmission Loss Multiplier is assumed to be: 
+ For the BMU delivering the Offer of 0.667MWh at £120/MWh 0.99051 
+TLMs are not applied to Balancing Services Adjustment Actions as the adjustment has 
+already been made by the SO. In the example the 0.333MWh at £120/MWh balancing 
+action is not TLM adjusted. 
+Volume weighted average of PAR = ((0.667MWh x £120/MWh x 0.99051) +(0.333MWh 
+x £120/MWh) / ((0.667MWh x 0.99051) + 0.333MWh) 
+Volume weighted average of PAR = £120.00 
+System Buy Price  = £120.00 + £5/MWh 
+System Buy Price = £125.00/MWh 
+ 
+25 June 2020 Version 15.0 
+© ELEXON Limited 2020 Page 43 of 59 
+5. How does the Market Price work? 
+Introduction 
+The Market Price is used as the imbalance price when there are no actions left after 
+flagging and tagging (i.e. NIV = 0). This price reflects the wholesale electricity price. The 
+method for calculating the Market Price is set out in BSC Section T4.3A based upon 
+Market Index Data (MID) received from each Market Index Data Provider (MIDP). 
+The formula for Market Index Data is set out in the Market Index Definition 
+Statement (MIDS). The Market Price is calculated for every Settlement Period. 
+ 
+The Market Index Definition Statement 
+The Market Price is based on trading in the ‘short-term’ market. The current version of 
+the MIDS is always available on the BSC Website. The MIDS can only be changed with 
+Ofgem’s approval after industry consultation. 
+The Market Price is derived from trades made on power exchanges. Any power exchange 
+trading energy in the GB market can potentially be appointed as a MIDP. However, in 
+order to accurately reflect a market price in the ‘short-term’ market, power exchanges with 
+a significant market share of spot market trades are more likely to be appointed. 
+Each MIDP is required to derive a Market Index Price (MIP) and a Market Index 
+Volume (MIV) which, in combination, are referred to as MID for each Settlement Period. 
+The data is calculated by each MIDP in accordance with the MIDS. The MIDP is required to 
+send MID on a Settlement Period basis to the BSC Systems. 
+The MIDS contains a description of the ‘qualifying products’, which are types of contract 
+traded on the power exchanges from which the MIP and MIV are derived. The MIDS also 
+sets out the time and qualifying product weightings that should be applied when 
+calculating MID. 
+In order to reduce the likelihood that the Market Price is set by a single trade, there is an 
+Individual Liquidity Threshold (ILT). The ILT is the minimum volume of qualifying 
+products that must be equalled or exceeded for a MIDP’s data to contribute to setting the 
+Market Price in that Settlement Period. This is set high enough to reduce the likelihood 
+that the MIP is set on a single trade, but low enough that it minimises the number of 
+Settlement Periods where the MIP cannot be calculated, and hence defaults to the main 
+energy imbalance price. 
+MIDS – Structure and method 
+The MIDS splits the period deemed to constitute ‘short term’ into defined timebands. 
+Products traded in the timebands near to real time are weighted more, to ensure that they 
+have a more proportionate effect on the Market Index Price. The MIDP is required to 
+provide functionality for weighting qualifying products/timeband combinations by values 
+from 0 to 1. 
+With Ofgem’s approval, the BSC Panel may from time to time adjust the MIDS parameters 
+(qualifying products, weightings and ILT) which define the subset of power exchange 
+trades and data used for calculating the Market Price. 
+ 
+25 June 2020 Version 15.0 
+© ELEXON Limited 2020 Page 44 of 59 
+6. Imbalance charges 
+How do the BSC Systems calculate Parties’ imbalance volumes? 
+A Party’s imbalance position is simply its Metered Volumes compared to its contracted 
+volumes. The contracted volumes are adjusted for any accepted Bids and Offers or 
+delivery of Balancing Services. 
+Energy imbalance volume = Energy – (Balancing Services + contracts) 
+This results in a positive or negative volume of imbalance. 
+A negative imbalance volume means that a Party has under-contracted and is therefore 
+short of energy. A positive imbalance volume means that a Party has over-contracted and 
+is therefore long on energy. The BSC Systems calculate the imbalance volumes for all 
+Parties for every Settlement Period. 
+How do the BSC Systems calculate Parties’ imbalance cashflows? 
+Once the BSC Systems know Parties’ imbalance positions, they can calculate Parties’ 
+cashflows (imbalance charges) for each Settlement Period: 
+Energy imbalance cashflow = Energy imbalance volume x imbalance price 
+ 
+When are Parties billed for imbalance charges? 
+In order to accurately calculate imbalance charges, a complete set of metered data is 
+required. This presents a problem. The data is readily available for sites metered Half 
+Hourly. However, for Non Half Hourly sites the metered data will not be available until the 
+Meter is read manually. Because of this, the BSC Systems carry out a number of 
+Settlement Runs at pre-defined points during the year (the Settlement Calendar). 
+ 
+ 
+In addition to the Settlement Runs shown above, an Interim Information (II) Settlement 
+Run is calculated 5 Working Days after the Settlement Date.  The II Run is for information 
+only and no Parties are charged/credited after this run. 
+After the SF Run (and after all subsequent Reconciliation Runs – R1, R2, R3 and RF), 
+invoices are generated and sent out to Parties by the Funds Administration Agent (FAA). 
+The payment date for the SF run is always 29 calendar days after the Settlement Date. If 
+any volumes at RF are still under dispute then another run (DF) can be carried out when 
+the corrected data has been received.  Any Party can raise a Dispute but it is the decision 
+of the Trading Disputes Committee as to whether a DF Run is carried out. 
+ 
+SF 
+R1 
+RF 
+DF 
+~ 28 Months 
+~ 1month 
+~ 2 months 
+~4 months 
+~ 7 months 
+~ 14 months 
+Settlement Date 
+R3 
+R2 
+25 June 2020 Version 15.0 
+© ELEXON Limited 2020 Page 45 of 59 
+7. Imbalance pricing data 
+Publishing data on the BMRS 
+Imbalance pricing data is published on the Balancing Mechanism Reporting Service (BMRS) 
+by the Balancing Mechanism Reporting Agent (BMRA). The BMRS is available in two 
+services: 
+ The High Grade service is a dedicated private communications network used by the 
+BMRS to actively publish data to subscribing participants as soon as it is available; 
+and 
+ The Low Grade service is the public website, http://www.bmreports.com, on which 
+we publish the data. 
+Data is available to the High and Low Grade services at the same time, but if a Party is 
+accessing the Low Grade service it will need to use the Refresh facility to retrieve the 
+latest data as it becomes available. 
+The following imbalance pricing data is available on the BMRS for each Settlement Period: 
+ FPNs 
+ Bid-Offer Pairs 
+ BOAs (including SO-Flagging details) 
+ TERRE Instructions 
+ TERRE auction results 
+ BSAD 
+ Market Price 
+ De-Rated Margin 
+ Loss of Load Probability 
+ Reserve Scarcity Price 
+ NIV  
+ SBP/SSP 
+ 
+Settlement Reports 
+The Settlement Run information is reported through the Settlement Administration Agent 
+(SAA) I014 ‘Settlement Reports’ (SAA-I014). The SAA produces three variants of the 
+SAA-I014 for each Settlement Run for each Settlement Period: 
+ SAA-I014 sub-flow 1 – Parties’ versions; 
+ SAA-I014 sub-flow 2 – SO version; and 
+ SAA-I014 sub-flow 3 – BSCCo (ELEXON) version. 
+The SAA-I014 is electronically sent to the above recipients on a daily basis (so each daily 
+SAA-I014 contains all the Settlement Run data for that day). The SAA-I014 sub-flow 2 is 
+also available to any BSC Party that wants to download it. 
+The SAA-I014 contains all the data a Party needs to understand its imbalance position for 
+each Settlement Period. The SAA-I014 sub-flow 1 is tailored for each Party (so only 
+contains data for that Party). The SAA-I014 sub-flow 2 contains data for all Parties. This 
+includes: 
+ Party imbalance charges; 
+ Bid-Offer Pairs; 
+ BOAs (including SO-Flagging details); 
+ BSAD; 
+ Market Price; and 
+ NIV. 
+ 
+25 June 2020 Version 15.0 
+© ELEXON Limited 2020 Page 46 of 59 
+8. Glossary 
+Glossary 
+Applicable Balancing 
+Services Volume Data 
+(ABSVD) 
+Volume adjustments to BM Units that are instructed by the SO 
+to provide automatic frequency response These volumes are 
+identified post-event by the SO using a set of matrices of 
+frequency response for each individual BM Unit that provides 
+the service. 
+Arbitrage Tagging Arbitrage occurs when the price of a Buy balancing action is 
+lower than the price of a Sell balancing action. In cases of 
+arbitrage, equivalent Sell balancing actions and Buy balancing 
+actions are excluded from the energy imbalance price 
+calculation. 
+Balancing action Either a Bid-Offer Acceptance or a Balancing Services 
+Adjustment Action which is taken by the SO to balance the 
+Transmission System. 
+Balancing and 
+Settlement Code (BSC) 
+The BSC contains the rules and governance arrangements for 
+electricity balancing and settlement in Great Britain and all 
+licensed electricity companies must sign it (others may choose 
+to do so). 
+Balancing Mechanism 
+Units (BMUs) 
+BMUs represent the generation or consumption at a particular 
+location. Each Party is assigned BMUs for their Power Stations 
+or areas of demand. The BSC Systems sum up a Party’s BMU 
+volumes and contracts when they carry out the Settlement 
+calculations. 
+Balancing Services 
+Adjustment Action 
+Where the SO takes a balancing action outside the Balancing 
+Mechanism, it inputs it into the BSC Systems as a Balancing 
+Services Adjustment Action. 
+Balancing Services 
+Adjustment Data 
+(BSAD) 
+Balancing Services outside of the Balancing Mechanism are 
+submitted using Balancing Services Adjustment Data (BSAD). 
+Bid A Bid is a proposal on the Balancing Mechanism to reduce 
+generation or increase demand. 
+Bid-Offer Acceptance 
+(BOA) 
+An Offer or Bid which has been accepted by the SO to balance 
+the Transmission System. 
+BSC Panel The BSC Panel is the industry committee charged with 
+ensuring the provisions of the BSC are carried out correctly 
+and in such a manner as will promote the SO’s Transmission 
+Licence obligations, the efficient, economic and co-ordinated 
+operation of the Transmission System and effective 
+competition in the generation, supply, sale and purchase of 
+electricity. 
+BSC Parties (Parties) Organisations which have signed up to the Balancing and 
+Settlement Code. 
+Buy Price Price 
+Adjustment (BPA) 
+The BPA is a reflection of the costs to the SO of regulating 
+reserve and BM start-up. It is added when the NIV is positive. 
+CADL Flagged A BOA which is less than the CADL in duration and has been 
+flagged by the BSC Systems. 
+CADL Flagging BOAs which are less than the CADL in duration are flagged by 
+the BSC Systems. 
+25 June 2020 Version 15.0 
+© ELEXON Limited 2020 Page 47 of 59 
+Glossary 
+Classification The process by which the BSC Systems distinguish whether a 
+First Stage Flagged Action is an energy balancing or a system 
+balancing action. 
+Continuous Acceptance 
+Duration Limit (CADL) 
+The time limit that distinguishes between short-duration 
+balancing actions. The current CADL is 10 minutes, as it 
+reduced on 1 April 2019 from 15 minutes. It may be altered 
+by the BSC Panel with Ofgem’s approval, after consultation 
+with the SO and Parties.  
+De Minimis Acceptance 
+Threshold (DMAT) 
+The DMAT is 1MWh. The Panel can alter the DMAT with 
+Ofgem’s approval after consultation with the SO and Parties. 
+On 1 April 2019, DMAT reduced from 1MWh to 0.1MWh. 
+De Minimis Tagging Balancing actions with a volume less than DMAT are 
+completely removed from the energy imbalance price 
+calculation. 
+Demand Control A last resort balancing action if the System Operator is unable 
+to call on Bids and Offers or other Balancing Services to meet 
+the current demand.  When the SO issues a ‘Demand Control 
+Instruction’ it will instruct the Distribution Network Operators 
+to reduce demand on their Distribution Systems, either 
+through reducing voltage across the network and/or 
+disconnecting consumers. 
+Demand Control 
+Instruction  
+An instruction from the SO to the Distribution Network 
+Operators to reduce demand on their Distribution Systems, 
+either through reducing voltage across the network and/or 
+disconnecting consumers. 
+Demand Control 
+Volume   
+The amount of electricity that is subject to a Demand Control 
+Instruction 
+De-Rated Margin De-rated Margin is a measure of the excess supply on the 
+system, which has been adjusted to take account of the likely 
+availability of plant, specific to each type of generation 
+technology. It reflects the proportion of an electricity source 
+which is likely to be technically available to generate when 
+needed. 
+Distribution Network The lower voltage network which supplies electricity from the 
+Transmission System to customers. 
+Emergency Acceptance An Emergency Instruction taken for energy balancing reasons. 
+Emergency Flagged An Emergency Instruction taken for potentially system 
+balancing reasons. 
+Energy balancing Balancing actions taken to balance the short-term energy 
+imbalance of the Transmission System. 
+Energy imbalance price The energy imbalance price is calculated using the balancing 
+actions that the SO accepted for that Settlement Period. 
+Parties will pay the energy imbalance price when they are 
+short, and are paid the energy imbalance price when they are 
+long. 
+Energy Contract 
+Volume Aggregation 
+Agent (ECVAA) 
+The BSC System responsible for aggregating ECVNs. 
+25 June 2020 Version 15.0 
+© ELEXON Limited 2020 Page 48 of 59 
+Glossary 
+Energy Contract 
+Volume Notification 
+(ECVN) 
+A notification of a bilateral contract between Parties. ECVNs 
+must be submitted before the beginning of the relevant 
+Settlement period. 
+Final Physical 
+Notification (FPN) 
+Once Gate Closure has occurred for a Settlement Period the 
+latest Physical Notifications become Final Physical 
+Notifications. 
+First Stage Flagged 
+balancing action 
+A balancing action taken for potentially system balancing 
+reasons (SO-Flagged, Emergency Flagged or CADL Flagged). 
+First Stage Unflagged 
+balancing action 
+An energy balancing action. At Classification, a First Stage 
+Unflagged balancing action will automatically become a 
+Second Stage Unflagged balancing action. It will also keep its 
+original price. 
+Gate Closure One hour before each Settlement Period the physical positions 
+of Parties are frozen.  
+Generators Organisations that produce electricity. 
+Individual Liquidity 
+Threshold (ILT) 
+The ILT sets a minimum requirement for the volume of trades 
+in a given Settlement Period for each MIDP. The ILT is 
+currently set to 25MWh and can be altered through a change 
+to the Market Index Definition Statement by the Panel with 
+Ofgem’s approval and after industry consultation. 
+Largest Loss Reserve  The Largest Loss Reserve represents the margin that the SO 
+will always hold to protect against the instantaneous loss of 
+the prevailing largest infeed into the system (e.g. a large 
+generator). 
+Loss of Load 
+Probability (LOLP) 
+Loss of Load Probability (LOLP) is a measure of reliability that 
+will be calculated for each Settlement Period. For a given level 
+of MW demand on the system the associated LoLP indicates 
+the probability that there will be insufficient generating supply 
+to meet the capacity requirement. This methodology is set out 
+in the Loss of Load Probability Calculation Statement. Since 1 
+November 2018, the dynamic method has been used to 
+calculate LOLP. 
+Market Index Data 
+(MID) 
+The combination of Market Index Price and Market Index 
+Volume derived by each MIDP for each Settlement Period. 
+Market Index Data 
+Provider (MIDP) 
+A provider of Market Index Data. 
+Market Index 
+Definition Statement 
+(MIDS) 
+The MIDS sets out the method for calculating the Market Price 
+Market Index Price 
+(MIP) 
+The price derived by each MIDP for each Settlement Period 
+based on the short-term trades on its power exchanges made 
+in accordance with the MIDS. 
+Market Index Volume 
+(MIV) 
+The volume derived by each MIDP for each Settlement Period 
+based on the short-term trades on its power exchanges made 
+in accordance with the MIDS. 
+Market Price The Market Price is calculated from the MID received from 
+each MIDP for each Settlement Period. It is intended to reflect 
+the price a Party would have obtained if it had bought or sold 
+its imbalance on a power exchange. 
+25 June 2020 Version 15.0 
+© ELEXON Limited 2020 Page 49 of 59 
+Glossary 
+National Grid Electricity 
+System Operator 
+(NETSO) 
+From 1 April 2019, the Electricity System Operator became 
+known as National Grid Electricity System Operator (NETSO), 
+following its legal separation from National Grid Electricity 
+Transmission (NGET). It remains part of the National Grid 
+Group. 
+Net Imbalance Volume 
+(NIV) 
+The remaining volume following NIV Tagging. 
+Net Imbalance Volume 
+Tagging 
+The volume of the Buy balancing actions are netted off 
+against the volume of Sell balancing actions so that only the 
+Net Imbalance Volume is used in the final calculation. 
+Offer An Offer is a proposal on the Balancing Mechanism to 
+increase generation or reduce demand. 
+Physical Notifications Physical Notifications contain details of a generator’s expected 
+level of generation or a Supplier’s expected level of demand. 
+Generators and Suppliers must submit Physical Notifications 
+for each BMU to the SO for each Settlement Period. 
+Price Average 
+Reference volume 
+(PAR) 
+The Price Average Reference volume is the most expensively 
+priced 1MWh of balancing actions in the Net Imbalance 
+Volume. 
+Ranked Set Once all the BSC Systems have received all the balancing 
+actions from the SO they are ranked in price order in two 
+separate Ranked Sets (one for all the Sell balancing actions 
+and one for Buy balancing actions). 
+Reserve Scarcity Price  A pricing mechanism used to re-price balancing actions from 
+STOR plant when they are used during STOR Availability 
+Windows, and when their Utilisation Prices are lower than the 
+Reserve Scarcity Price.  The RSP is determined by LoLP*VoLL. 
+Replacement Price The price assigned to Second Stage Flagged balancing actions 
+which enter the Net Imbalance Volume. The Replacement 
+Price is calculated from a volume-weighted average of the 
+most expensively priced 1MWh of priced actions.  
+Replacement Price 
+Average Reference 
+volume (RPAR) 
+The Replacement Price is calculated from a volume-weighted 
+average of the most expensively priced 1MWh of priced 
+actions. This is known as the Replacement Price Average 
+Reference Volume (RPAR). 
+Replacement Reserve 
+Aggregated Unpriced 
+System Buy Actions 
+(RRAUSB) 
+Unpriced volume resulting from GB or International need for a 
+volume of positive (buy stack) balancing energy. 
+Replacement Reserve 
+Aggregated Unpriced 
+System Sell Actions 
+(RRAUSS) 
+Unpriced volume resulting from GB/International need for a 
+volume of negative (sell stack) balancing energy. 
+Second Stage Flagged 
+balancing action 
+A system balancing action which becomes repriced by the 
+Replacement Price. 
+Second Stage 
+Unflagged balancing 
+action 
+An energy balancing action which keeps its original price. 
+25 June 2020 Version 15.0 
+© ELEXON Limited 2020 Page 50 of 59 
+Glossary 
+Sell Price Price 
+Adjustment (SPA) 
+The SPA is a reflection of option fees for negative reserve and 
+forward contracts. It is added when the Net Imbalance 
+Volume is positive. 
+Settlement Period The basic trading period for electricity is half an hour and is 
+called a Settlement Period. Each day is split into 48 
+Settlement Period units (unless it is a day where the clocks 
+change, which has either 46 or 50 half hours). 
+Short Term Operating 
+Reserve (STOR) 
+One form of balancing reserve procured by the SO.  
+SO-Flagged A balancing action which has been flagged by the SO. 
+SO-Flagging The process by which the SO identifies or ‘flags’ balancing 
+actions which have been impacted by transmission 
+constraints. 
+STOR Availability 
+Window 
+The time during which providers of STOR are required to be 
+available.  
+STOR Provider Flag A flag which identifies a STOR provider.  
+Submission Deadline The time at which a Parties contracted position must be 
+notified to ELEXON. This is currently set at before the start of 
+the relevant Settlement Period. 
+Suppliers Organisations that supply electricity to their customers. 
+System balancing Balancing actions taken for non-energy, system-management 
+reasons. 
+System Buy Price 
+(SBP) 
+If a Party has under-generated or over-demanded it will have 
+to buy that shortfall of energy from the Transmission System. 
+To do this it pays System Buy Price (SBP). 
+System Management 
+Action Flagging 
+Methodology 
+Statement 
+The statement required by the Transmission License which 
+details the SO’s methodology for SO-Flagging. 
+System Operator (SO) National Electricity Transmission System Operator (NETSO) is 
+the System Operator (SO), and is required to balance the 
+Transmission System.  
+System Sell Price (SSP) If a Party has over-generated or under-demanded it will have 
+to sell that extra energy to the Transmission System. To do 
+this it is paid System Sell Price (SSP). 
+Transmission 
+constraint 
+Any limit on the ability of the Transmission System, or any 
+part of it, to transmit power to a location which demands it. 
+Transmission Loss 
+Multiplier (TLM) 
+The value calculated for each Settlement Period and used to 
+scale each BM Unit’s Metered Volume for Settlement 
+depending on the season and the BM Unit’s geographical 
+zone. Transmission losses are allocated so that: 
+ 45% of losses are allocated across non-Interconnector BM 
+Units in net delivering Trading Units; 
+ 55% of losses are allocated across non-Interconnector BM 
+Units in net offtaking Trading Units; and 
+ Interconnector BM Units have a TLM of 1 applied and 0% 
+of losses are allocated to these BM Units. 
+25 June 2020 Version 15.0 
+© ELEXON Limited 2020 Page 51 of 59 
+Glossary 
+Transmission System The high voltage network that transports electricity 
+throughout Great Britain. The Transmission System delivers 
+electricity to the lower voltage Distribution Networks which in 
+turn supply electricity to customers. 
+Transmission System 
+length / net imbalance 
+The net imbalance of the Transmission System. When there is 
+not enough generation is Transmission System is ‘short’. 
+When there is too much generation the Transmission System 
+is ‘long’. 
+Trans European 
+Replacement Reserves 
+Exchange (TERRE) 
+A platform for trading balancing services volumes between 
+participating System Operators. 
+Value of Lost Load 
+(VoLL) 
+VoLL is a defined parameter in the BSC and is based on an 
+assessment of the average value that electricity consumers 
+attribute to the security of supply. It is currently set at 
+£6,000/MWh. 
+Volume of GB need 
+met (VGB) 
+The volume of GB need that has been met by trades through 
+the TERRE platform. 
+Voltage Reduction  One action that Distribution Network Operators can take 
+following a Demand Control Instruction.  
+ 
+25 June 2020 Version 15.0 
+© ELEXON Limited 2020 Page 52 of 59 
+9. Appendix 1 – The Reserve Scarcity Price  
+What is Short Term Operating Reserve (STOR)? 
+In addition to balancing actions called upon in the balancing mechanism, the SO can enter 
+into contracts with capacity to deliver when called upon. These additional sources of 
+power are referred to as reserve. Most of the reserve that the SO procures is called Short 
+Term Operating Reserve (STOR). 
+The SO procures STOR ahead of time via a competitive tender process. Under STOR 
+contracts, availability payments are made to the balancing service provider in return for 
+the capacity being made available to the SO during specific times (STOR Availability 
+Windows). When STOR is called upon, the SO pays for its use at a pre-agreed price (its 
+Utilisation Price).  Some STOR is dispatched in the balancing mechanism (BM STOR) while 
+some is dispatched separately (Non-BM STOR). 
+All STOR is included in the calculation of Imbalance Prices as STOR Actions. The price 
+attributed to a STOR Action depends on its Utilisation Price and prevailing market 
+conditions. 
+Why are STOR Actions re-priced?  
+STOR Actions may be re-priced because of how STOR is procured by the SO, and how this 
+can affect how its costs are reflected in the imbalance price calculation.  
+There are two main differences between how STOR is procured compared to most 
+balancing energy (e.g. bids and offers in the balancing mechanism). Firstly STOR is 
+procured by the System Operator before it is needed, sometimes months before it is 
+actually used. This means that the price paid to STOR capacity when it is used (its 
+Utilisation Price) has been pre-agreed in a STOR contract. Prices for bids and offers 
+submitted into the balancing mechanism, on the other hand, can be updated up until an 
+hour ahead of the beginning of a Settlement Period (Gate Closure). Secondly STOR 
+providers also receive availability payments for the periods when they are available for the 
+SO. This separate stream of revenue means that – unlike Bids and Offers accepted in the 
+balancing mechanism – STOR providers do not earn all their revenue when they are 
+utilised. 
+The combination of these two factors means that the Utilisation Prices STOR plant are paid 
+when called upon may be noticeably different to the price the SO may have paid had it 
+called upon a non-STOR balancing mechanism action. To correct this, we now use a 
+pricing mechanism to determine a Reserve Scarcity Price which can be applied to STOR 
+actions. 
+Key terms: The Reserve Scarcity Function (RSVP), Loss of Load 
+Probability (LoLP) and Value of Lost Load (VoLL) 
+The Reserve Scarcity Price function is a pricing mechanism designed to respond to 
+system scarcity so that STOR Actions better reflect prevailing market conditions. The 
+pricing function produces the Reserve Scarcity Price (RSVP) that rises as the system gets 
+tighter (i.e. the gap between available and required generation narrows). 
+The RSP is calculated for each settlement period as the product of a measure of system 
+reliability called Loss of Load Probability (LoLP) and the Value of Lost Load (VoLL). 
+25 June 2020 Version 15.0 
+© ELEXON Limited 2020 Page 53 of 59 
+The LoLP is a measure of reliability that will be calculated for each Settlement Period. For 
+a given level of MW demand on the system the associated LoLP indicates the probability 
+that there will be insufficient generating supply to meet the capacity requirement.  LOLP is 
+a value between 0 and 1. 
+STOR is designed to protect against emergency actions, such as Demand Control actions, 
+which may result in customers being disconnected. If customers are disconnected, these 
+volumes are priced at the Value of Lost Load (VoLL). VoLL is a defined parameter in 
+the BSC and is based on an assessment of the average value that electricity consumers 
+attribute to the security of supply. It is currently set at £6,000/MWh1. 
+Based on the principle that the chance of load being lost increases as the margin tightens, 
+the RSVP is calculated as the product of: 
+ the LoLP, as determined by the SO at Gate Closure for each Settlement Period; 
+and 
+ the Value of Lost Load (VoLL), currently set at £6,000/MWh. 
+How are STOR actions re-priced? 
+Capacity that provide STOR are first identified by the System Operator using a ‘STOR 
+Provider Flag’. For BM STOR the relevant bid offer acceptance (BOA) is flagged. Volumes 
+for non-BM STOR are fed into the imbalance price as a Balancing Service Adjustment 
+Action (BSAA), which will also receive a STOR Provider flag. 
+All STOR is included in the calculation of Imbalance Prices but if STOR Actions are 
+accepted during STOR Availability Windows they may be re-priced. They are included 
+in the calculation of imbalance prices as individual actions, with a price which is the 
+greater of: 
+ The Utilisation Price for an action (the price that STOR capacity is paid when it is 
+called upon); and 
+ The Reserve Scarcity Price (RSVP), as determined by LoLP*VoLL. 
+                                                            
+1 In accordance with Approved Modification P305, the VoLL has risen to £6000/MWh since 1 November 2018. 
+Prior to this, VoLL was set at £3,000/MWh. 
+25 June 2020 Version 15.0 
+© ELEXON Limited 2020 Page 54 of 59 
+ 
+Re-priced STOR actions are then treated like other BOAs for the next steps of price 
+calculation (ranking, tagging, etc). Actions from STOR plant outside the STOR Availability 
+Windows are not re-priced. 
+How does the SO calculate LoLP? 
+LoLP is a measure of reliability that is calculated for each Settlement Period.  It reflects the 
+probability that there will be insufficient generating supply to meet a given level of 
+demand. The full LoLP calculation is set out in the LoLP Methodology Calculation 
+Statement. At its simplest, the metric measures the probability that available generation 
+will be greater than the capacity requirement, i.e.: 
+LoLP = P(Z – D < 0) 
+Z represents generation, where  
+Z = De-Rated conventional generation + wind forecast 
+D represents demand, where: 
+D = System Demand + Largest Loss Reserve – Non-BM STOR 
+Generating capacity reflects the De-rated Margin of available conventional plant 
+(including BM STOR plant). De-rated Margin is a measure of the excess supply on the 
+system, which has been adjusted to take account of the likely availability of plant, specific 
+to each type of generation technology. It reflects the proportion of an electricity source 
+which is likely to be technically available to generate when needed. 
+Total System Demand includes a measure of demand for GB customers, interconnector 
+flows (exports are positive; imports are negative), transmission losses on the transmission 
+network and the demand from power stations. The Largest Loss Reserve represents the 
+margin that the SO will always hold to protect against the instantaneous loss of the 
+prevailing largest infeed into the system (eg a large generator).  Non-BM STOR volumes 
+are subtracted as they are not included in the conventional generation calculation. 
+Dynamic Methods 
+Action retains 
+original price 
+Does the action relate to a Settlement 
+Period during a STOR availability window?  
+Is the action’s Utilisation Price greater or less than the 
+Reserve Scarcity Price?  
+Action is re-priced at Reserve Scarcity Price 
+No 
+RSP < 
+Utilisation 
+ 
+No 
+Yes 
+Yes 
+RSP > 
+Utilisation 
+Does the action relate to a BOA or BSAA that has a STOR 
+Provider Flag? 
+25 June 2020 Version 15.0 
+© ELEXON Limited 2020 Page 55 of 59 
+Since 1 November 2018, LoLP has been calculated using a dynamic function. The SO 
+calculates LoLP for each settlement period using up-to-date information and sends this to 
+ELEXON for use in the Imbalance Price Calculation. More information on this function can 
+be found in the Loss of Load Probability Statement. 
+When is LOLP published? 
+In the run-up to Gate Closure, ELEXON publishes the Transmission Company’s forecasts of 
+the De-rated Margin and Indicative LoLPs on the BMRS. Forecasts are published, as a 
+minimum, at midday the day before the relevant settlement period, as well as eight, four, 
+two and one hour(s) prior to the start of each Settlement Period. The one hour ahead 
+(Gate Closure) value is used to determine the Final LoLP, which is used in the calculation 
+of the RSP for that Settlement Period. Participants can use the forecast information to 
+derive their own estimate of the LoLP value in the run-up to Gate Closure, and the 
+intention is that this provides a better signal of potentially tightening margins. 
+25 June 2020 Version 15.0 
+© ELEXON Limited 2020 Page 56 of 59 
+10. Appendix 2 – Demand Control actions 
+The SO can use Demand Control actions, only as a last resort to balance the system in the 
+rare event that there is insufficient capacity in the market to meet demand If used they 
+will be included in the imbalance price calculation at a price of Value of Lost Load (VoLL).  
+What is Demand Control? 
+If the SO is unable to call on Bids and Offers or other Balancing Services to meet the 
+current demand, then it can instruct Demand Control as a last resort emergency action to 
+manage the situation. When it issues a ‘Demand Control Instruction’ it will instruct the 
+Distribution Network Operators to reduce demand on their Distribution Systems, either 
+through reducing voltage across the network and/or disconnecting consumers. 
+Reflecting Demand Control in the imbalance price 
+For each Settlement Period affected by a Demand Control Event, the Transmission 
+Company will provide ELEXON with an estimate of the volume associated with the Demand 
+Control Instructions on a per DNO basis. This volume (the Demand Control Volume) is 
+included in the Imbalance Price calculation as if it was an Offer priced at VoLL. It is then 
+subject to the normal rules for calculating the Imbalance Price, including the flagging and 
+tagging rules. The Transmission Company has a reasonable endeavours requirement to 
+provide to ELEXON an estimate of the volumes in time for the indicative Imbalance Price 
+calculated 15 minutes after a Settlement Period. 
+Reflecting Demand Control in suppliers’ imbalance positions  
+Demand Control Events will also affect the imbalance positions of the suppliers of those 
+customers who have been disconnected. In particular, Demand Control will show as lower 
+demand and these suppliers will have a ‘longer’ imbalance position than they would have 
+otherwise had. 
+A ‘bottom-up’ approach is used to calculate the likely impact of Demand Control on 
+individual Supplier BM Units, i.e. specifically a Demand Disconnection volume2, which is 
+used to correct affected suppliers’ imbalance positions to reflect their likely position had 
+their not been Demand Control. This approach involves identifying the individual 
+customers affected and estimating what they would have consumed had the disconnection 
+not taken place. ELEXON add this estimate of consumption (minus an estimate for any 
+voluntary actions requested by the SO, such as demand side Non-BM STOR) to suppliers’ 
+imbalance positions as Balancing Services. This adjusts their imbalance position back to 
+what it would have been had their customers not been subjected to the involuntary 
+disconnections. This process is carried out in time for the Initial Settlement Run (SF). This 
+process is set out in more detail in BSC Section S, the BSCPs and in the Demand Control 
+Guidance Document. 
+                                                            
+2 At this stage, a method for estimating and adjusting imbalance volumes to reflect Voltage Reduction actions has 
+not been developed. 
+ 
+Where in the BSC? 
+The processes relating to 
+Demand Control 
+Instructions are set out in 
+Section Q.6.9 
+ 
+
+25 June 2020 Version 15.0 
+© ELEXON Limited 2020 Page 57 of 59 
+11. Appendix 3 – The BPA and SPA 
+The BPA/SPA is a reflection of the costs to the SO of regulating reserve and BM start-up. 
+The SPA is made up of option fees for negative reserve and forward contracts. 
+In practice, the BPA impacts the energy imbalance price calculation more frequently than 
+the SPA. This is primarily because option fees for negative reserve and forward contracts 
+occur relatively infrequently compared with regulating reserve and BM start-up availability 
+fees. 
+BM start up 
+The SO instructs BM start up units to meet identified additional plant requirements over 
+the peaks. The SO does this for a requirement period (or ‘window’). The costs of BM start-
+up are then targeted at the Settlement Periods within this window. 
+The BM start up component (BPA BMSU) is procured on the day. The cost is allocated 
+through the BPA based on the requirement window. The option fee for BM start up is paid 
+hourly from the time it is instructed and not in full at the time of instruction. 
+As an example, assume that the SO concurrently instructs three BM start-ups at an eight 
+hour lead time to meet a requirement of 1500MW for two hours in the future. Each BM 
+start-up provides 500MW. Getting closer to the requirement window, the SO requires less 
+of the BM start-up plant and progressively cancels the prior instructions as shown in the 
+diagram below. All BM start up in the example is paid at a rate of £2000/hr. 
+ 
+BM start-up component example 
+ 
+BPA BMSU is then calculated based on summing the per-hour cost of the BM start-ups 
+instructed (and not cancelled) and dividing it by the MWh requirement for that hour. This 
+gives a cost in £/MWh for that hour. These are then summed from the initial instruction 
+until the target time (or the last BM start-up is cancelled). This cost is then allocated to 
+each Settlement Period within the requirement window in which the system is short.  
+Therefore, in the example, the cost for the first hour of the instruction (target time minus 
+eight hours to target time minus seven hours) is three BM start-ups at £2000 = £6000. 
+The total BM start-up volume gained (for the window) over the hour was 3000MWh. This 
+gives a cost for that hour of £2/MWh. 
+This needs to be repeated for the entire time in which the BM start-up was instructed (and 
+not cancelled). 
+This can be seen in the table below. 
+ 
+BM Start-Up (BMSU) Lead Time 
+8 
+ 7 
+ 6 
+ 5 
+ 4 
+ 3 
+ 2 
+ 1 
+ 0 
+Instruct 
+BMSU 1, 
+2 & 3 
+Cancel 
+BMSU 1 
+Cancel 
+BMSU 2 
+Target 
+Time 
+BMSU 1 
+BMSU 2 
+BMSU 3 
+Requirement 
+period for BMSU 
+3 
+500 MW 
+1000 MW 
+1500 MW 
+MW 
+Capacity 
+time (h) 
+25 June 2020 Version 15.0 
+© ELEXON Limited 2020 Page 58 of 59 
+BM start-up example 
+ 
+Lead time (hours) T-8 
+to  
+T-7 
+T-7 
+to  
+T-6 
+T-6 
+to  
+T-5 
+T-5 
+to  
+T-4 
+T-4 
+to 
+T-3 
+T-3 
+to  
+T-2 
+T-2 
+to  
+T-1 
+T-1 to 
+Target 
+time 
+Total cost for this 
+lead time (£) 
+6000 6000 4000 4000 2000 2000 2000 2000 
+Total volume 
+(MWh) 
+3000 3000 2000 2000 1000 1000 1000 1000 
+Cost/volume 
+(£/MWh) 
+2 2 2 2 2 2 2 2 
+ 
+Then to sum the total £/MWh cost incurred by the instruction of BM start-up we need to 
+add the bottom row of the table. This gives: 
+BPA BMSU = (2+2+2+2+2+2+2+2) = £16/MWh. (3) 
+Therefore £16/MWh is added to the calculation of the BPA for those Settlement Periods 
+within the requirement window. The BPA is then added to energy imbalance price when 
+the system is short.  
+Combining the Examples 
+The total BPA sums the BPA calculated for STOR and that calculated for BM start-up. This 
+gives: 
+BPA = BPASTOR + BPABMSU 
+If we assume that the requirement window of BPABMSU fell in Settlement Period 1 of the 
+BPASTOR example then: 
+BPA = £2.60/MWh + £16/MWh = £18.60/MWh (2) + (3) 
+Furthermore, if we assume that this BPA was for the energy imbalance price calculated in 
+the Section 3 example (where (1) is the volume weighted price of actions in the PAR 
+stack) we get a SBP of: 
+SBP = £29.60 + £18.60 = £48.20/MWh (1) + (2) + (3) 
+  
+25 June 2020 Version 15.0 
+© ELEXON Limited 2020 Page 59 of 59 
+Need more information? 
+For more information please contact the BSC Service Desk at bscservicedesk@cgi.com 
+or call 0370 010 6950. 
+Also see: 
+ BSC Section T: Settlement and Trading Charges 
+ Guidance Note: Settlement Cashflows 
+ 
+Intellectual Property Rights, Copyright and Disclaimer 
+The copyright and other intellectual property rights in this document are vested in ELEXON or appear with the consent 
+of the copyright owner. These materials are made available for you for the purposes of your participation in the electricity 
+industry. If you have an interest in the electricity industry, you may view, download, copy, distribute, modify, transmit, 
+publish, sell or create derivative works (in whatever format) from this document or  in other cases use for personal 
+academic or other non -commercial purposes. All copyright and other proprietary notices contained in the document 
+must be retained on any copy you make. 
+All other rights of the copyright owner not expressly dealt with above are reserved. 
+No representation, warranty or guarantee is made that the information in this document is accurate or complete. While 
+care is taken in the collection and provision of this information, ELEXON Limited shall not be liable for any errors, 
+omissions, misstatements or mistakes in any information or damages resulting from the use of this information or action 
+taken in reliance on it. 
+ 

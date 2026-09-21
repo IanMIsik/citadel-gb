@@ -1,0 +1,41 @@
+[project]
+name = "citadel"
+version = "0.1.0"
+description = "Real-time GB Balancing Mechanism imbalance-price stack"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "httpx>=0.27",
+    "pandas>=2.2,<3",  # engine/stack.py round-trips datetimes through pd.to_numeric/pd.to_datetime
+    # assuming nanosecond resolution (pandas <3's universal default) -- pandas 3.x's
+    # microsecond-resolution default silently corrupts that round-trip (confirmed live:
+    # settlementDate came back as 1970-01-21 instead of 2026-09-18). Revisit only after
+    # auditing and fixing every such round-trip in stack.py for the new default.
+    "numpy>=1.26",
+    "asyncpg>=0.29",
+    "pydantic-settings>=2.4",
+    "azure-servicebus>=7.12",
+    "azure-identity>=1.17",
+    "aiohttp>=3.9",  # azure-identity's async credential needs an async HTTP transport;
+    # confirmed live -- omitting this fails with "aiohttp package is not installed"
+    # the moment the IRIS consumer tries to authenticate.
+    "python-dateutil>=2.9",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.24"]
+
+[project.scripts]
+citadel = "citadel.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["citadel*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"

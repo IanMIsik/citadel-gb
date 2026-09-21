@@ -1,0 +1,60 @@
+.grid-container {
+  display: grid;
+  grid-template-columns: 295px 1fr;
+  grid-gap: 90px;
+}
+
+.btn-primary {
+  background-color: aliceblue !important;
+  color: black;
+  border-color: black !important;
+}
+
+.sp-btns:hover {
+  color: black;
+  background-color: #007bff;
+}
+
+.focus {
+  background-color: aliceblue !important;
+  color: black !important;
+}
+
+.active {
+  background-color: #007bff !important;
+  color: black !important;
+}
+
+#sp-control-table {
+  display: flex;
+  margin-left: 195px;
+}
+
+.pricing-stack-text {
+  font-size: 10.2px;
+  text-align: center;
+  vertical-align: middle;
+}
+
+.flagged-btn {
+  font-size: 12px;
+}
+
+.total {
+  font-weight: bold;
+  font-size: 12px;
+  color: black;
+  background-color: rgb(218, 255, 255);
+}
+
+.custom-border {
+  border-bottom: 5px solid #666;
+}
+
+#ps-table{
+  width: 370px;
+  margin-top:5px;
+}
+.grid-container{
+  width:300px;
+}

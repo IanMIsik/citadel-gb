@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Citadel — FPN Analytics</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <header>
+    <h1>FPN Analytics</h1>
+    <span id="connection-status" class="disconnected">connecting…</span>
+  </header>
+  <nav class="top-nav">
+    <a href="/">Pricing Stack</a>
+    <a href="/fpn" class="active">FPN Analytics</a>
+  </nav>
+
+  <main id="fpn-page">
+    <div class="fpn-columns">
+      <!-- Left column: the per-fuel-type / per-SP pivot tables, same order
+           as the original dashboard's own stacked "charts" tables. -->
+      <section class="fpn-col fpn-col-left">
+        <div class="graph-container">
+          <h2>FPN by fuel type</h2>
+          <div class="fpn-table-wrap"><table id="tbl-fpn-by-fuel"><thead><tr></tr></thead><tbody></tbody></table></div>
+        </div>
+        <div class="graph-container">
+          <h2>FPN delta (vs next SP)</h2>
+          <div class="fpn-table-wrap"><table id="tbl-fpn-delta"><thead><tr></tr></thead><tbody></tbody></table></div>
+        </div>
+        <div class="graph-container">
+          <h2>MEL/MIL drop</h2>
+          <div class="fpn-table-wrap"><table id="tbl-mel-mil-drop"><thead><tr></tr></thead><tbody></tbody></table></div>
+        </div>
+        <div class="graph-container">
+          <h2>Market gen vs adjusted FPN</h2>
+          <div class="fpn-table-wrap"><table id="tbl-market-gen-vs-adj-fpn"><thead><tr></tr></thead><tbody></tbody></table></div>
+        </div>
+        <div class="graph-container">
+          <h2>AUC / delta / niv error / dmd risk / dmd error / unexp</h2>
+          <div class="fpn-table-wrap">
+            <table id="tbl-decision-drivers">
+              <thead><tr><th>SP</th><th>AUC</th><th>Delta</th><th>NIV error</th><th>Dmd risk</th><th>Dmd error</th><th>Unexp</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="graph-container">
+          <h2>Decision table</h2>
+          <div class="fpn-table-wrap">
+            <table id="tbl-decision">
+              <thead><tr><th>SP</th><th>NIV estimate</th><th>AUC</th><th>Wind dev.</th><th>Other gen dev.</th><th>Dmd error</th><th>Unexp</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- Right column: the three headline charts, then the two
+           generation-by-fuel-type tables (interconnectors, then others). -->
+      <section class="fpn-col fpn-col-right">
+        <div class="decision-summary" id="decision-summary">
+          <div class="decision-figure headline">
+            <span class="label">NIV estimate</span>
+            <span class="value" id="ds-niv-estimate">--</span>
+          </div>
+          <div class="decision-figure">
+            <span class="label">Area under curve</span>
+            <span class="value" id="ds-auc-av">--</span>
+          </div>
+          <div class="decision-figure">
+            <span class="label">Unexplained delta</span>
+            <span class="value" id="ds-unexp-delta">--</span>
+          </div>
+        </div>
+
+        <div class="graph-container tall">
+          <h2>Generation</h2>
+          <canvas class="chartjs_canvas" id="generation-chart"></canvas>
+          <ul class="chart-legend" id="generation-legend"></ul>
+        </div>
+
+        <div class="graph-container">
+          <h2>Delta</h2>
+          <canvas class="chartjs_canvas" id="delta-chart"></canvas>
+          <ul class="chart-legend" id="delta-legend"></ul>
+        </div>
+
+        <div class="graph-container">
+          <h2>Over/under generation</h2>
+          <canvas class="chartjs_canvas" id="over-under-chart"></canvas>
+        </div>
+
+        <div class="graph-container">
+          <h2>Interconnector generation</h2>
+          <div class="fpn-table-wrap"><table id="tbl-interconnector-gen"><thead><tr></tr></thead><tbody></tbody></table></div>
+        </div>
+
+        <div class="graph-container">
+          <h2>Generation by fuel type</h2>
+          <div class="fpn-table-wrap"><table id="tbl-other-gen"><thead><tr></tr></thead><tbody></tbody></table></div>
+        </div>
+
+        <div class="graph-container">
+          <h2>Worst deviants</h2>
+          <div class="fpn-table-wrap">
+            <table id="worst-deviants-table">
+              <thead>
+                <tr><th>BM Unit</th><th>Fuel</th><th>FPN</th><th>Adjusted FPN</th><th>MEL/MIL downside</th></tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <script src="/static/fpn.js"></script>
+</body>
+</html>

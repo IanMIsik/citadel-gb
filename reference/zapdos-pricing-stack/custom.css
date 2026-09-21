@@ -1,0 +1,605 @@
+body {
+  padding-top: 0;
+  font-size: 10.5px;
+}
+
+#chartContainer {
+  height: 500px;
+  width: 100%;
+  margin-bottom: 35px;
+}
+
+.card,
+.card-body {
+  width: 348px;
+  padding: 0 !important;
+}
+
+.card .card-body h1.card-title,
+.card .card-body p.card-title,
+.card .card-body h2.card-title,
+.card .card-body h3.card-title,
+.card .card-body h4.card-title,
+.card .card-body h5.card-title,
+.card .card-body h6.card-title {
+  font-weight: 600;
+  margin-bottom: 0rem !important;
+}
+
+table td,
+.table th {
+  padding: 0.2rem !important;
+}
+
+.table {
+  margin-bottom: 0rem !important;
+}
+
+#fpn_delta_by_fuel {
+  padding-left: 20px;
+}
+
+.generation-table {
+  width: 800px;
+}
+
+.center-content {
+  margin: 0 auto;
+  width: 30%;
+}
+
+.left-content {
+  width: 30%;
+  float: left;
+}
+.dark {
+  background-color: #0c0c0c !important;
+}
+
+body.dark .card, .card {
+    border: 1px solid #f2f2f240;
+}
+
+body.dark .table {
+  color: #b9bbb3ed;
+}
+
+@media screen and (orientation: portrait) {
+  body {
+    /* background-color: red; */
+    /* font-size: 300px; */
+  }
+
+  .card {
+    background-color: black;
+  }
+
+  .generation-table {
+    width: 800px;
+  }
+}
+
+@media screen and (orientation: landscape) {
+  .card {
+    background-color: black;
+  }
+
+  .generation-table {
+    width: 800px;
+  }
+
+  .table-container {
+    width: 111.5% !important;
+  }
+}
+
+.row {
+  margin-right: 0;
+}
+
+#fuelinst_max_info {
+  margin-top: 10px;
+  margin-left: 10px;
+  margin-bottom: 0px;
+}
+
+main.main-content {
+  min-height: 0vh;
+}
+
+.card-holder {
+  margin: 0 auto;
+}
+
+/* max_gen_vs_adj_fpn*/
+.graph-container {
+  /* width: 55vw;
+  max-width: 620px; */
+  width:auto;
+  min-height: 280px;
+  max-height: 310px;
+  margin-bottom: 3px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: #222538;
+}
+
+.graph-container.big {
+  width: 62vw;
+  max-width: 750px;
+  /* width:auto; */
+}
+
+.graph-container.big.with-legend {
+  /* width:auto; */
+  max-width: 775px;
+}
+
+.graph-container.tall {
+  height: 350px;
+  max-height: 350px;
+}
+
+.graph-container.full-screen {
+  /* width: 80vw; */
+  width:auto;
+  /* max-width: 1080px; */
+  min-height: 983px;
+  max-height: 983px;
+}
+
+.graph-container.long-screen {
+  /* width: 80vw;
+  max-width: 1080px; */
+  width:auto;
+  min-height: 1080px;
+  max-height: 300vh;
+}
+
+.chartjs_canvas {
+  padding-bottom: 10px;
+}
+
+p {
+  margin-bottom: 0;
+}
+
+/* rotates the real gen table head elements */
+th.rotate {
+  height: 70px;
+  white-space: nowrap;
+}
+
+th.rotate > div {
+  transform: translate(0px, 0px) rotate(270deg);
+  width: 20px;
+}
+
+th.rotate > div > span {
+  padding: 4px 5px;
+  padding: 2px 3px;
+}
+
+.table-container {
+  width: 109%;
+}
+
+#fuelinst_max {
+  width: 100%;
+}
+
+.gen-title {
+  padding-top: 5px;
+  margin-left: 215px;
+}
+
+.grid-container {
+  display: grid;
+  grid-template-columns: 370px 500px;
+}
+
+/*
+* Notification - server restart
+*/
+.notification {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 400px;
+  z-index: 2000;
+  background-color: #b5220e;
+  color: #fff;
+  padding: 1em 0em;
+  border-radius: 5px;
+}
+
+.notification > div {
+  margin: 0.5em 0em;
+  padding: 0 3em;
+}
+
+.notification > .header {
+  border-bottom: 1px solid #fff;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.notification > .footer {
+  display: flex;
+  justify-content: space-between;
+}
+
+.notification > .footer > .btn {
+  border-color: #fff;
+  color: #fff;
+}
+
+.notification > .footer > .btn-primary {
+  background: #181b2e;
+  border-color: #181b2e;
+}
+
+td[data-sign^='-'],
+th[data-sign^='-'] {
+  color: #ff6666;
+}
+
+[data-range='low'] {
+  background-color: #e5f3e5;
+  color: black;
+}
+
+[data-range='medium'] {
+  background-color: #b2dcb2;
+  color: black;
+}
+
+[data-range='high'] {
+  background-color: #66b966;
+  color: black;
+}
+
+[data-range='low-negative'] {
+  background-color: #ffdcb2;
+}
+
+[data-range='medium-negative'] {
+  background-color: #ffc57f;
+}
+
+[data-range='high-negative'] {
+  background-color: #ffae4c;
+}
+
+[data-range='delta-positive-low'] {
+  background-color: #dcf0fc;
+  color: black;
+}
+
+[data-range='delta-positive-medium'] {
+  background-color: #a7daf9;
+  color: black;
+}
+
+[data-range='delta-positive-high'] {
+  background-color: #72c4f6;
+  color: black;
+}
+
+[data-range='delta-negative-low'] {
+  background-color: #ffcccc;
+  color: black !important;
+}
+
+[data-range='delta-negative-medium'] {
+  background-color: #ff9999;
+  color: black !important;
+}
+
+[data-range='delta-negative-high'] {
+  background-color: #ff6666;
+  color: black !important;
+}
+
+.average-current-mel {
+  width: 100%;
+}
+
+.average-current-mel-body {
+  width: 100%;
+}
+
+html,
+body {
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+.col-md-6,
+.col-md-3,
+.col-md-12,
+.col-md-5 {
+  padding-left: 8px;
+  padding-right: 8px;
+}
+
+.modal-close-btn {
+  float: right;
+  background-color: transparent;
+  border-color: transparent;
+  font-size: 1.5em;
+  margin-right: 1.5em;
+  margin-top: -5px;
+  color: #fff;
+}
+
+/* fundies table*/
+.table-center-aligned td,
+.table-center-aligned th {
+  text-align: center;
+  padding-left: 2px;
+  padding-right: 2px;
+}
+
+#fundies-table,
+#position-monitor-table {
+  font-size: 8.5px;
+}
+
+.x-scrollable {
+  overflow-x: auto;
+  line-height: 0.99;
+}
+
+/* conditional formatting for fundies:
+Use http://www.webmath.com/equline1.html to get the line equations
+https://www.analyzemath.com/parabola/three_points_para_calc.html
+Use https://www.emathhelp.net/calculators/algebra-2/parabola-calculator/ to get the parabola equations
+*/
+
+[data-name='latest_ndf'],
+[data-name='latest_resid'] {
+  background-color: hsla(
+    calc(var(--percentile) * 1.42 + 53),
+    68%,
+    calc(100% - (var(--percentile) * 0.5%)),
+    var(--opacity, 0)
+  );
+  color: var(--text-color, #b9b9b9);
+}
+
+[data-name='latest_winfor'],
+[data-name='scaled_wpf'] {
+  background-color: hsla(
+    271,
+    100%,
+    calc(100% - (var(--percentile) * 0.5%)),
+    var(--opacity, 0)
+  );
+  color: var(--text-color, #b9b9b9);
+}
+[data-name='interconnector_ng'] {
+  background-color: hsla(
+    calc(194 - (var(--percentile) * 23 / 50)),
+    51%,
+    calc(
+      80% + (var(--percentile) * 0.8%) -
+        (var(--percentile) * var(--percentile) * 1% / 125)
+    ),
+    var(--opacity, 0)
+  );
+  color: var(--text-color, #b9b9b9);
+}
+
+[data-name='natgrid'][data-value^='-'],
+[data-name='fr_to_uk'][data-value^='-'],
+[data-name='nl_to_uk'][data-value^='-'],
+[data-name='be_to_uk'][data-value^='-'],
+[data-name='irl_to_uk'][data-value^='-'] {
+  color: #ff6666;
+}
+
+[data-name='fake_wind_ot_da_winfor_delta'] {
+  background-color: hsla(
+    calc((91 / 2) + (var(--value) * 27 / 2)),
+    75%,
+    calc(100% - (var(--value) * var(--value) * 30% / 9)),
+    var(--opacity, 0)
+  );
+  color: var(--text-color, #b9b9b9);
+}
+
+[data-name='indo_da_ndf_delta'] {
+  background-color: hsla(
+    calc((91 / 2) - (var(--value) * 27 / 2)),
+    75%,
+    calc(100% - (var(--value) * var(--value) * 30% / 9)),
+    var(--opacity, 0)
+  );
+  color: var(--text-color, #b9b9b9);
+}
+
+[data-name='domestic_tight_delta'] {
+  background-color: hsla(
+    /* calc(((115 / 3) * var(--value)) +235), */
+      calc((3460 / 23) + (var(--value) * 287 / 23)),
+    65%,
+    calc(100% - (var(--value) * var(--value) * 35% / 9)),
+    var(--opacity, 0)
+  );
+  color: var(--text-color, #b9b9b9);
+}
+
+[data-name='da_ndf_self_delta'],
+[data-name='rnp_vs_fpn_fr_to_uk'],
+[data-name='rnp_vs_fpn_nl_to_uk'],
+[data-name='rnp_vs_fpn_be_to_uk'] {
+  background-color: hsla(
+    calc(8 + (var(--percentile) * 41 / 25)),
+    calc(100% - (var(--percentile) * 0.5%)),
+    calc(83% - (var(--percentile) * 33% / 100)),
+    var(--opacity, 0)
+  );
+  color: var(--text-color, #b9b9b9);
+}
+
+[data-name='fr'],
+[data-name='nl'],
+[data-name='be'],
+[data-name='irl'] {
+  background-color: hsla(
+    calc((var(--value) * -5 / 8) + (145 / 2)),
+    50%,
+    calc(100% - (var(--value) * var(--value) * 7% / 80)),
+    var(--opacity, 0)
+  );
+  color: var(--text-color, #b9b9b9);
+}
+
+/* real time table*/
+#real-time-table-container {
+  display: flex;
+  flex-direction: row;
+  -ms-flex-direction: row;
+  width: 63vw !important;
+}
+
+#wind-diff-table {
+  width: 90px;
+  margin-top: auto;
+}
+
+.add-right-border {
+  border-right: 4px solid #363b5e !important;
+}
+
+.border-right {
+  border-right: 4px solid #363b5e !important;
+}
+
+/* Natgrid Table*/
+.content {
+  width: auto;
+  margin-left: 0;
+  margin-right: 201px;
+  min-height: 100vh;
+  padding: 0.5em;
+}
+.control-panel {
+  top: 0;
+  right: 0;
+  max-width: 200px;
+  opacity: 1;
+}
+.panel-heading {
+  margin: 1em 0em;
+  text-transform: uppercase;
+}
+.axis-heading {
+  text-align: center;
+}
+.natgrid-data-cell {
+  background-color: hsla(
+    calc(
+      (var(--in-red-region) * 360) + (var(--in-white-region) * 0) +
+        (var(--in-blue-region) * 203)
+    ),
+    45%,
+    /* Used conditionals to select which line to use in what range.
+    the shape of the curve is like
+        ______
+        |    |
+        /     \
+       /       \
+    */calc(
+        (var(--in-red-region) * (40% + (var(--value) * 20% / 19))) +
+          (var(--in-white-region) * 100%) +
+          (var(--in-blue-region) * ((2360% / 19) - (var(--value) * 20% / 19)))
+      ),
+    var(--opacity, 0)
+  );
+  color: var(--text-color, #b9b9b9);
+}
+.white-bottom-border {
+  border-bottom: rgba(219, 217, 217, 0.062) solid 0.5px;
+}
+
+.sp-number {
+  color: #72c4f6;
+  font-size: 8.5px;
+  font-style: bold;
+}
+.readonly-input {
+  border: 0;
+  color: inherit;
+  font-weight: bold;
+  background: inherit;
+  text-align: center;
+}
+#settlement-date-selector {
+  margin-top: 4em;
+}
+
+/* All plants exploded boalf table*/
+.legend-list {
+  list-style: none;
+}
+
+.legend-item {
+  color: #b9b9b9;
+  text-transform: lowercase;
+}
+
+.legend-box {
+  width: 1em;
+  height: 1em;
+  display: inline-block;
+}
+
+/* fpn accuracy */
+.chart-legend li span {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  margin-right: 5px;
+}
+
+.chart-legend {
+  height: 250px;
+  overflow: auto;
+}
+
+.chart-legend li {
+  cursor: pointer;
+}
+
+.strike {
+  text-decoration: line-through !important;
+}
+
+/* make the content fit with the containers for the natgrid table */
+#natgrid-table{
+  width: inherit;
+}
+#fpn-profile{
+  width:auto;
+  max-height: 300vh;
+}
+
+.toast,.toast-progress {
+  width: 80% !important;
+  /* height: 30%; */
+}
+#avg-of-mells th{
+  text-transform: none;
+  font-size: 10px;
+}
+/* overwriting the lib styles */
+main.main-content {
+  padding: 3px 0;
+}
+.table:not(.table-bordered) td {
+  line-height: 0.7;
+}
+
+#all_plants_exploded_boalf_canvas{
+  height: 975px !important;
+}

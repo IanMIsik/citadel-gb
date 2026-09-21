@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="X-UA-Compatible" content="ie=edge" />
+    <title>Pricing Stack</title>
+    <link
+      href="https://stackpath.bootstrapcdn.com/bootstrap/4.4.1/css/bootstrap.min.css"
+      rel="stylesheet"
+      integrity="sha384-Vkoo8x4CGsO3+Hhxv8T/Q5PaXtkKtu6ug5TOeNV6gBiFeWPGFN9MuhOf23Q9Ifjh"
+      crossorigin="anonymous"
+    />
+    <link
+      rel="stylesheet"
+      href="../../assets/css/app.min.css"
+      type="text/css"
+    />
+    <link rel="stylesheet" href="../../assets/css/custom.css" type="text/css" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+
+  <body class="dark">
+    <div class="grid-container">
+      <div
+        id="ps-table"
+        class="card dark"
+      ></div>
+    </div>
+  </body>
+  <script>
+    let $ = (jQuery = require('jquery'));
+    // const { ipcRenderer:authIpcRenderer } = require('electron');
+    // const { initializeAuthService } = require('../../services/auth-service.js');
+
+    // // Initialize the authentication service
+    // initializeAuthService(authIpcRenderer);
+  </script>
+  <script
+    src="https://stackpath.bootstrapcdn.com/bootstrap/4.4.1/js/bootstrap.bundle.min.js"
+    integrity="sha384-6khuMg9gaYr5AxOqhkVIODVIvm9ynTT5J4V1cfthmT+emCG6yVmEZsRHdxlotUnm"
+    crossorigin="anonymous"
+  ></script>
+  <script src="./index.js"></script>
+  <script>
+    function collapseToggle(buttonElement) {
+      //this functions toggles the elements in the pricing stack tables
+      let btnClickedCollapseState = '';
+      let currentBtn = document.getElementById(buttonElement.id);
+      let dataToggleTarget = currentBtn.getAttribute('data-class');
+      let selectedItems = document.getElementsByClassName(dataToggleTarget);
+      btnClickedCollapseState = buttonElement.className;
+
+      let buttonClasses = buttonElement.className.split(' ');
+      if (buttonClasses.length == 2) {
+        //this is when a button has been clicked and the elements are collapsed
+        for (let item of selectedItems) {
+          let itemClass = item.getAttribute('class');
+          let toggleClassAttribute = `${dataToggleTarget} collapse`;
+          let toggleButtonClass = `btn btn-secondary collapsed`;
+          item.setAttribute('class', toggleClassAttribute);
+          currentBtn.setAttribute('class', toggleButtonClass);
+
+          //helps to persist the state of the clicked buttons when new data comes in
+          sessionStorage.setItem(
+            dataToggleTarget,
+            JSON.stringify({
+              attributeClass: toggleClassAttribute,
+              btnClass: toggleButtonClass
+            })
+          );
+        }
+      } else {
+        for (let item of selectedItems) {
+          //this is executed when the elements are uncollapsed
+          let itemClass = item.getAttribute('class');
+          let toggleClassAttribute = `${dataToggleTarget} collapse show`;
+          let toggleButtonClass = `btn btn-secondary`;
+          item.setAttribute('class', toggleClassAttribute);
+          currentBtn.setAttribute('class', toggleButtonClass);
+          //helps to persist the state of the clicked buttons when new data comes in
+          sessionStorage.setItem(
+            dataToggleTarget,
+            JSON.stringify({
+              attributeClass: toggleClassAttribute,
+              btnClass: toggleButtonClass
+            })
+          );
+        }
+      }
+    }
+  </script>
+</html>
