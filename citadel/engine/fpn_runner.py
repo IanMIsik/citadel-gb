@@ -19,7 +19,7 @@ import pandas as pd
 
 from ..config import Settings
 from ..ingest import elexon_rest, neso
-from ..settlement import rolling_window, sp_start_utc
+from ..settlement import current_period, rolling_window, sp_start_utc
 from ..storage import db
 from . import fpn as fpn_engine
 
@@ -31,6 +31,14 @@ logger = logging.getLogger("citadel.engine.fpn_runner")
 
 DEBOUNCE_SECONDS = 2.0
 GENERATION_BY_FUEL_RETENTION = timedelta(hours=6)
+# Same reasoning as engine/runner.py's own PERSIST_CONCURRENCY: this module
+# persists up to 3 tables x ~8 periods per cycle (up to 24 delete+insert
+# transactions), previously one full round-trip at a time. Each (table, sd,
+# sp) key is disjoint, so they can run concurrently -- bounded so this
+# doesn't compete with the pricing-stack Runner's own concurrent persist for
+# every connection in the shared pool at once (storage/db.py's create_pool,
+# max_size=10).
+PERSIST_CONCURRENCY = 4
 
 
 class FpnBuffers:
@@ -53,7 +61,18 @@ def _rows_for(df: pd.DataFrame, rename: dict[str, str]) -> list[dict]:
     if df.empty:
         return []
     renamed = df.rename(columns=rename)
-    renamed = renamed.where(pd.notnull(renamed), None)
+    # `.where(notnull, None)` on a float64 column is a no-op -- pandas
+    # can't hold Python None in a float64 Series, so it silently coerces
+    # None right back to NaN. Confirmed live: this meant NaN was being
+    # written into Postgres as a literal NaN (not NULL) for any minute a
+    # dataset genuinely has no value for yet (e.g. FUELINST hasn't
+    # published the current, still-in-progress settlement period's latest
+    # 5-minute block) -- and a stored NaN poisons every AVG()/SUM() that
+    # touches it, which is why the current settlement period's own
+    # average showed up blank even though most of its minutes had real
+    # data. `.astype(object)` first lets None actually stick per-cell, so
+    # Postgres gets a real NULL and its aggregates correctly skip it.
+    renamed = renamed.astype(object).where(pd.notnull(renamed), None)
     rows = renamed.to_dict("records")
     for row in rows:
         sd = row.get("settlement_date")
@@ -146,6 +165,30 @@ class FpnRunner:
         mil = self.shared_buffers.frame("mil")
         disbsad = self.shared_buffers.frame("disbsad")
 
+        # The real pricing stack's own already-computed accepted-volume
+        # figure (`pricing_stack_rows`, written by the sibling Runner) --
+        # `market_gen` needs this, not this module's own delta, see
+        # engine/fpn.py's module docstring. Read fresh each cycle, same
+        # window as everything else, since Runner's own recompute cadence
+        # can differ from this one's.
+        cur = current_period()
+        same_date_periods = [sp for sd, sp in rolling_window() if sd == cur.settlement_date]
+        pricing_stack_delta_rows = [
+            dict(r) for r in await db.pricing_stack_delta_by_bm_unit(self.pool, cur.settlement_date, same_date_periods)
+        ]
+        pricing_stack_niv_rows = [
+            dict(r) for r in await db.pricing_stack_niv_by_period(self.pool, cur.settlement_date, same_date_periods)
+        ]
+        # The pricing stack's own genuinely per-minute NIV trajectory (see
+        # engine/stack.py's spot_time_niv()/SPOT_NIV_COLUMNS docstring) --
+        # feeds the Delta Chart's `delta` line with real sub-period
+        # resolution instead of `pricing_stack_niv_rows`'s own flat
+        # once-per-period figure (that one still feeds `delta_av`, the
+        # period average -- see engine/fpn.py's build_aggregated()).
+        pricing_stack_niv_spot_time_rows = [
+            dict(r) for r in await db.pricing_stack_niv_spot_time_by_period(self.pool, cur.settlement_date, same_date_periods)
+        ]
+
         loop = asyncio.get_running_loop()
         # Runs in its own OS process (see api/app.py's shared
         # ProcessPoolExecutor) so this pandas-heavy recompute -- like the
@@ -157,6 +200,7 @@ class FpnRunner:
             self.fpn_buffers.fuelinst, self.fpn_buffers.ndf, self.fpn_buffers.tsdf,
             self.fpn_buffers.indo, self.fpn_buffers.itsdo, self.fpn_buffers.da_ndf,
             self.fpn_buffers.neso_trades, self.bm_unit_reference, self._demand_window,
+            pricing_stack_delta_rows, None, pricing_stack_niv_rows, pricing_stack_niv_spot_time_rows,
         )
         if not results:
             return
@@ -178,12 +222,21 @@ class FpnRunner:
                 {"settlementDate": "settlement_date", "settlementPeriod": "settlement_period"},
             )),
         )
+        semaphore = asyncio.Semaphore(PERSIST_CONCURRENCY)
+
+        async def _write(table: str, columns: list[str], sd, sp: int, period_rows: list[dict]) -> None:
+            async with semaphore:
+                await db.replace_fpn_period_rows(self.pool, table, (), sd, sp, period_rows, columns)
+
+        writes = []
         for table, columns, rows in tables:
             by_period: dict[tuple, list[dict]] = {}
             for row in rows:
                 by_period.setdefault((row["settlement_date"], row["settlement_period"]), []).append(row)
             for (sd, sp), period_rows in by_period.items():
-                await db.replace_fpn_period_rows(self.pool, table, (), sd, int(sp), period_rows, columns)
+                writes.append(_write(table, columns, sd, int(sp), period_rows))
+        if writes:
+            await asyncio.gather(*writes)
 
         generation_rows = _rows_for(results.get("generation_by_fuel", pd.DataFrame()), {"TS": "ts"})
         if generation_rows:

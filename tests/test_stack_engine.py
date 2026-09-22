@@ -13,7 +13,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from citadel.engine.stack import compute_cadl_flags, compute_stack, custom_round, vectorized_exploder
+from citadel.engine.stack import compute_cadl_flags, compute_stack, custom_round, spot_time_niv, vectorized_exploder
 
 
 def test_custom_round():
@@ -85,10 +85,98 @@ def test_compute_stack_single_offer_within_par():
     assert row["bmUnit"] == "T_TEST-1_1"  # pairId suffix appended in blend_disbsad
 
 
+def test_compute_stack_return_spot_niv_gives_per_minute_niv_before_the_mwh_collapse():
+    """`return_spot_niv=True` exposes the same reversal-aware `delta`
+    build_price_stack() itself uses, but grouped by minute instead of by
+    acceptance -- so for this one-minute, 10 MW acceptance the per-minute
+    value is 10.0 (MW), not `10 / 60` (MWh, what the acceptance-level
+    `result['delta']` shows once build_price_stack() sums the full
+    acceptance and divides by 60). Confirms spot_time_niv() needs no
+    separate unit conversion of its own.
+    """
+    sd = "2026-01-01"
+    boalf_df = pd.DataFrame([_flat_acceptance("T_TEST-1", 10.0, sd)])
+    pn_df = pd.DataFrame([{
+        "bmUnit": "T_TEST-1", "timeFrom": f"{sd}T00:00:00Z", "timeTo": f"{sd}T00:01:00Z",
+        "levelFrom": 0.0, "levelTo": 0.0, "dataset": "PN", "nationalGridBmUnit": "T_TEST-1",
+        "settlementDate": sd, "settlementPeriod": 1,
+    }])
+    mel_df = pd.DataFrame([{
+        "bmUnit": "T_TEST-1", "timeFrom": f"{sd}T00:00:00Z", "timeTo": f"{sd}T00:01:00Z",
+        "levelFrom": 100.0, "levelTo": 100.0, "dataset": "MELS", "nationalGridBmUnit": "T_TEST-1",
+        "settlementDate": sd, "settlementPeriod": 1, "notificationTime": f"{sd}T00:00:00Z",
+        "notificationSequence": 1,
+    }])
+    bod_df = pd.DataFrame([{
+        "settlementDate": sd, "settlementPeriod": 1, "bmUnit": "T_TEST-1",
+        "bid": -50.0, "offer": 75.0, "levelTo": 20.0, "pairId": 1,
+    }])
+    disbsad_df = pd.DataFrame(columns=["settlementDate", "settlementPeriod", "soFlag", "storFlag", "volume", "cost"])
+
+    result, niv = compute_stack(boalf_df, bod_df, pn_df, mel_df, disbsad_df, return_spot_niv=True)
+
+    assert result.iloc[0]["delta"] == pytest.approx(10 / 60)
+    assert len(niv) == 1
+    assert niv.iloc[0]["niv_spot_time_max"] == pytest.approx(10.0)
+    assert niv.iloc[0]["spot_time"] == pd.Timestamp("2026-01-01T00:00:00Z")
+
+
+def test_compute_stack_without_return_spot_niv_keeps_the_original_single_frame_return():
+    """Every existing caller relies on the plain-DataFrame return -- the new
+    kwarg must be strictly opt-in.
+    """
+    sd = "2026-01-01"
+    boalf_df = pd.DataFrame([_flat_acceptance("T_TEST-1", 10.0, sd)])
+    pn_df = pd.DataFrame([{
+        "bmUnit": "T_TEST-1", "timeFrom": f"{sd}T00:00:00Z", "timeTo": f"{sd}T00:01:00Z",
+        "levelFrom": 0.0, "levelTo": 0.0, "dataset": "PN", "nationalGridBmUnit": "T_TEST-1",
+        "settlementDate": sd, "settlementPeriod": 1,
+    }])
+    mel_df = pd.DataFrame([{
+        "bmUnit": "T_TEST-1", "timeFrom": f"{sd}T00:00:00Z", "timeTo": f"{sd}T00:01:00Z",
+        "levelFrom": 100.0, "levelTo": 100.0, "dataset": "MELS", "nationalGridBmUnit": "T_TEST-1",
+        "settlementDate": sd, "settlementPeriod": 1, "notificationTime": f"{sd}T00:00:00Z",
+        "notificationSequence": 1,
+    }])
+    bod_df = pd.DataFrame([{
+        "settlementDate": sd, "settlementPeriod": 1, "bmUnit": "T_TEST-1",
+        "bid": -50.0, "offer": 75.0, "levelTo": 20.0, "pairId": 1,
+    }])
+    disbsad_df = pd.DataFrame(columns=["settlementDate", "settlementPeriod", "soFlag", "storFlag", "volume", "cost"])
+
+    result = compute_stack(boalf_df, bod_df, pn_df, mel_df, disbsad_df)
+    assert isinstance(result, pd.DataFrame)
+
+
+def test_spot_time_niv_sums_across_bm_units_per_minute():
+    combined = pd.DataFrame([
+        {"settlementDate": pd.Timestamp("2026-01-01"), "settlementPeriod": 1, "spot_time": pd.Timestamp("2026-01-01T00:00:00Z"), "delta": 10.0},
+        {"settlementDate": pd.Timestamp("2026-01-01"), "settlementPeriod": 1, "spot_time": pd.Timestamp("2026-01-01T00:00:00Z"), "delta": -3.0},
+        {"settlementDate": pd.Timestamp("2026-01-01"), "settlementPeriod": 1, "spot_time": pd.Timestamp("2026-01-01T00:01:00Z"), "delta": 5.0},
+    ])
+    niv = spot_time_niv(combined)
+    by_minute = niv.set_index("spot_time")["niv_spot_time_max"]
+    assert by_minute[pd.Timestamp("2026-01-01T00:00:00Z")] == pytest.approx(7.0)
+    assert by_minute[pd.Timestamp("2026-01-01T00:01:00Z")] == pytest.approx(5.0)
+
+
+def test_spot_time_niv_empty_input_has_expected_columns():
+    niv = spot_time_niv(pd.DataFrame())
+    assert niv.empty
+    assert list(niv.columns) == ["settlementDate", "settlementPeriod", "spot_time", "niv_spot_time_max"]
+
+
 def test_compute_stack_empty_boalf_returns_empty_frame():
     empty = pd.DataFrame()
     result = compute_stack(empty, empty, empty, empty, empty)
     assert result.empty
+
+
+def test_compute_stack_empty_boalf_with_return_spot_niv_returns_empty_tuple():
+    empty = pd.DataFrame()
+    result, niv = compute_stack(empty, empty, empty, empty, empty, return_spot_niv=True)
+    assert result.empty
+    assert niv.empty
 
 
 def test_compute_stack_mel_gate_drops_unmatched_minute():

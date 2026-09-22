@@ -7,15 +7,21 @@ worst-deviants threshold, and the niv_estimate decision-table arithmetic.
 
 from __future__ import annotations
 
+from datetime import date
+
 import pandas as pd
 import pytest
 
 from citadel.engine.fpn import (
+    _strip_pair_id_suffix,
     apply_wind_period_average,
+    build_aggregated,
     build_decision_table,
+    compute_generation_by_fuel,
     compute_worst_deviants,
     explode_and_merge,
     fuel_type_reference,
+    pricing_stack_delta_by_fuel,
     unit_sets,
 )
 
@@ -39,6 +45,16 @@ def _mel_row(bm_unit: str, ngc_unit: str, level: float, sd: str = "2026-01-01") 
         "bmUnit": bm_unit, "nationalGridBmUnit": ngc_unit, "timeFrom": f"{sd}T00:00:00Z", "timeTo": f"{sd}T00:01:00Z",
         "levelFrom": level, "levelTo": level, "dataset": "MELS", "settlementDate": sd, "settlementPeriod": 1,
         "notificationTime": f"{sd}T00:00:00Z", "notificationSequence": 1,
+    }
+
+
+def _boalf_row(bm_unit: str, level: float, sd: str = "2026-01-01") -> dict:
+    return {
+        "bmUnit": bm_unit, "timeFrom": f"{sd}T00:00:00Z", "timeTo": f"{sd}T00:01:00Z",
+        "levelFrom": level, "levelTo": level, "acceptanceTime": f"{sd}T00:00:00Z",
+        "acceptanceNumber": 1, "settlementDate": sd, "settlementPeriodFrom": 1,
+        "settlementPeriodTo": 1, "deemedBoFlag": False, "soFlag": False,
+        "storFlag": False, "rrFlag": False,
     }
 
 
@@ -82,6 +98,53 @@ def test_adjusted_fpn_clamps_import_direction_by_mil():
     assert not result.empty
     assert result["adjusted_fpn"].iloc[0] == pytest.approx(-60.0)
     assert result["mil_increased_fpn"].iloc[0] == pytest.approx(-60.0)
+
+
+def test_delta_is_zero_not_negative_fpn_when_unit_has_no_boalf_acceptance():
+    """A unit with a real FPN (100 MW) but no active BOALF acceptance at
+    all must have `delta == 0` (no BM action, no deviation from plan) --
+    not `-100` (which is what treating "no acceptance" as "accepted volume
+    is literally zero" computes). Regression test for a real bug: filling
+    `boalf_spot_vol` to 0 *before* computing `delta` made every untouched
+    unit look "curtailed to zero", inflating every fuel type's own summed
+    delta (and so `market_gen`) by roughly its whole untouched fleet's own
+    FPN -- confirmed against real CCGT figures (a correct ~664 MW fuel-type
+    deviation from 3 genuinely active units was showing as roughly -14,000
+    once the other ~78 idle-in-the-BM units were each wrongly counted).
+    """
+    ref = _bm_unit_reference([("T_GEN-1", "T_GEN-1", "CCGT")])
+    pn_df = pd.DataFrame([_pn_row("T_GEN-1", "T_GEN-1", 100.0)])
+    boalf_df = pd.DataFrame(columns=["bmUnit", "timeFrom", "timeTo", "levelFrom", "levelTo", "acceptanceTime", "settlementDate", "settlementPeriodFrom", "settlementPeriodTo"])
+    mel_df = pd.DataFrame(columns=pn_df.columns)
+    mil_df = pd.DataFrame(columns=pn_df.columns)
+
+    fuel_ref = fuel_type_reference(ref)
+    sets = unit_sets(fuel_ref)
+    result = explode_and_merge(pn_df, boalf_df, mel_df, mil_df, fuel_ref, sets)
+
+    assert not result.empty
+    assert result["delta"].iloc[0] == pytest.approx(0.0)
+    assert result["boalf_spot_vol"].iloc[0] == pytest.approx(0.0)
+
+
+def test_delta_reflects_a_real_boalf_acceptance_against_fpn():
+    """A unit accepted up to 80 MW against a 100 MW FPN has delta = -20
+    (a real, partial reduction) -- confirms the fix above didn't also
+    break the ordinary case where an acceptance genuinely exists.
+    """
+    ref = _bm_unit_reference([("T_GEN-1", "T_GEN-1", "CCGT")])
+    pn_df = pd.DataFrame([_pn_row("T_GEN-1", "T_GEN-1", 100.0)])
+    boalf_df = pd.DataFrame([_boalf_row("T_GEN-1", 80.0)])
+    mel_df = pd.DataFrame(columns=pn_df.columns)
+    mil_df = pd.DataFrame(columns=pn_df.columns)
+
+    fuel_ref = fuel_type_reference(ref)
+    sets = unit_sets(fuel_ref)
+    result = explode_and_merge(pn_df, boalf_df, mel_df, mil_df, fuel_ref, sets)
+
+    assert not result.empty
+    assert result["delta"].iloc[0] == pytest.approx(-20.0)
+    assert result["boalf_spot_vol"].iloc[0] == pytest.approx(80.0)
 
 
 def test_non_ps_negative_fpn_rows_are_dropped():
@@ -177,3 +240,123 @@ def test_niv_estimate_arithmetic():
     assert row["other_gen_deviation"] == pytest.approx(7.0)
     expected = 100.0 - 20.0 - 7.0 + 10.0 + 3.0
     assert row["niv_estimate"] == pytest.approx(expected)
+
+
+def test_strip_pair_id_suffix_removes_a_trailing_numeric_pairid():
+    # stack.py's own convention: bmUnit + "_" + pairId (pairId can be negative).
+    assert _strip_pair_id_suffix("T_DRAXX-1_3") == "T_DRAXX-1"
+    assert _strip_pair_id_suffix("T_DRAXX-1_-2") == "T_DRAXX-1"
+
+
+def test_strip_pair_id_suffix_leaves_a_bmunit_with_no_pairid_suffix_alone():
+    # Elexon's own codes routinely contain underscores that aren't a pairId.
+    assert _strip_pair_id_suffix("2__NSMAE001") == "2__NSMAE001"
+    assert _strip_pair_id_suffix("V__LCEND001") == "V__LCEND001"
+
+
+def test_pricing_stack_delta_by_fuel_strips_suffix_and_sums_by_fuel_type():
+    """Also covers the MWh -> MW conversion: `pricing_stack_rows.delta` is
+    in MWh (stack.py's own compute_stack divides its per-minute MW-level
+    sum by 60), but every caller here needs an average-MW-over-the-period
+    figure to combine with FUELINST's own instantaneous MW reading -- a
+    30-minute settlement period means that's `* 2`, confirmed directly
+    against real data (an unconverted MWh figure read as half the genuine
+    real MW deviation).
+    """
+    ref = _bm_unit_reference([("T_DRAXX-1", "T_DRAXX-1", "BIOMASS"), ("T_OTHER-1", "T_OTHER-1", "CCGT")])
+    fuel_ref = fuel_type_reference(ref)
+    rows = [
+        {"settlement_date": pd.Timestamp("2026-01-01").date(), "settlement_period": 1, "bm_unit": "T_DRAXX-1_1", "delta": 10.0},
+        {"settlement_date": pd.Timestamp("2026-01-01").date(), "settlement_period": 1, "bm_unit": "T_DRAXX-1_-2", "delta": 5.0},
+        {"settlement_date": pd.Timestamp("2026-01-01").date(), "settlement_period": 1, "bm_unit": "T_OTHER-1_1", "delta": -3.0},
+    ]
+    out = pricing_stack_delta_by_fuel(rows, fuel_ref)
+
+    biomass_row = out[out["FT"] == "BIOMASS"].iloc[0]
+    ccgt_row = out[out["FT"] == "CCGT"].iloc[0]
+    assert biomass_row["pricing_stack_delta"] == pytest.approx(30.0)
+    assert ccgt_row["pricing_stack_delta"] == pytest.approx(-6.0)
+
+
+def test_generation_by_fuel_uses_pricing_stack_delta_not_its_own_derived_one():
+    """`market_gen`/`delta_gen` must come from the pricing stack's own real
+    accepted-volume delta (the same `pricing_stack_delta_by_fuel` the
+    "Market Gen vs Adjusted Fpn" table already uses), not a second,
+    independently re-derived figure -- confirmed against the user's own
+    direct comparison of this table's CCGT deviation against the real
+    pricing stack page (they disagreed; the pricing stack is the correct,
+    real one). `delta` in `pricing_stack_rows` is 230 MWh; `delta_gen` here
+    must be the MW-equivalent (`* 2` for a 30-minute period, see
+    `pricing_stack_delta_by_fuel`'s own docstring) to combine correctly
+    with FUELINST's own instantaneous-MW `real_gen`.
+    """
+    ref = _bm_unit_reference([("T_GEN-1", "T_GEN-1", "CCGT")])
+    fuel_ref = fuel_type_reference(ref)
+    fuelinst_records = [{"fuelType": "CCGT", "generation": 1000.0, "startTime": "2026-01-01T00:00:00Z"}]
+    pricing_stack_delta_rows = [
+        {"settlement_date": date(2026, 1, 1), "settlement_period": 1, "bm_unit": "T_GEN-1", "delta": 230.0},
+    ]
+
+    result = compute_generation_by_fuel(fuelinst_records, pricing_stack_delta_rows, fuel_ref)
+
+    assert not result.empty
+    row = result.iloc[0]
+    assert row["real_gen"] == pytest.approx(1000.0)
+    assert row["delta_gen"] == pytest.approx(460.0)
+    assert row["market_gen"] == pytest.approx(540.0)
+
+
+def _by_fuel_row(sd, sp, spot_time, ft="CCGT") -> dict:
+    return {
+        "settlementDate": sd, "settlementPeriod": sp, "spot_time": spot_time, "FT": ft,
+        "fpn_spot_vol": 100.0, "fuelinst_generation": 100.0, "market_gen": 100.0,
+        "mel_reduced_fpn": 100.0, "market_gen_vs_fpn": 0.0, "mel_mil_drop": 0.0,
+        "market_gen_vs_adj_fpn": 0.0, "adjusted_fpn": 100.0,
+    }
+
+
+def _demand_row(sd, sp, spot_time) -> dict:
+    return {"settlementDate": sd, "settlementPeriod": sp, "spot_time": spot_time, "spot_indo": 100.0, "spot_latest_ndf": 100.0, "spot_da_ndf": 100.0}
+
+
+def test_build_aggregated_delta_comes_from_the_genuinely_per_minute_niv_spot_time():
+    """`delta` (and everything downstream: `niv_error`, `delta_av`) must
+    vary minute to minute with `niv_spot_time` -- the pricing stack's own
+    real per-minute NIV trajectory (engine/stack.py's spot_time_niv()) --
+    not a flat once-per-period broadcast of a settled period total. Two
+    spot_times in the same settlement period get different
+    niv_spot_time_max values here; `delta` must differ between them
+    accordingly, and `delta_av` (the period average) must reflect both.
+    """
+    sd = pd.Timestamp("2026-01-01")
+    t0 = pd.Timestamp("2026-01-01T00:00:00Z")
+    t1 = pd.Timestamp("2026-01-01T00:01:00Z")
+    by_fuel = pd.DataFrame([_by_fuel_row(sd, 1, t0), _by_fuel_row(sd, 1, t1)])
+    demand = pd.DataFrame([_demand_row(sd, 1, t0), _demand_row(sd, 1, t1)])
+    niv_spot_time = pd.DataFrame([
+        {"settlementDate": sd, "settlementPeriod": 1, "spot_time": t0, "niv_spot_time_max": 10.0},
+        {"settlementDate": sd, "settlementPeriod": 1, "spot_time": t1, "niv_spot_time_max": -4.0},
+    ])
+
+    aggregated = build_aggregated(by_fuel, demand, niv_spot_time=niv_spot_time)
+
+    row0 = aggregated[aggregated["spot_time"] == t0].iloc[0]
+    row1 = aggregated[aggregated["spot_time"] == t1].iloc[0]
+    assert row0["delta"] == pytest.approx(10.0)
+    assert row1["delta"] == pytest.approx(-4.0)
+    assert row0["delta_av"] == pytest.approx(3.0)
+    assert row1["delta_av"] == pytest.approx(3.0)
+
+
+def test_build_aggregated_delta_defaults_to_zero_with_no_niv_spot_time_data():
+    """A minute with no matching pricing-stack row (no accepted volume
+    active) is a real, honest zero -- not missing/NaN.
+    """
+    sd = pd.Timestamp("2026-01-01")
+    t0 = pd.Timestamp("2026-01-01T00:00:00Z")
+    by_fuel = pd.DataFrame([_by_fuel_row(sd, 1, t0)])
+    demand = pd.DataFrame([_demand_row(sd, 1, t0)])
+
+    aggregated = build_aggregated(by_fuel, demand)
+
+    assert aggregated.iloc[0]["delta"] == pytest.approx(0.0)

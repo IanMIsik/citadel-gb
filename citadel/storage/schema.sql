@@ -44,6 +44,23 @@ CREATE TABLE IF NOT EXISTS pricing_stack_rows (
 );
 CREATE INDEX IF NOT EXISTS idx_pricing_stack_sd_sp ON pricing_stack_rows(settlement_date, settlement_period);
 
+-- The pricing stack's own genuinely per-minute NIV trajectory (one row per
+-- settlement_date/settlement_period/spot_time) -- see engine/stack.py's
+-- spot_time_niv()/SPOT_NIV_COLUMNS docstring. Distinct from
+-- pricing_stack_rows.total_delta above (one MWh figure per whole period):
+-- this is the real-time build-up of NIV minute by minute as bids/offers are
+-- actually accepted, feeding engine/fpn.py's Delta Chart `delta` line
+-- (`niv_spot_time_max` in the original notebook/Zapdos naming).
+CREATE TABLE IF NOT EXISTS pricing_stack_niv_spot_time (
+    settlement_date     DATE NOT NULL,
+    settlement_period   INTEGER NOT NULL,
+    spot_time           TIMESTAMPTZ NOT NULL,
+    niv_spot_time_max   DOUBLE PRECISION NOT NULL,
+    computed_at         TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (settlement_date, settlement_period, spot_time)
+);
+CREATE INDEX IF NOT EXISTS idx_pricing_stack_niv_spot_time_sd_sp ON pricing_stack_niv_spot_time(settlement_date, settlement_period);
+
 -- Elexon's real, official settlement system price per period -- the ground
 -- truth this project's own `total_misik_price` is checked against.
 CREATE TABLE IF NOT EXISTS settlement_prices (
@@ -127,16 +144,30 @@ CREATE TABLE IF NOT EXISTS fpn_aggregated (
     wind_deviation      DOUBLE PRECISION,
     other_gen_deviation DOUBLE PRECISION,
     niv_estimate        DOUBLE PRECISION,
+    spot_indo           DOUBLE PRECISION,
+    spot_latest_ndf     DOUBLE PRECISION,
+    niv_sp_max          DOUBLE PRECISION,
     computed_at         TIMESTAMPTZ NOT NULL,
     PRIMARY KEY (settlement_date, settlement_period, spot_time)
 );
 CREATE INDEX IF NOT EXISTS idx_fpn_aggregated_sd_sp ON fpn_aggregated(settlement_date, settlement_period);
+-- Added after the table's first release -- ALTER for databases that
+-- already have the old column set (CREATE TABLE IF NOT EXISTS above is a
+-- no-op against them). spot_indo/spot_latest_ndf: the raw (uncobbled)
+-- INDO/NDF lines the real Zapdos "Forecast Chart" plots alongside the
+-- misco_* smoothed ones. niv_sp_max: the pricing stack's own real,
+-- already-settled NIV for the period (`total_delta` in pricing_stack_rows)
+-- -- the notebook's own live NIV pickle, read in-process instead.
+ALTER TABLE fpn_aggregated ADD COLUMN IF NOT EXISTS spot_indo DOUBLE PRECISION;
+ALTER TABLE fpn_aggregated ADD COLUMN IF NOT EXISTS spot_latest_ndf DOUBLE PRECISION;
+ALTER TABLE fpn_aggregated ADD COLUMN IF NOT EXISTS niv_sp_max DOUBLE PRECISION;
 
 -- Real generation by fuel type, split into market-driven vs BM-action-
 -- driven portions (see engine/fpn.py:compute_generation_by_fuel) -- a
 -- normalized replacement for the Fuelinst notebook's wide `_r/_m/_d` pivot.
 CREATE TABLE IF NOT EXISTS fpn_generation_by_fuel (
     ts                  TIMESTAMPTZ NOT NULL,
+    settlement_period   INTEGER,
     fuel_type           TEXT NOT NULL,
     real_gen            DOUBLE PRECISION,
     market_gen          DOUBLE PRECISION,
@@ -144,6 +175,7 @@ CREATE TABLE IF NOT EXISTS fpn_generation_by_fuel (
     computed_at         TIMESTAMPTZ NOT NULL,
     PRIMARY KEY (ts, fuel_type)
 );
+ALTER TABLE fpn_generation_by_fuel ADD COLUMN IF NOT EXISTS settlement_period INTEGER;
 CREATE INDEX IF NOT EXISTS idx_fpn_generation_by_fuel_ts ON fpn_generation_by_fuel(ts);
 
 CREATE TABLE IF NOT EXISTS refresh_log (

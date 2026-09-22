@@ -41,6 +41,13 @@ logger = logging.getLogger("citadel.engine.runner")
 
 DEBOUNCE_SECONDS = 1.0
 MEL_MIL_LOOKAHEAD_HOURS = (-2, -1, 0, 1, 2)
+# Each settlement period's DB write (delete+insert, its own transaction) and
+# broadcast touch disjoint rows/messages, so periods can persist concurrently
+# instead of one full round-trip at a time -- bounded so a wide rolling
+# window (up to ~8 periods) doesn't grab every connection in the pool at
+# once and starve API request handlers sharing it (see storage/db.py's
+# create_pool, max_size=10).
+PERSIST_CONCURRENCY = 4
 
 
 def _records_from_payload(payload) -> list[dict]:
@@ -192,61 +199,84 @@ class Runner:
             except Exception:
                 logger.exception("recompute cycle failed")
 
+    async def _persist_period(self, sd, sp, group: pd.DataFrame) -> None:
+        rows = [
+            db.StackRow(
+                settlement_date=sd.date() if hasattr(sd, "date") else sd,
+                settlement_period=int(sp),
+                bm_unit=r["bmUnit"],
+                stor_flag=bool(r["storFlag"]),
+                deemed_bo_flag=bool(r["deemedBoFlag"]),
+                so_flag=bool(r["soFlag"]),
+                acceptance_number=int(r["acceptanceNumber"]),
+                reversal=float(r["reversal"]),
+                ap_mult_vol=float(r["ap_mult_vol"]),
+                delta=float(r["delta"]),
+                vol_to_price=float(r["vol_to_price"]),
+                disbsad_cost=float(r["disbsad_cost"]),
+                m_orig_price=float(r["m_orig_price"]),
+                total_delta=float(r["total_delta"]),
+                delta_sign=float(r["delta_sign"]),
+                action_sign=float(r["action_sign"]),
+                vol_for_price=float(r["vol_for_price"]) if pd.notna(r["vol_for_price"]) else None,
+                misik_imb_price=float(r["misik_imb_price"]),
+                total_misik_price=float(r["total_misik_price"]),
+                max_ta=r["max_ta"].to_pydatetime() if hasattr(r["max_ta"], "to_pydatetime") else None,
+            )
+            for _, r in group.iterrows()
+        ]
+        await db.replace_period_rows(self.pool, rows[0].settlement_date, rows[0].settlement_period, rows)
+
+        # The rolling window (see settlement.rolling_window) reaches 2
+        # periods into the future -- deliberately so: Gate Closure (1
+        # hour before delivery) has already passed for both of them by
+        # definition, so their BOD/FPN data is final, not speculative,
+        # same as the user's own original tool showing current_sp+1/+2.
+        # These ARE broadcast (unlike an earlier, over-corrected version
+        # of this code that suppressed them entirely) -- the live page
+        # tells them apart from the truly-delivering period via the
+        # `is_current` flag on each message (see broadcast.py), not by
+        # withholding the data.
+        await self.broadcaster.publish(rows[0].settlement_date, rows[0].settlement_period, [vars(r) for r in rows])
+
+    async def _persist_spot_niv_period(self, sd, sp, group: pd.DataFrame) -> None:
+        rows = [{"spot_time": r.spot_time.to_pydatetime(), "niv_spot_time_max": float(r.niv_spot_time_max)} for r in group.itertuples()]
+        sd_date = sd.date() if hasattr(sd, "date") else sd
+        await db.replace_pricing_stack_niv_spot_time_period(self.pool, sd_date, int(sp), rows)
+
     async def _recompute_and_persist(self) -> None:
         boalf = self.buffers.frame("boalf")
         if boalf.empty:
             return
         bod, pn, mel, disbsad = self.buffers.frame("bod"), self.buffers.frame("pn"), self.buffers.frame("mel"), self.buffers.frame("disbsad")
         compute = functools.partial(
-            stack_engine.compute_stack, boalf, bod, pn, mel, disbsad, market_index_prices=self.market_index_prices,
+            stack_engine.compute_stack, boalf, bod, pn, mel, disbsad,
+            market_index_prices=self.market_index_prices, return_spot_niv=True,
         )
         if self.process_pool is not None:
             loop = asyncio.get_running_loop()
-            result = await loop.run_in_executor(self.process_pool, compute)
+            result, spot_niv = await loop.run_in_executor(self.process_pool, compute)
         else:
-            result = compute()
+            result, spot_niv = compute()
         if result.empty:
             return
 
-        for (sd, sp), group in result.groupby(["settlementDate", "settlementPeriod"]):
-            rows = [
-                db.StackRow(
-                    settlement_date=sd.date() if hasattr(sd, "date") else sd,
-                    settlement_period=int(sp),
-                    bm_unit=r["bmUnit"],
-                    stor_flag=bool(r["storFlag"]),
-                    deemed_bo_flag=bool(r["deemedBoFlag"]),
-                    so_flag=bool(r["soFlag"]),
-                    acceptance_number=int(r["acceptanceNumber"]),
-                    reversal=float(r["reversal"]),
-                    ap_mult_vol=float(r["ap_mult_vol"]),
-                    delta=float(r["delta"]),
-                    vol_to_price=float(r["vol_to_price"]),
-                    disbsad_cost=float(r["disbsad_cost"]),
-                    m_orig_price=float(r["m_orig_price"]),
-                    total_delta=float(r["total_delta"]),
-                    delta_sign=float(r["delta_sign"]),
-                    action_sign=float(r["action_sign"]),
-                    vol_for_price=float(r["vol_for_price"]) if pd.notna(r["vol_for_price"]) else None,
-                    misik_imb_price=float(r["misik_imb_price"]),
-                    total_misik_price=float(r["total_misik_price"]),
-                    max_ta=r["max_ta"].to_pydatetime() if hasattr(r["max_ta"], "to_pydatetime") else None,
-                )
-                for _, r in group.iterrows()
-            ]
-            await db.replace_period_rows(self.pool, rows[0].settlement_date, rows[0].settlement_period, rows)
+        # Each period's own persist+broadcast used to run one full round-trip
+        # at a time (delete+insert, then wait for the next period); every
+        # period touches disjoint rows/messages, so there's no correctness
+        # reason for that serialisation -- bounded by a semaphore (not a
+        # bare gather) so a wide window doesn't claim every pool connection
+        # at once (see PERSIST_CONCURRENCY).
+        semaphore = asyncio.Semaphore(PERSIST_CONCURRENCY)
 
-            # The rolling window (see settlement.rolling_window) reaches 2
-            # periods into the future -- deliberately so: Gate Closure (1
-            # hour before delivery) has already passed for both of them by
-            # definition, so their BOD/FPN data is final, not speculative,
-            # same as the user's own original tool showing current_sp+1/+2.
-            # These ARE broadcast (unlike an earlier, over-corrected version
-            # of this code that suppressed them entirely) -- the live page
-            # tells them apart from the truly-delivering period via the
-            # `is_current` flag on each message (see broadcast.py), not by
-            # withholding the data.
-            await self.broadcaster.publish(rows[0].settlement_date, rows[0].settlement_period, [vars(r) for r in rows])
+        async def _bounded(coro) -> None:
+            async with semaphore:
+                await coro
+
+        tasks = [_bounded(self._persist_period(sd, sp, group)) for (sd, sp), group in result.groupby(["settlementDate", "settlementPeriod"])]
+        if not spot_niv.empty:
+            tasks += [_bounded(self._persist_spot_niv_period(sd, sp, group)) for (sd, sp), group in spot_niv.groupby(["settlementDate", "settlementPeriod"])]
+        await asyncio.gather(*tasks)
 
     async def run(self) -> None:
         tasks = [asyncio.create_task(self._rest_poll_loop()), asyncio.create_task(self._recompute_loop())]

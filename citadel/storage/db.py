@@ -146,6 +146,32 @@ async def replace_period_rows(pool: asyncpg.Pool, sd: date, sp: int, rows: list[
     return len(rows)
 
 
+async def pricing_stack_delta_by_bm_unit(pool: asyncpg.Pool, sd: date, periods: list[int]) -> list[asyncpg.Record]:
+    """Real accepted-offer/reduced-accepted-bid volume per BM unit, summed
+    from the pricing stack's own already-computed `pricing_stack_rows` --
+    the same reversal-aware, CADL-aware acceptance data the pricing stack
+    page itself displays. engine/fpn.py uses this (not its own,
+    independently re-derived delta) for `market_gen`, since FUELINST's raw
+    generation reading already reflects accepted offers/bids, and removing
+    their effect needs the actual accepted-volume figure, not a second one.
+
+    Excludes synthetic DISBSAD rows (`bm_unit LIKE 'disbsad_%'`, from
+    stack.py's own `blend_disbsad`) -- those represent National Grid's own
+    non-BM balancing actions, not a specific generating unit, and
+    engine/fpn.py already accounts for that separately (`natgrid_trade_rows`).
+    """
+    return await pool.fetch(
+        """
+        SELECT settlement_date, settlement_period, bm_unit, SUM(delta) AS delta
+        FROM pricing_stack_rows
+        WHERE settlement_date = $1 AND settlement_period = ANY($2::int[])
+          AND bm_unit NOT LIKE 'disbsad_%'
+        GROUP BY settlement_date, settlement_period, bm_unit
+        """,
+        sd, periods,
+    )
+
+
 async def stack_for_period(pool: asyncpg.Pool, sd: date, sp: int) -> list[asyncpg.Record]:
     return await pool.fetch(
         """
@@ -232,6 +258,7 @@ FPN_AGGREGATED_COLUMNS = [
     "market_gen_vs_fpn", "market_gen_vs_adj_fpn", "adjusted_fpn", "delta", "misco_indo", "misco_ndf",
     "misco_indo_vs_ndf", "misco_da_adj_ndf", "dmd_risk", "area_under_curve", "auc_av", "delta_av", "niv_error",
     "unexp_delta", "wind_deviation", "other_gen_deviation", "niv_estimate",
+    "spot_indo", "spot_latest_ndf", "niv_sp_max",
 ]
 
 
@@ -260,6 +287,7 @@ async def fpn_by_fuel_sp_summary(pool: asyncpg.Pool, sd: date, periods: list[int
         """
         SELECT settlement_period, fuel_type,
                AVG(fpn_spot_vol) AS fpn_spot_vol,
+               AVG(mel_spot_vol) AS mel_spot_vol,
                AVG(mel_mil_drop) AS mel_mil_drop,
                AVG(market_gen_vs_adj_fpn) AS market_gen_vs_adj_fpn
         FROM fpn_by_fuel
@@ -284,15 +312,105 @@ async def fpn_decision_drivers_sp(pool: asyncpg.Pool, sd: date, periods: list[in
                AVG(delta) AS delta,
                AVG(niv_error) AS niv_error,
                AVG(dmd_risk) AS dmd_risk,
-               AVG(misco_indo_vs_ndf) AS dmd_error,
+               COALESCE(AVG(misco_indo_vs_ndf), AVG(dmd_risk)) AS dmd_error,
                AVG(unexp_delta) AS unexp,
                AVG(wind_deviation) AS wind_deviation,
                AVG(other_gen_deviation) AS other_gen_deviation,
-               AVG(niv_estimate) AS niv_estimate
+               AVG(niv_estimate) AS niv_estimate,
+               AVG(niv_sp_max) AS niv_sp_max
         FROM fpn_aggregated
         WHERE settlement_date = $1 AND settlement_period = ANY($2::int[])
         GROUP BY settlement_period
         ORDER BY settlement_period
+        """,
+        sd, periods,
+    )
+
+
+async def fpn_aggregated_for_periods(pool: asyncpg.Pool, sd: date, periods: list[int]) -> list[asyncpg.Record]:
+    """Per-minute rows across the whole rolling window (not just the
+    current settlement period) -- backs the real Zapdos "Forecast Chart",
+    which plots every SP in the window as one continuous multi-line series,
+    not just the ~30 minutes of whichever period is current.
+    """
+    return await pool.fetch(
+        "SELECT * FROM fpn_aggregated WHERE settlement_date = $1 AND settlement_period = ANY($2::int[]) ORDER BY spot_time",
+        sd, periods,
+    )
+
+
+async def pricing_stack_niv_by_period(pool: asyncpg.Pool, sd: date, periods: list[int]) -> list[asyncpg.Record]:
+    """The pricing stack's own real, already-settled NIV per period
+    (`total_delta` -- see engine/imbalance_price.py's docstring; it's the
+    same value repeated on every row of a period's `pricing_stack_rows`,
+    so MAX picks it out without needing a DISTINCT ON). This is the real
+    Zapdos "Delta table"'s own `niv_sp_max` row -- in the original tools it
+    arrived via a `spot_niv.pkl` handoff from the sibling notebook; here
+    it's the same in-process read already established for `market_gen`.
+    """
+    return await pool.fetch(
+        """
+        SELECT settlement_date, settlement_period, MAX(total_delta) AS niv_sp_max
+        FROM pricing_stack_rows
+        WHERE settlement_date = $1 AND settlement_period = ANY($2::int[])
+        GROUP BY settlement_date, settlement_period
+        """,
+        sd, periods,
+    )
+
+
+async def replace_pricing_stack_niv_spot_time_period(pool: asyncpg.Pool, sd: date, sp: int, rows: list[dict]) -> int:
+    """Same "current window, always overwritten" pattern as
+    replace_period_rows -- one period's worth of engine/stack.py's
+    spot_time_niv() rows (settlement_date, settlement_period, spot_time,
+    niv_spot_time_max).
+    """
+    ts = datetime.now(timezone.utc)
+    async with pool.acquire() as conn, conn.transaction():
+        await conn.execute(
+            "DELETE FROM pricing_stack_niv_spot_time WHERE settlement_date = $1 AND settlement_period = $2",
+            sd, sp,
+        )
+        if rows:
+            await conn.executemany(
+                """
+                INSERT INTO pricing_stack_niv_spot_time
+                    (settlement_date, settlement_period, spot_time, niv_spot_time_max, computed_at)
+                VALUES ($1, $2, $3, $4, $5)
+                """,
+                [(sd, sp, r["spot_time"], r["niv_spot_time_max"], ts) for r in rows],
+            )
+    return len(rows)
+
+
+async def pricing_stack_niv_spot_time_by_period(pool: asyncpg.Pool, sd: date, periods: list[int]) -> list[asyncpg.Record]:
+    """The pricing stack's real per-minute NIV trajectory across the current
+    window -- see schema.sql's pricing_stack_niv_spot_time docstring.
+    engine/fpn.py merges this onto its own per-minute `aggregated` table by
+    (settlement_date, settlement_period, spot_time) for the Delta Chart's
+    `delta` line.
+    """
+    return await pool.fetch(
+        """
+        SELECT settlement_date, settlement_period, spot_time, niv_spot_time_max
+        FROM pricing_stack_niv_spot_time
+        WHERE settlement_date = $1 AND settlement_period = ANY($2::int[])
+        """,
+        sd, periods,
+    )
+
+
+async def fpn_market_gen_vs_adj_fpn_series(pool: asyncpg.Pool, sd: date, periods: list[int]) -> list[asyncpg.Record]:
+    """Per-minute, per-fuel-type `market_gen_vs_adj_fpn` across the window
+    -- backs the real "Market_gen vs Adj_fpn" chart on the Zapdos home page
+    (per-fuel-type toggleable lines, not one aggregate line).
+    """
+    return await pool.fetch(
+        """
+        SELECT spot_time, fuel_type, market_gen_vs_adj_fpn
+        FROM fpn_by_fuel
+        WHERE settlement_date = $1 AND settlement_period = ANY($2::int[])
+        ORDER BY spot_time
         """,
         sd, periods,
     )
@@ -313,13 +431,13 @@ async def upsert_fpn_generation_by_fuel(pool: asyncpg.Pool, rows: list[dict]) ->
     ts = datetime.now(timezone.utc)
     await pool.executemany(
         """
-        INSERT INTO fpn_generation_by_fuel (ts, fuel_type, real_gen, market_gen, delta_gen, computed_at)
-        VALUES ($1, $2, $3, $4, $5, $6)
+        INSERT INTO fpn_generation_by_fuel (ts, settlement_period, fuel_type, real_gen, market_gen, delta_gen, computed_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
         ON CONFLICT (ts, fuel_type) DO UPDATE SET
-            real_gen = excluded.real_gen, market_gen = excluded.market_gen,
-            delta_gen = excluded.delta_gen, computed_at = excluded.computed_at
+            settlement_period = excluded.settlement_period, real_gen = excluded.real_gen,
+            market_gen = excluded.market_gen, delta_gen = excluded.delta_gen, computed_at = excluded.computed_at
         """,
-        [(r["ts"], r["fuel_type"], r.get("real_gen"), r.get("market_gen"), r.get("delta_gen"), ts) for r in rows],
+        [(r["ts"], r.get("settlement_period"), r["fuel_type"], r.get("real_gen"), r.get("market_gen"), r.get("delta_gen"), ts) for r in rows],
     )
     return len(rows)
 

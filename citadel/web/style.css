@@ -276,43 +276,158 @@ main#fpn-page {
 
 .fpn-columns {
   display: flex;
-  gap: 0.6rem;
+  /* Wider than the 0.3rem gap used *within* a column -- this is the seam
+     between the tables and the Generation Chart's own column, and reads as
+     an accidental sliver right up against the tables at the old value.
+     Applies as row-gap too once .fpn-columns stacks below 900px, so it
+     also separates the two sections vertically in the portrait layout. */
+  gap: 1rem;
   align-items: flex-start;
 }
 
 .fpn-col {
-  flex: 1;
+  /* Shrinks to its own content's width instead of always claiming half the
+     row (a flex item's default under `flex: 1`) -- the left column's cards
+     are only 348px/800px wide (see .fpn-card below), so `flex: 1` on a wide
+     screen left a dead gap of empty column space between them and the
+     right column, well before the actual next card (e.g. the Generation
+     Chart) began. In the portrait/stacked layout below 900px this has no
+     effect either way, since flex-direction: column already sizes each
+     column to the full row width regardless. */
+  flex: 0 1 auto;
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  align-items: flex-start;
+  gap: 0.3rem;
 }
 
 @media (max-width: 900px) {
   .fpn-columns { flex-direction: column; }
 }
 
-.graph-container {
-  width: auto;
-  margin-bottom: 3px;
-  border: 1px solid var(--border);
+/* Table cards -- same colours as the pricing-stack page's own
+   `.period-card` (var(--panel) background, var(--border) border), no
+   fixed height (a fixed chart-sized max-height here is what was clipping
+   tall tables and making their content spill over the next card). Sized
+   to match the real Zapdos "FPN Accuracy" page's own `.card`/`.card-body`
+   rule (custom.css: `width: 348px; padding: 0 !important;`) instead of
+   shrinking/stretching to content -- a fixed, narrow footprint with any
+   overflow handled by .fpn-table-wrap's own horizontal scroll, exactly
+   like the original. */
+.fpn-card {
+  width: 348px;
+  max-width: 100%;
   background: var(--panel);
+  border: 1px solid var(--border);
   border-radius: 6px;
-  padding: 0.5rem;
-  position: relative;
+  overflow: hidden;
+  margin-bottom: 3px;
 }
 
-.graph-container:has(.chartjs_canvas) { min-height: 200px; max-height: 340px; }
-.graph-container.tall { height: 380px; max-height: 380px; }
+/* Wider variant for the by-fuel-type generation table -- matches the
+   Generation/Delta charts' own width (`.graph-container.big`) directly by
+   request, rather than custom.css's own fixed `.generation-table { width:
+   800px; }` (that table has many more columns than the charts are wide,
+   but the user wants it visually the same size as the charts above it,
+   scrolling internally via .fpn-table-wrap for any overflow instead). */
+.fpn-card.wide {
+  width: calc(100vw - 2.5rem);
+  max-width: 780px;
+}
 
-.graph-container h2 {
+.fpn-card h2,
+.fpn-card p.text-center,
+p.gen-title {
+  font-size: 0.64rem;
+  font-weight: 700;
+  color: var(--sp-accent);
+  margin: 0;
+  padding: 0.15rem 0.3rem;
+}
+
+.text-center { text-align: center; }
+p.gen-title { text-align: left; }
+
+/* Departs from the real Zapdos "FPN Accuracy" home page's own
+   `.graph-container` sizing (280-310px tall, 62vw/750px wide) at the
+   user's request: height matches `.fpn-card`'s own "Fpn by Fuel" rendered
+   height (~313px). The two-line SP/time x-axis label used to get clipped
+   at this height (canvas measured ~19px taller than the container) --
+   fixed on the label side instead of the box side this time: smaller tick
+   font + less canvas bottom padding (see fpn.js's makeChart and
+   `.chartjs_canvas` below), not a taller box. Width reaches to near the
+   edge of a portrait screen -- `calc(100vw - 2.5rem)` leaves the same
+   small margin main#fpn-page's own side padding already leaves on the
+   left, mirrored on the right, rather than the source's `62vw` (a
+   comfortable fraction of a *wide* screen, but a needlessly narrow strip
+   with dead space either side of it on a narrow one). `max-width` still
+   caps it on a wide screen. Background is this project's own `--panel`
+   (the same colour every table card uses), not the source's own
+   `#222538` -- the user asked for the chart to match the tables here
+   rather than follow the source verbatim. `.tall`/`.full-screen` belong
+   to a *different*, single-chart standalone window (FPN Profile), not
+   this dashboard. `border-radius` is this project's own `.fpn-card` value
+   (6px), also not in the source -- matches every table card's own
+   rounded corners. */
+.graph-container {
+  width: auto;
+  min-height: 313px;
+  max-height: 313px;
+  margin-bottom: 3px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  overflow: hidden;
+  /* Chart.js sizes the canvas to its parent's *entire* height, not the
+     space left after this box's other children (the title, and the
+     legend on the with-legend variant) -- confirmed directly (title
+     15px + canvas 311px inside a 313px box). Making this box a flex
+     column with the canvas as the only flexible child fixes that: the
+     title/legend take their own natural height and the canvas is laid
+     out in whatever remains, which is what Chart.js's resize observer
+     then correctly measures and fills -- not a font/padding problem, so
+     that alone (still applied, real fit margin) wasn't enough by itself. */
+  display: flex;
+  flex-direction: column;
+}
+
+.graph-container > p.text-center,
+.graph-container > .chart-legend {
+  flex: 0 0 auto;
+}
+
+.graph-container > .chartjs_canvas {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.graph-container.big {
+  width: calc(100vw - 2.5rem);
+  /* Matches `.fpn-card.wide` below exactly -- the Real Time Generation
+     table's own 26 columns need ~750px to show without a horizontal
+     scrollbar (measured directly: 746px scrollWidth), so these charts are
+     sized to the same width by request rather than the source's own
+     narrower 62vw/750px-on-a-different-basis figure. */
+  max-width: 780px;
+}
+
+.graph-container.big.with-legend {
+  max-width: 775px;
+}
+
+.graph-container.tall { height: 350px; max-height: 350px; }
+.graph-container.full-screen { width: auto; min-height: 983px; max-height: 983px; }
+
+.graph-container h2,
+.graph-container p.text-center {
   font-size: 0.72rem;
   font-weight: 700;
   color: var(--sp-accent);
   margin: 0 0 0.3rem;
 }
 
-.chartjs_canvas { max-height: 300px; }
+.chartjs_canvas { padding-bottom: 2px; }
 
 .chart-legend {
   list-style: none;
@@ -376,21 +491,40 @@ th.rotate > div {
   padding: 2px 3px;
 }
 
+/* Compact footprint matching the real Zapdos "FPN Accuracy" tables --
+   shrinking the table's overall size (tight cell padding, minimal row
+   height, narrow columns), NOT the text: font-size here stays at the same
+   readable size as the rest of the app (inherited from the base `table`
+   rule), only the space *around* each character is cut down. Values below
+   (0.2rem cell padding, 0.7 line-height, 0 table margin) are custom.css's
+   own `table td, .table th`, `.table:not(.table-bordered) td`, and
+   `.table` rules, not hand-tuned guesses. */
 .fpn-table-wrap { overflow-x: auto; }
-.fpn-table-wrap table { width: max-content; min-width: 100%; }
+/* `.fpn-card` is now a fixed Zapdos-sized box (348px/800px, not a
+   shrink-to-content one), so the table should fill it the same way a
+   plain Bootstrap `.table` fills its `.card-body` by default -- `width:
+   max-content` here left content-narrower tables (e.g. "Fpn by Fuel")
+   clumped against the left edge with dead space on the right instead of
+   spread evenly across their box. A table genuinely wider than its card
+   still scrolls via this wrapper's own overflow-x. */
+.fpn-table-wrap table { width: 100%; line-height: 0.7; margin-bottom: 0; }
+.fpn-table-wrap th, .fpn-table-wrap td { padding: 0.2rem; }
 
-/* Heatmap-style conditional cell coloring, ported from Zapdos' own
-   [data-range]/[data-name] convention: a cell declares --percentile
-   (0-100, how extreme this value is among its own column) and the
-   colour ramps via hsla() instead of a handful of fixed buckets. */
-td[data-range] {
-  --opacity: calc(var(--percentile, 0) / 100 * 0.55);
-  background-color: hsla(0, 70%, 50%, var(--opacity, 0));
-  color: var(--text);
-}
-td[data-range="positive"] {
-  background-color: hsla(210, 70%, 55%, var(--opacity, 0));
-}
-td[data-range="negative"] {
-  background-color: hsla(0, 70%, 55%, var(--opacity, 0));
-}
+/* Sum-of-all-fuel-types row appended to the by-fuel pivot tables (see
+   renderFuelPivot) -- set apart from the fuel rows above it. */
+.total-row td { font-weight: 700; border-top: 1px solid var(--border); }
+
+/* Magnitude-band shading for "Market Gen vs Adjusted Fpn" -- the exact
+   `data-range` names and colours from the real Zapdos app source
+   (components/tables/generate-fuel-type-table.js sets these bands for
+   this exact table, `market_gen_vs_adj_fpn_by_sp`; assets/css/custom.css
+   is where these colours come from, ported verbatim, not a percentile
+   scale invented for this port). Text stays black on these light
+   backgrounds, same as the source -- var(--text)/var(--table-text) read
+   poorly against them. */
+td[data-range="low"] { background-color: #e5f3e5; color: #111; }
+td[data-range="medium"] { background-color: #b2dcb2; color: #111; }
+td[data-range="high"] { background-color: #66b966; color: #111; }
+td[data-range="low-negative"] { background-color: #ffdcb2; color: #111; }
+td[data-range="medium-negative"] { background-color: #ffc57f; color: #111; }
+td[data-range="high-negative"] { background-color: #ffae4c; color: #111; }

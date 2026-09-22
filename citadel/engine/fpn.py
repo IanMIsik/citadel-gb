@@ -9,13 +9,30 @@ type CSVs.
 Like engine/stack.py, this is deliberately literal about the arithmetic --
 the goal is to preserve the original tool's own behaviour (including
 quirks like the wind-FPN period-average override below) while replacing
-everything *around* it. The one genuine integration this drops rather than
-ports is the cross-notebook exchange via Google-Drive pickle files
-(`spot_niv.pkl`, `small_fpn_boalf_disbsad_spot.pkl`): both pickles carried
-the same thing -- Citadel's own per-unit, per-minute `delta` (accepted
-volume minus FPN) -- which this module now computes directly as part of
-its own pipeline (see `explode_and_merge`), so there's nothing left to
-fetch from another process at all.
+everything *around* it. Both original cross-notebook Google-Drive pickle
+exchanges (`spot_niv.pkl`, `small_fpn_boalf_disbsad_spot.pkl`) carried real
+pricing-stack-derived data out of "the pricing stack notebook" into these
+ones -- neither is dropped, both are now direct in-process Postgres reads
+of the real pricing stack's own output instead:
+  - `small_fpn_boalf_disbsad_spot.pkl`'s per-unit accepted-volume delta ->
+    `pricing_stack_delta_by_fuel` (this project's own `pricing_stack_rows`),
+    used for `market_gen`: FUELINST's real generation reading already
+    reflects accepted offers (added) and accepted bids (subtracted), and
+    `market_gen` needs to remove exactly that effect, which only the
+    pricing stack's own reversal-aware, CADL-aware acceptance data gets
+    right -- not this module's own simplified, independently re-derived
+    per-minute delta from `explode_and_merge`.
+  - `spot_niv.pkl`'s genuinely per-minute NIV trajectory ->
+    `pricing_stack_niv_spot_time` (engine/stack.py's `spot_time_niv()`),
+    used for the Delta Chart's `delta`/`niv_error` (see build_aggregated()'s
+    own docstring) -- same reasoning: the real bid/offer-driven, sub-period
+    trajectory only the pricing stack's own reversal-aware `delta` can give,
+    not a flat once-per-period figure or this module's own naive per-unit
+    delta.
+`explode_and_merge`'s own `delta` is still computed and still feeds the
+by-fuel-type FPN-delta/MEL-MIL-drop pivots -- it's a different, simpler
+figure (raw accepted-vs-FPN, no reversal/CADL awareness) kept for that
+different purpose, not the decision-table pipeline above.
 
 Elexon's raw PN/MEL/MIL/BOALF records carry both a `bmUnit` (Elexon's own
 BM Unit code) and a `nationalGridBmUnit` field. `bm_unit_reference` (see
@@ -33,6 +50,7 @@ import numpy as np
 import pandas as pd
 
 from . import stack as stack_engine
+from ..settlement import utc_to_settlement
 
 # A unit's own "fuel type" in Elexon's reference data doubles as its
 # interconnector name for interconnectors (INTFR, INTNED, INTELEC, ...) --
@@ -40,6 +58,20 @@ from . import stack as stack_engine
 # interconnector_df columns are exactly these INT* codes). No separate
 # interconnector reference is needed.
 INTERCONNECTOR_FUEL_PREFIX = "INT"
+
+# Elexon's own documented FUELINST fuel-type enum -- the fixed set of
+# categories Elexon itself recognises (confirmed against the Fuelinst
+# notebook's own explicit column list, which only ever used names from
+# this set). `bm_unit_reference.fuel_type` also carries broader, curator-
+# supplied labels (e.g. "BATTERIES", "LOAD RESPONSE", a generic
+# "INTERCONNECTOR") for units FUELINST has no category for at all -- those
+# units never have real generation data to merge against anyway, so
+# `fuel_type_reference()` below excludes them rather than let them show up
+# as all-"--" rows on the dashboard.
+ELEXON_FUEL_TYPES = frozenset({
+    "CCGT", "OCGT", "OIL", "COAL", "NUCLEAR", "WIND", "PS", "NPSHYD", "OTHER", "BIOMASS",
+    "INTFR", "INTIRL", "INTNED", "INTEW", "INTNEM", "INTELEC", "INTIFA2", "INTNSL", "INTVKL", "INTGRNL",
+})
 
 # A BM unit whose MEL/MIL-adjusted FPN deviates from its raw FPN by more
 # than this (MW, period-average) makes the worst-deviants table.
@@ -58,13 +90,25 @@ SMOOTHED_FUEL_TYPES = ("CCGT", "COAL", "PS")
 def fuel_type_reference(bm_unit_reference: pd.DataFrame) -> pd.DataFrame:
     """`bm_unit_reference` rows (national_grid_bm_unit, elexon_bm_unit,
     fuel_type, ...) -> a (bmUnit, nationalGridBmUnit, FT) frame, dropping
-    units missing either identifier or a fuel type -- the direct analogue
-    of the notebooks' own `bmu_fuel_types` CSV.
+    units missing either identifier or a fuel type, and units whose fuel
+    type isn't one Elexon itself recognises (see `ELEXON_FUEL_TYPES`) --
+    the direct analogue of the notebooks' own `bmu_fuel_types` CSV.
     """
-    ref = bm_unit_reference.dropna(subset=["elexon_bm_unit", "national_grid_bm_unit", "fuel_type"])
-    return ref.rename(columns={"elexon_bm_unit": "bmUnit", "national_grid_bm_unit": "nationalGridBmUnit", "fuel_type": "FT"})[
+    ref = bm_unit_reference.dropna(subset=["elexon_bm_unit", "national_grid_bm_unit", "fuel_type"]).copy()
+    ref["fuel_type"] = ref["fuel_type"].str.upper()
+    ref = ref[ref["fuel_type"].isin(ELEXON_FUEL_TYPES)]
+    ref = ref.rename(columns={"elexon_bm_unit": "bmUnit", "national_grid_bm_unit": "nationalGridBmUnit", "fuel_type": "FT"})[
         ["bmUnit", "nationalGridBmUnit", "FT"]
-    ].drop_duplicates()
+    ]
+    # A source that (rarely) carries the same bmUnit under two different
+    # fuel types would otherwise fan out every merge keyed on bmUnit and,
+    # worse, non-deterministically flip that unit between fuel types from
+    # one recompute to the next depending on merge/groupby row order --
+    # confirmed as the cause of a real reported bug (a unit's generation
+    # alternating between two fuel-type buckets across dashboard
+    # refreshes). Sorting first makes the one survivor per bmUnit stable
+    # from run to run, not just unique.
+    return ref.sort_values(["bmUnit", "FT"]).drop_duplicates(subset=["bmUnit"], keep="first").reset_index(drop=True)
 
 
 def unit_sets(fuel_ref: pd.DataFrame) -> dict[str, set[str]]:
@@ -73,7 +117,11 @@ def unit_sets(fuel_ref: pd.DataFrame) -> dict[str, set[str]]:
     return {
         "generating_units": set(generating["nationalGridBmUnit"]),
         "wind_units": set(generating.loc[generating["FT"] == "WIND", "nationalGridBmUnit"]),
-        "interconnector_units": set(fuel_ref.loc[is_interconnector, "nationalGridBmUnit"]),
+        # Keyed by bmUnit, not nationalGridBmUnit: the user's own
+        # interconnector reference (misco_fuel_type_reference.py) has no
+        # real nationalGridBmUnit column for interconnectors at all, only
+        # bmUnit -- see that module's own docstring.
+        "interconnector_bm_units": set(fuel_ref.loc[is_interconnector, "bmUnit"]),
     }
 
 
@@ -203,8 +251,22 @@ def explode_and_merge(pn_df: pd.DataFrame, boalf_df: pd.DataFrame, mel_df: pd.Da
     result = _left_join(result, exploded_mel, "mel_spot_vol")
     result = _left_join(result, exploded_mil, "mil_spot_vol")
 
-    result["boalf_spot_vol"] = result["boalf_spot_vol"].fillna(0)
+    # `delta` must come from the *raw* (still-NaN-where-unmatched)
+    # boalf_spot_vol, exactly as the notebook does it (`result['delta'] =
+    # result['boalf_spot_vol'] - result['fpn_spot_vol']` runs before its
+    # own `result['boalf_spot_vol'] = result['boalf_spot_vol'].fillna(0)`)
+    # -- a unit with no active BOALF acceptance has NaN boalf_spot_vol, so
+    # NaN - fpn_spot_vol is NaN, and only *that* gets filled to 0 (correctly
+    # "no BM action, no deviation"). Filling boalf_spot_vol to 0 first, as
+    # this used to, computed `0 - fpn_spot_vol` instead -- wrongly treating
+    # "the unit wasn't in the BM this minute" as "the unit was curtailed to
+    # zero", which inflated every fuel type's own summed delta by roughly
+    # its whole untouched fleet's worth of FPN (confirmed directly: real
+    # CCGT deviation is the sum of 3 genuinely-active units' own deltas,
+    # ~664 MW -- the other 78 CCGT units were each wrongly contributing
+    # their own full FPN as spurious negative delta).
     result["delta"] = (result["boalf_spot_vol"] - result["fpn_spot_vol"]).fillna(0)
+    result["boalf_spot_vol"] = result["boalf_spot_vol"].fillna(0)
 
     # A momentary MEL/MIL data gap must not corrupt `adjusted_fpn` with a
     # NaN (min/max propagate it, and 0 * NaN is still NaN even where the
@@ -277,12 +339,14 @@ def interconnector_rows(pn_df: pd.DataFrame, fuel_ref: pd.DataFrame, sets: dict[
     aligned onto the shared spot-time grid via `spot_times`
     (settlementDate, settlementPeriod, spot_time).
     """
-    if pn_df.empty or not sets["interconnector_units"]:
+    if pn_df.empty or not sets["interconnector_bm_units"]:
         return pd.DataFrame()
-    int_pn = pn_df[pn_df["nationalGridBmUnit"].isin(sets["interconnector_units"])].copy()
+    int_pn = pn_df[pn_df["bmUnit"].isin(sets["interconnector_bm_units"])].copy()
     if int_pn.empty:
         return pd.DataFrame()
-    int_pn = pd.merge(int_pn, fuel_ref, on=["nationalGridBmUnit", "bmUnit"], how="left")
+    # Joined on bmUnit alone -- the user's own interconnector reference has
+    # no real nationalGridBmUnit for these units, see unit_sets()'s docstring.
+    int_pn = pd.merge(int_pn, fuel_ref[["bmUnit", "FT"]].drop_duplicates(), on="bmUnit", how="left")
     int_pn["settlementDate"] = pd.to_datetime(int_pn["settlementDate"])
     grouped = int_pn.groupby(["settlementDate", "settlementPeriod", "FT"])["levelTo"].sum().reset_index()
     grouped = grouped.rename(columns={"levelTo": "fpn_spot_vol"})
@@ -368,29 +432,143 @@ def _smooth_selected_fuel_types(by_fuel: pd.DataFrame, cols: list[str], fuel_typ
     return pd.concat(smoothed_parts, ignore_index=True)
 
 
-def blend_generation_and_smooth(by_fuel: pd.DataFrame, fuelinst_df: pd.DataFrame, interconnector_rows_df: pd.DataFrame, natgrid_rows_df: pd.DataFrame) -> pd.DataFrame:
+def _strip_pair_id_suffix(bm_unit: str) -> str:
+    """stack.py's build_price_stack appends "_<pairId>" (a small integer,
+    possibly negative, e.g. "_-2") to every bmUnit after its six-case
+    BOD-band split (`combined["bmUnit"] = combined["bmUnit"] + "_" +
+    combined["pairId"].astype(str)`) -- this reverses that. Robust to the
+    original bmUnit itself containing underscores (common in Elexon's own
+    codes, e.g. "2__NSMAE001"): only strips the last segment, and only if
+    it's actually numeric, so a bmUnit lacking the suffix passes through
+    unchanged instead of getting corrupted.
+    """
+    base, sep, suffix = bm_unit.rpartition("_")
+    if sep and suffix.lstrip("-").isdigit():
+        return base
+    return bm_unit
+
+
+def pricing_stack_niv_by_period(pricing_stack_niv_rows: list[dict]) -> pd.DataFrame:
+    """`pricing_stack_niv_rows` (from db.pricing_stack_niv_by_period) --
+    the pricing stack's own real, already-settled NIV per (settlementDate,
+    settlementPeriod), for the "Delta table"'s `niv_sp_max` row (see the
+    real Zapdos delta-table.js, which reads this from a `spot_niv.pkl`
+    handoff from the sibling notebook -- here it's the same in-process read
+    already established for `market_gen`, via a different pricing-stack
+    column).
+    """
+    columns = ["settlementDate", "settlementPeriod", "niv_sp_max"]
+    if not pricing_stack_niv_rows:
+        return pd.DataFrame(columns=columns)
+    df = pd.DataFrame(pricing_stack_niv_rows)
+    df["settlementDate"] = pd.to_datetime(df["settlement_date"])
+    return df.rename(columns={"settlement_period": "settlementPeriod"})[columns]
+
+
+def pricing_stack_niv_spot_time(pricing_stack_niv_spot_time_rows: list[dict]) -> pd.DataFrame:
+    """`pricing_stack_niv_spot_time_rows` (from
+    db.pricing_stack_niv_spot_time_by_period) -- the pricing stack's own
+    genuinely per-minute NIV trajectory (engine/stack.py's spot_time_niv()),
+    the real `niv_spot_time_max` this module's Delta Chart `delta` line
+    needs (see build_aggregated()'s own docstring): unlike
+    `pricing_stack_niv_by_period` above (one flat figure per whole period),
+    this varies minute to minute with actual bid/offer acceptances, exactly
+    the way the original notebook's own `misik_cast_delta` (its `spot_niv.pkl`
+    handoff) did.
+    """
+    columns = ["settlementDate", "settlementPeriod", "spot_time", "niv_spot_time_max"]
+    if not pricing_stack_niv_spot_time_rows:
+        return pd.DataFrame(columns=columns)
+    df = pd.DataFrame(pricing_stack_niv_spot_time_rows)
+    df["settlementDate"] = pd.to_datetime(df["settlement_date"])
+    df["spot_time"] = pd.to_datetime(df["spot_time"], utc=True)
+    return df.rename(columns={"settlement_period": "settlementPeriod"})[columns]
+
+
+def pricing_stack_delta_by_fuel(pricing_stack_delta_rows: list[dict], fuel_ref: pd.DataFrame) -> pd.DataFrame:
+    """`pricing_stack_delta_rows` (from db.pricing_stack_delta_by_bm_unit)
+    -> real accepted-offer/reduced-accepted-bid volume per (settlementDate,
+    settlementPeriod, FT) -- see this module's own docstring on why
+    `market_gen` needs this rather than `explode_and_merge`'s own delta.
+
+    `pricing_stack_rows.delta` is in **MWh**, not MW: stack.py's own
+    `compute_stack` sums per-minute MW-level deltas and then divides by 60
+    (`misik_stack["delta"] = misik_stack["delta"] / 60`, MW-minutes ->
+    MWh) -- a settlement period is 30 minutes, so that MWh figure is only
+    half of the average MW that produced it. Every caller here combines
+    this with FUELINST's own instantaneous MW reading (`market_gen =
+    fuelinst_generation - pricing_stack_delta`), so it's converted back to
+    an average-MW-over-the-period figure (`* 2`) right here, once, rather
+    than at each call site -- confirmed directly against real data: the
+    unconverted MWh figure read as roughly half the real MW deviation
+    (e.g. a genuine ~664 MW net CCGT deviation was computing as ~332).
+    """
+    columns = ["settlementDate", "settlementPeriod", "FT", "pricing_stack_delta"]
+    if not pricing_stack_delta_rows:
+        return pd.DataFrame(columns=columns)
+    df = pd.DataFrame(pricing_stack_delta_rows)
+    df["bmUnit"] = df["bm_unit"].map(_strip_pair_id_suffix)
+    df["settlementDate"] = pd.to_datetime(df["settlement_date"])
+    df = df.rename(columns={"settlement_period": "settlementPeriod"})
+    df = pd.merge(df, fuel_ref[["bmUnit", "FT"]].drop_duplicates(), how="left", on="bmUnit")
+    grouped = df.groupby(["settlementDate", "settlementPeriod", "FT"])["delta"].sum().reset_index()
+    grouped["delta"] = grouped["delta"] * 2
+    return grouped.rename(columns={"delta": "pricing_stack_delta"})
+
+
+def blend_generation_and_smooth(
+    by_fuel: pd.DataFrame, fuelinst_df: pd.DataFrame, interconnector_rows_df: pd.DataFrame, natgrid_rows_df: pd.DataFrame,
+    pricing_stack_delta_df: pd.DataFrame,
+) -> pd.DataFrame:
     """Rounds each fuel-type row's `spot_time` onto FUELINST's own 5-minute
     grid, blends in real generation (`market_gen`/`market_gen_vs_fpn`/
     `market_gen_vs_adj_fpn`/`mel_mil_drop`), smooths the three trickiest
     fuel types, then appends the interconnector and NATGRID synthetic rows
     (which are *not* smoothed or FUELINST-blended -- ported as-is, same
     order the notebook does it in).
+
+    `market_gen` is computed from `pricing_stack_delta_df` (the real
+    pricing stack's own accepted-volume figure, broadcast across every
+    minute of its settlement period), not `by_fuel`'s own `delta` column --
+    see module docstring.
     """
     by_fuel = by_fuel.copy()
     by_fuel["startTime"] = (by_fuel["spot_time"] - pd.Timedelta(seconds=1.51 * 60)).dt.round("5min")
 
     if not interconnector_rows_df.empty:
-        by_fuel = pd.concat([by_fuel, interconnector_rows_df.drop(columns=["startTime"], errors="ignore")], ignore_index=True)
+        interconnector_rows_df = interconnector_rows_df.copy()
+        # Computed fresh here (not carried over from wherever this frame
+        # came from) so interconnectors line up with FUELINST's own 5-minute
+        # blocks the same way every other fuel type does -- without this,
+        # concatenating them in with no `startTime` at all (or a mismatched
+        # one) means the FUELINST merge below can never match them, and
+        # `market_gen`/`market_gen_vs_adj_fpn` silently stay blank for
+        # every interconnector despite FUELINST reporting real generation
+        # for each of them.
+        interconnector_rows_df["startTime"] = (interconnector_rows_df["spot_time"] - pd.Timedelta(seconds=1.51 * 60)).dt.round("5min")
+        by_fuel = pd.concat([by_fuel, interconnector_rows_df], ignore_index=True)
 
     if not fuelinst_df.empty:
         fuelinst = fuelinst_df.rename(columns={"fuelType": "FT", "generation": "fuelinst_generation"})
-        fuelinst = fuelinst[["FT", "settlementDate", "settlementPeriod", "fuelinst_generation", "startTime"]].copy()
-        fuelinst["settlementDate"] = pd.to_datetime(fuelinst["settlementDate"])
+        # Joined on (FT, startTime) only -- NOT settlementDate/settlementPeriod
+        # too. Elexon's own FUELINST records carry their own settlementPeriod
+        # label, computed independently of `startTime`; it doesn't always
+        # agree with this module's own settlementPeriod (derived from
+        # `spot_time` via stack.py's London-local conversion), and requiring
+        # both to match silently dropped an entire period's worth of real
+        # generation to NaN whenever they disagreed -- confirmed live (a
+        # settlement period with fpn_generation_by_fuel fully populated but
+        # fpn_by_fuel's own fuelinst_generation NaN for every minute of it).
+        # `startTime` alone already uniquely identifies one 5-minute FUELINST
+        # block.
+        fuelinst = fuelinst[["FT", "fuelinst_generation", "startTime"]].copy()
         fuelinst["startTime"] = pd.to_datetime(fuelinst["startTime"], utc=True).dt.round("5min")
         by_fuel["FT"] = by_fuel["FT"].replace({"ELECLINK": "INTELEC"})
         by_fuel["settlementDate"] = pd.to_datetime(by_fuel["settlementDate"])
-        by_fuel = pd.merge(by_fuel, fuelinst, how="left")
-        by_fuel["market_gen"] = by_fuel["fuelinst_generation"] - by_fuel["delta"]
+        by_fuel = pd.merge(by_fuel, fuelinst, on=["FT", "startTime"], how="left")
+        by_fuel = pd.merge(by_fuel, pricing_stack_delta_df, on=["settlementDate", "settlementPeriod", "FT"], how="left")
+        by_fuel["pricing_stack_delta"] = by_fuel["pricing_stack_delta"].fillna(0)
+        by_fuel["market_gen"] = by_fuel["fuelinst_generation"] - by_fuel["pricing_stack_delta"]
         by_fuel["market_gen_vs_fpn"] = by_fuel["market_gen"] - by_fuel["fpn_spot_vol"]
         by_fuel["market_gen_vs_adj_fpn"] = by_fuel["market_gen"] - by_fuel["adjusted_fpn"]
         by_fuel["mel_mil_drop"] = by_fuel["adjusted_fpn"] - by_fuel["fpn_spot_vol"]
@@ -509,22 +687,57 @@ def build_demand_frame(ndf: list[dict], tsdf: list[dict], indo: list[dict], itsd
 # The decision table: aggregated view + NIV estimate
 # ---------------------------------------------------------------------------
 
-def build_aggregated(by_fuel: pd.DataFrame, demand: pd.DataFrame, system_delta: pd.DataFrame) -> pd.DataFrame:
+def build_aggregated(
+    by_fuel: pd.DataFrame, demand: pd.DataFrame,
+    niv_by_period: pd.DataFrame | None = None, niv_spot_time: pd.DataFrame | None = None,
+) -> pd.DataFrame:
     """One row per `spot_time`: total generation-vs-plan, demand-side
     error, and the `niv_estimate` decision figure -- the notebook's
     `aggregated_fpn_mel_boalf`/final `df` merged into a single table.
 
-    `system_delta`: (settlementDate, settlementPeriod, spot_time, delta) --
-    the system-wide sum of accepted-minus-FPN volume, computed directly
-    from this module's own per-unit merge (`explode_and_merge`'s `delta`,
-    summed) instead of the notebooks' cross-process `spot_niv.pkl`.
+    `niv_spot_time`: (settlementDate, settlementPeriod, spot_time,
+    niv_spot_time_max) -- the pricing stack's own genuinely per-minute NIV
+    trajectory (engine/stack.py's spot_time_niv()), and the real driver of
+    `delta` here. This is the same reversal/CADL-aware `delta`
+    `pricing_stack_rows` itself is built from, just grouped by minute
+    instead of by acceptance, and it's already in MW (see
+    spot_time_niv()'s own docstring) -- no unit conversion needed, unlike
+    `niv_by_period` below. Ported directly from the original notebook's own
+    `misik_cast_delta` (its `spot_niv.pkl` handoff from the sibling pricing-
+    stack notebook, merged onto `aggregated_fpn_mel_boalf` the exact same
+    way here). A minute with no matching row -- no accepted volume active
+    that minute -- is a real, honest zero (no BM action, no deviation), the
+    same convention `explode_and_merge`'s own `delta` already uses; fillna(0)
+    reflects that, not a guess.
+
+    `niv_by_period`: (settlementDate, settlementPeriod, niv_sp_max) -- the
+    pricing stack's own real, already-settled *period-total* NIV (see
+    pricing_stack_niv_by_period), read directly from `pricing_stack_rows.
+    total_delta`. Kept only as its own persisted column (FPN_AGGREGATED_
+    COLUMNS) -- it no longer drives `delta`/`delta_av` themselves now that
+    `niv_spot_time` supplies the real per-minute figure those are actually
+    built from (`delta_av` below is this table's own period-average of
+    `delta`, exactly as the notebook computes it, not a read of
+    `niv_sp_max`). That column is in MWh, not MW (stack.py's own
+    `compute_stack` sums per-minute MW-level deltas and divides by 60), so
+    it isn't directly comparable to `delta`/`delta_av` here without the same
+    `* 2` conversion `pricing_stack_delta_by_fuel` applies for its own callers.
     """
     group_cols = ["settlementDate", "settlementPeriod", "spot_time"]
     sum_cols = ["fpn_spot_vol", "fuelinst_generation", "market_gen", "mel_reduced_fpn", "market_gen_vs_fpn", "mel_mil_drop", "market_gen_vs_adj_fpn", "adjusted_fpn"]
     present = [c for c in sum_cols if c in by_fuel.columns]
     aggregated = by_fuel.groupby(group_cols)[present].sum(min_count=1).reset_index()
 
-    aggregated = pd.merge(aggregated, system_delta, on=group_cols, how="left")
+    if niv_spot_time is not None and not niv_spot_time.empty:
+        aggregated = pd.merge(aggregated, niv_spot_time, on=group_cols, how="left")
+        aggregated["delta"] = aggregated["niv_spot_time_max"].fillna(0)
+    else:
+        aggregated["delta"] = 0.0
+
+    if niv_by_period is not None and not niv_by_period.empty:
+        aggregated = pd.merge(aggregated, niv_by_period, on=["settlementDate", "settlementPeriod"], how="left")
+    else:
+        aggregated["niv_sp_max"] = np.nan
 
     nuke_drop = by_fuel.loc[by_fuel["FT"] == "NUCLEAR", ["spot_time", "mel_mil_drop"]].rename(columns={"mel_mil_drop": "nuke_mel_drop"})
     aggregated = pd.merge(aggregated, nuke_drop, on="spot_time", how="left")
@@ -536,6 +749,9 @@ def build_aggregated(by_fuel: pd.DataFrame, demand: pd.DataFrame, system_delta: 
     aggregated["fpn_vol_bar_nuke_drop"] = aggregated["fpn_spot_vol"] + aggregated["nuke_mel_drop"]
 
     aggregated = pd.merge(aggregated, demand, on=group_cols, how="outer")
+    # Rows this outer merge adds from `demand` alone (a spot_time with no
+    # generation-side data at all) have no real delta either.
+    aggregated["delta"] = aggregated["delta"].fillna(0)
 
     aggregated["unexplained_dmd"] = aggregated["misco_indo"] - aggregated["spot_indo"]
     aggregated["unexplained_dmd_MA"] = aggregated["unexplained_dmd"].rolling(window=30, min_periods=5).mean().ffill()
@@ -594,43 +810,61 @@ def build_decision_table(by_fuel: pd.DataFrame, aggregated: pd.DataFrame) -> pd.
 # Real generation by fuel type (Fuelinst notebook)
 # ---------------------------------------------------------------------------
 
-def compute_generation_by_fuel(fuelinst_records: list[dict], per_unit_delta: pd.DataFrame, fuel_ref: pd.DataFrame) -> pd.DataFrame:
+def compute_generation_by_fuel(fuelinst_records: list[dict], pricing_stack_delta_rows: list[dict], fuel_ref: pd.DataFrame) -> pd.DataFrame:
     """Splits FUELINST's real generation, by fuel type, into "market-driven"
-    (`market_gen`) and "BM-action-driven" (`delta_gen`) portions, using this
-    module's own per-unit `delta` (see `explode_and_merge`) in place of the
-    Fuelinst notebook's `small_fpn_boalf_disbsad_spot.pkl`. The notebook's
-    own bmUnit-suffix-stripping (`[:-2]`/`[:-3]`) was a workaround for how
-    *that* pickle encoded multiple BOD bands into one string column; this
-    module's own per-unit delta has no such encoding, so that step is
-    dropped -- not a behaviour change, just no longer needed.
+    (`market_gen`) and "BM-action-driven" (`delta_gen`) portions, using the
+    pricing stack's own real, already-computed per-unit accepted-volume
+    delta (`pricing_stack_delta_by_fuel`, the exact same source
+    `blend_generation_and_smooth`'s own "Market Gen vs Adjusted Fpn" table
+    already uses) -- not this module's own independently re-derived
+    per-minute delta from `explode_and_merge`, which this used previously.
+    That own-derived delta disagreed with the pricing stack page's own
+    figures for the same real units/period (confirmed directly by the
+    user: current CCGT actions on the pricing stack page did not match
+    this table's own CCGT deviation, which instead matched the *old*
+    notebook-era approach this replaces) -- this module's own delta
+    docstring already called this out for `market_gen` generally, but this
+    function alone had not yet been switched over.
 
-    Returns a long (TS, fuel_type, real_gen, market_gen, delta_gen) frame,
-    replacing the notebook's wide `_r`/`_m`/`_d`-suffixed pivot.
+    The pricing stack only computes delta at (settlementDate,
+    settlementPeriod, bmUnit) resolution, not per-minute, so that one
+    period-level figure is applied to every 5-minute FUELINST bucket
+    within its own settlement period (rather than varying every 5 minutes
+    the way the old per-minute-derived figure did).
+
+    Returns a long (TS, settlement_period, fuel_type, real_gen, market_gen,
+    delta_gen) frame, replacing the notebook's wide `_r`/`_m`/`_d`-suffixed
+    pivot -- `market_gen = real_gen - delta` is the exact same formula the
+    notebook itself uses (its own `temp['market_gen'] = temp['fuelinst_generation']
+    - temp['delta']`): for WIND, `delta` is almost always negative (a
+    bid/curtailment, accepted volume below FPN), so subtracting it *adds*
+    the curtailed volume back; for every other fuel type the same
+    subtraction nets off both bid-driven reductions (added back) and
+    offer-driven increases (subtracted) -- one formula, not fuel-type-
+    specific branching.
     """
     fuelinst = pd.DataFrame(fuelinst_records)
     if fuelinst.empty:
-        return pd.DataFrame(columns=["TS", "fuel_type", "real_gen", "market_gen", "delta_gen"])
+        return pd.DataFrame(columns=["TS", "settlement_period", "fuel_type", "real_gen", "market_gen", "delta_gen"])
 
     fuelinst["startTime"] = pd.to_datetime(fuelinst["startTime"], utc=True).dt.round("5min")
     fuelinst = fuelinst.rename(columns={"generation": "fuelinst_generation", "fuelType": "FT"})
+    settlement = fuelinst["startTime"].map(utc_to_settlement)
+    fuelinst["settlementDate"] = pd.to_datetime(settlement.map(lambda t: t[0]))
+    fuelinst["settlementPeriod"] = settlement.map(lambda t: t[1])
 
-    delta_by_fuel = pd.DataFrame(columns=["FT", "startTime", "delta"])
-    if not per_unit_delta.empty:
-        delta = per_unit_delta.copy()
-        delta["startTime"] = (delta["spot_time"] - pd.Timedelta(seconds=1.51 * 60)).dt.round("5min")
-        delta = pd.merge(delta, fuel_ref[["bmUnit", "FT"]].drop_duplicates(), how="left", on="bmUnit")
-        delta_by_fuel = delta.groupby(["FT", "startTime"])["delta"].sum().reset_index()
-
-    merged = pd.merge(fuelinst, delta_by_fuel, how="left", on=["FT", "startTime"])
-    merged["delta"] = merged["delta"].fillna(0)
-    merged["market_gen"] = merged["fuelinst_generation"] - merged["delta"]
+    delta_by_fuel = pricing_stack_delta_by_fuel(pricing_stack_delta_rows or [], fuel_ref)
+    merged = pd.merge(fuelinst, delta_by_fuel, how="left", on=["settlementDate", "settlementPeriod", "FT"])
+    merged["pricing_stack_delta"] = merged["pricing_stack_delta"].fillna(0)
+    merged["market_gen"] = merged["fuelinst_generation"] - merged["pricing_stack_delta"]
 
     return pd.DataFrame({
         "TS": merged["startTime"],
+        "settlement_period": merged["settlementPeriod"],
         "fuel_type": merged["FT"],
         "real_gen": merged["fuelinst_generation"],
         "market_gen": merged["market_gen"],
-        "delta_gen": merged["delta"],
+        "delta_gen": merged["pricing_stack_delta"],
     })
 
 
@@ -642,7 +876,10 @@ def compute(
     pn_df: pd.DataFrame, boalf_df: pd.DataFrame, mel_df: pd.DataFrame, mil_df: pd.DataFrame, disbsad_df: pd.DataFrame,
     fuelinst_records: list[dict], ndf: list[dict], tsdf: list[dict], indo: list[dict], itsdo: list[dict], da_ndf: list[dict],
     neso_trades: list[dict], bm_unit_reference: pd.DataFrame, demand_window: tuple[pd.Timestamp, pd.Timestamp],
+    pricing_stack_delta_rows: list[dict] | None = None,
     now: datetime | None = None,
+    pricing_stack_niv_rows: list[dict] | None = None,
+    pricing_stack_niv_spot_time_rows: list[dict] | None = None,
 ) -> dict[str, pd.DataFrame]:
     """Runs the whole pipeline for the current rolling window and returns
     the frames FpnRunner persists: `by_fuel`, `worst_deviants`,
@@ -667,13 +904,15 @@ def compute(
     natgrid = natgrid_trade_rows(neso_trades, disbsad_df, spot_times)
 
     fuelinst_df = pd.DataFrame(fuelinst_records)
-    by_fuel = blend_generation_and_smooth(by_fuel, fuelinst_df, interconnectors, natgrid)
+    pricing_stack_delta_df = pricing_stack_delta_by_fuel(pricing_stack_delta_rows or [], fuel_ref)
+    by_fuel = blend_generation_and_smooth(by_fuel, fuelinst_df, interconnectors, natgrid, pricing_stack_delta_df)
 
     start, end = demand_window
     demand = build_demand_frame(ndf, tsdf, indo, itsdo, da_ndf, start, end)
 
-    system_delta = merged.groupby(["settlementDate", "settlementPeriod", "spot_time"])["delta"].sum().reset_index()
-    aggregated = build_aggregated(by_fuel, demand, system_delta)
+    niv_by_period = pricing_stack_niv_by_period(pricing_stack_niv_rows or [])
+    niv_spot_time = pricing_stack_niv_spot_time(pricing_stack_niv_spot_time_rows or [])
+    aggregated = build_aggregated(by_fuel, demand, niv_by_period, niv_spot_time)
     decision = build_decision_table(by_fuel, aggregated)
 
     group_cols = ["settlementDate", "settlementPeriod"]
@@ -681,8 +920,7 @@ def compute(
         aggregated, decision[group_cols + ["wind_deviation", "other_gen_deviation", "niv_estimate"]], on=group_cols, how="left"
     )
 
-    per_unit_delta = merged[["bmUnit", "spot_time", "delta"]]
-    generation_by_fuel = compute_generation_by_fuel(fuelinst_records, per_unit_delta, fuel_ref)
+    generation_by_fuel = compute_generation_by_fuel(fuelinst_records, pricing_stack_delta_rows, fuel_ref)
 
     return {
         "by_fuel": by_fuel,

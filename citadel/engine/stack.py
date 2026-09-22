@@ -60,6 +60,21 @@ STACK_COLUMNS = [
     "vol_for_price", "misik_imb_price", "total_misik_price",
 ]
 
+# The pricing stack's own genuinely per-minute NIV trajectory -- the
+# original notebook's `spot_niv` (pricing_stack_development_continous.ipynb,
+# cell 10: `fpn_boalf_disbsad_spot.groupby([...,'spot_time'])['delta'].sum()`),
+# handed to the sibling FPN notebook via `spot_niv.pkl` as `misik_cast_delta`
+# and merged onto its own per-minute aggregated table there. Distinct from
+# `total_delta`/`niv_sp_max` above (STACK_COLUMNS's per-acceptance summary,
+# collapsed to one MWh figure per settlement period) -- this is the SAME
+# underlying reversal/CADL-aware `delta` build_price_stack() uses, just
+# grouped by minute instead of by acceptance, and confirmed already in MW
+# (not MWh): each row of `combined` already represents one bmUnit's accepted
+# volume for exactly that one minute, so summing across bmUnits at a given
+# spot_time needs no /60 or *2 conversion the way the acceptance-level
+# figures do.
+SPOT_NIV_COLUMNS = ["settlementDate", "settlementPeriod", "spot_time", "niv_spot_time_max"]
+
 
 def custom_round(x: float, base: int = 5) -> int:
     return int(base * round(float(x) / base))
@@ -712,6 +727,20 @@ def blend_disbsad(fpn_mel_boalf_dp: pd.DataFrame, disbsad_df: pd.DataFrame, flag
     return combined
 
 
+def spot_time_niv(combined: pd.DataFrame) -> pd.DataFrame:
+    """Per-(settlementDate, settlementPeriod, spot_time) sum of `combined`'s
+    own `delta` -- the real-time NIV trajectory as it actually built up
+    minute by minute from live bid/offer acceptances, before
+    build_price_stack()'s acceptance-level groupby collapses the same
+    column into one MWh figure per acceptance. Ported directly from the
+    original notebook's own `spot_niv` (see SPOT_NIV_COLUMNS's docstring).
+    """
+    if combined.empty:
+        return pd.DataFrame(columns=SPOT_NIV_COLUMNS)
+    grouped = combined.groupby(["settlementDate", "settlementPeriod", "spot_time"])["delta"].sum().reset_index()
+    return grouped.rename(columns={"delta": "niv_spot_time_max"})
+
+
 def build_price_stack(
     combined: pd.DataFrame,
     max_ta,
@@ -877,22 +906,8 @@ def _price_via_guide_methodology(misik_stack: pd.DataFrame, market_index_prices:
     instead of the legacy heuristic below. `misik_stack` must already have
     settlementDate/settlementPeriod/delta/m_orig_price/soFlag and every
     other STACK_COLUMNS field except misik_imb_price/total_misik_price.
-
-    Also overwrites `total_delta`/`delta_sign` (set upstream in
-    build_price_stack() as the RAW sum of every row's own delta, before
-    any tagging) with imbalance_price.compute_niv()'s own De-Minimis-
-    adjusted figure, grouped by `acceptance_key` (acceptanceNumber for a
-    real BM action, or `bmUnit` -- already unique per distinct entry --
-    for a synthetic DISBSAD row, which always has acceptanceNumber 0) so
-    the guide's whole-acceptance De Minimis test isn't broken up by
-    engine/stack.py's own six-case BOD-band splitting (misik_stack's
-    `bmUnit` already carries that split's pairId suffix). compute_niv() is
-    a display-only calculation, completely separate from
-    compute_imbalance_price()'s own pricing pipeline just below -- see
-    that function's own docstring, and imbalance_price._de_minimis()'s,
-    for why they're deliberately NOT sharing logic here.
     """
-    from .imbalance_price import compute_imbalance_price, compute_niv
+    from .imbalance_price import compute_imbalance_price
 
     misik_stack = misik_stack.copy()
     misik_stack["misik_imb_price"] = 0.0
@@ -900,10 +915,7 @@ def _price_via_guide_methodology(misik_stack: pd.DataFrame, market_index_prices:
 
     for (sd, sp), group in misik_stack.groupby(["settlementDate", "settlementPeriod"]):
         rows = [
-            {
-                "delta": r.delta, "m_orig_price": r.m_orig_price, "so_flag": bool(r.soFlag),
-                "acceptance_key": r.acceptanceNumber if r.acceptanceNumber != 0 else r.bmUnit,
-            }
+            {"delta": r.delta, "m_orig_price": r.m_orig_price, "so_flag": bool(r.soFlag)}
             for r in group.itertuples()
         ]
         sd_date = sd.date() if hasattr(sd, "date") else sd
@@ -912,9 +924,6 @@ def _price_via_guide_methodology(misik_stack: pd.DataFrame, market_index_prices:
         idx = group.index
         misik_stack.loc[idx, "misik_imb_price"] = [contributions.get(id(r), 0.0) for r in rows]
         misik_stack.loc[idx, "total_misik_price"] = price
-        niv = compute_niv(rows)
-        misik_stack.loc[idx, "total_delta"] = niv
-        misik_stack.loc[idx, "delta_sign"] = np.sign(niv)
 
     return misik_stack[STACK_COLUMNS].reset_index(drop=True)
 
@@ -931,7 +940,8 @@ def compute_stack(
     par_band_method: str = "interval",
     market_index_prices: dict[tuple, float] | None = None,
     overlap_resolution: str = "reversal_aware",
-) -> pd.DataFrame:
+    return_spot_niv: bool = False,
+) -> pd.DataFrame | tuple[pd.DataFrame, pd.DataFrame]:
     """End-to-end: raw per-dataset DataFrames in, the final price-stack
     DataFrame out (columns: STACK_COLUMNS). Empty at any stage short-
     circuits to an empty result rather than raising -- a quiet settlement
@@ -944,9 +954,21 @@ def compute_stack(
     against 15 real settlement periods across three separate days with
     zero regressions before being made the default; "latest_wins" is kept
     for comparison via scripts/backtest_sp.py.
+
+    `return_spot_niv`: additionally returns spot_time_niv()'s per-minute NIV
+    trajectory (columns: SPOT_NIV_COLUMNS) as a second value, computed from
+    the same `combined` frame this function already builds internally --
+    opt-in and defaulted off so every existing caller (tests included) sees
+    the exact same single-DataFrame return as before.
     """
+    empty_stack = pd.DataFrame(columns=STACK_COLUMNS)
+    empty_niv = pd.DataFrame(columns=SPOT_NIV_COLUMNS)
+
+    def _empty():
+        return (empty_stack, empty_niv) if return_spot_niv else empty_stack
+
     if boalf_df.empty:
-        return pd.DataFrame(columns=STACK_COLUMNS)
+        return _empty()
 
     boalf_df = boalf_df.drop_duplicates()
     max_ta = pd.to_datetime(boalf_df["acceptanceTime"], utc=True).max()
@@ -968,11 +990,11 @@ def compute_stack(
 
     fpn_boalf = build_marginal_deltas(boalf_df, pn_df, overlap_resolution=overlap_resolution)
     if fpn_boalf.empty:
-        return pd.DataFrame(columns=STACK_COLUMNS)
+        return _empty()
 
     fpn_mel_boalf = merge_mel_gate(fpn_boalf, mel_df, use_mel_gate=use_mel_gate)
     if fpn_mel_boalf.empty:
-        return pd.DataFrame(columns=STACK_COLUMNS)
+        return _empty()
     # allocate_volumes() converts settlementDate to datetime on its own
     # local copy of fpn_mel_boalf -- done here too so *this* frame stays
     # dtype-consistent with `dp` for the merge below (unlike the original
@@ -982,14 +1004,17 @@ def compute_stack(
 
     dp = allocate_volumes(fpn_mel_boalf, bod_df, include_case_6=include_case_6)
     if dp.empty:
-        return pd.DataFrame(columns=STACK_COLUMNS)
+        return _empty()
 
     fpn_mel_boalf_dp = pd.merge(fpn_mel_boalf, dp)
     if fpn_mel_boalf_dp.empty:
-        return pd.DataFrame(columns=STACK_COLUMNS)
+        return _empty()
 
     combined = blend_disbsad(fpn_mel_boalf_dp, disbsad_df, flags_df)
-    return build_price_stack(
+    stack_result = build_price_stack(
         combined, max_ta, pricing_method=pricing_method, par_band_method=par_band_method,
         market_index_prices=market_index_prices,
     )
+    if not return_spot_niv:
+        return stack_result
+    return stack_result, spot_time_niv(combined)

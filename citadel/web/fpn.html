@@ -22,88 +22,115 @@
       <!-- Left column: the per-fuel-type / per-SP pivot tables, same order
            as the original dashboard's own stacked "charts" tables. -->
       <section class="fpn-col fpn-col-left">
-        <div class="graph-container">
-          <h2>FPN by fuel type</h2>
+        <div class="fpn-card">
+          <p class="text-center">Fpn by Fuel</p>
           <div class="fpn-table-wrap"><table id="tbl-fpn-by-fuel"><thead><tr></tr></thead><tbody></tbody></table></div>
         </div>
-        <div class="graph-container">
-          <h2>FPN delta (vs next SP)</h2>
+        <div class="fpn-card">
+          <p class="text-center">Fpn Delta By fuel</p>
           <div class="fpn-table-wrap"><table id="tbl-fpn-delta"><thead><tr></tr></thead><tbody></tbody></table></div>
         </div>
-        <div class="graph-container">
-          <h2>MEL/MIL drop</h2>
+        <div class="fpn-card">
+          <p class="text-center">Mil Mel Drop by Fuel</p>
           <div class="fpn-table-wrap"><table id="tbl-mel-mil-drop"><thead><tr></tr></thead><tbody></tbody></table></div>
         </div>
-        <div class="graph-container">
-          <h2>Market gen vs adjusted FPN</h2>
+        <div class="fpn-card">
+          <p class="text-center">Market Gen vs Adjusted Fpn</p>
           <div class="fpn-table-wrap"><table id="tbl-market-gen-vs-adj-fpn"><thead><tr></tr></thead><tbody></tbody></table></div>
         </div>
-        <div class="graph-container">
-          <h2>AUC / delta / niv error / dmd risk / dmd error / unexp</h2>
+        <div class="fpn-card">
+          <p class="text-center">Delta table</p>
           <div class="fpn-table-wrap">
             <table id="tbl-decision-drivers">
-              <thead><tr><th>SP</th><th>AUC</th><th>Delta</th><th>NIV error</th><th>Dmd risk</th><th>Dmd error</th><th>Unexp</th></tr></thead>
+              <thead><tr></tr></thead>
               <tbody></tbody>
             </table>
           </div>
         </div>
-        <div class="graph-container">
-          <h2>Decision table</h2>
-          <div class="fpn-table-wrap">
-            <table id="tbl-decision">
-              <thead><tr><th>SP</th><th>NIV estimate</th><th>AUC</th><th>Wind dev.</th><th>Other gen dev.</th><th>Dmd error</th><th>Unexp</th></tr></thead>
-              <tbody></tbody>
-            </table>
+        <!-- Hidden for now -- needs real rework, not just a display toggle
+             (per the user). JS still renders into it; just drop this
+             wrapper to bring it back. -->
+        <div style="display: none;">
+          <div class="fpn-card">
+            <h2>Decision table</h2>
+            <div class="fpn-table-wrap">
+              <table id="tbl-decision">
+                <thead><tr></tr></thead>
+                <tbody></tbody>
+              </table>
+            </div>
           </div>
         </div>
       </section>
 
-      <!-- Right column: the three headline charts, then the two
-           generation-by-fuel-type tables (interconnectors, then others). -->
+      <!-- Right column ("charts-container" in the real Zapdos home page):
+           the same three charts in the same order (Generation Chart,
+           Delta Chart, Market_gen vs Adj_fpn -- the last still hidden),
+           all `.graph-container.big` (the real page's own size class for
+           this column -- `.tall`/`.full-screen` belong to a different,
+           single-chart window), then its summary stat cards and the Real
+           Time Generation table. -->
       <section class="fpn-col fpn-col-right">
-        <div class="decision-summary" id="decision-summary">
-          <div class="decision-figure headline">
-            <span class="label">NIV estimate</span>
-            <span class="value" id="ds-niv-estimate">--</span>
-          </div>
-          <div class="decision-figure">
-            <span class="label">Area under curve</span>
-            <span class="value" id="ds-auc-av">--</span>
-          </div>
-          <div class="decision-figure">
-            <span class="label">Unexplained delta</span>
-            <span class="value" id="ds-unexp-delta">--</span>
-          </div>
-        </div>
-
-        <div class="graph-container tall">
-          <h2>Generation</h2>
+        <!-- Generation Chart -- the real Zapdos "Forecast Chart" (see
+             fpn.js's GENERATION_SERIES), renamed per the user's own
+             preference, showing every SP in the rolling window, not just
+             the current one. Placed first, matching the real page's own
+             #charts-container (its own decision-summary card here was this
+             project's own addition, not in the real source -- removed).
+             The other two charts are still being worked on one at a time. -->
+        <div class="graph-container big">
+          <p class="text-center">Generation Chart</p>
           <canvas class="chartjs_canvas" id="generation-chart"></canvas>
-          <ul class="chart-legend" id="generation-legend"></ul>
         </div>
 
-        <div class="graph-container">
-          <h2>Delta</h2>
+        <!-- Delta Chart -- the real Zapdos "Delta_chart" (see fpn.js's
+             DELTA_SERIES), brought in right below the Generation Chart,
+             labelled/titled the same way and sharing its own SP-boundary
+             x-axis logic (see updateChart). -->
+        <div class="graph-container big">
+          <p class="text-center">Delta Chart</p>
           <canvas class="chartjs_canvas" id="delta-chart"></canvas>
-          <ul class="chart-legend" id="delta-legend"></ul>
         </div>
 
-        <div class="graph-container">
-          <h2>Over/under generation</h2>
-          <canvas class="chartjs_canvas" id="over-under-chart"></canvas>
+        <!-- Still hidden -- being worked on one at a time. Markup/JS left
+             intact; just drop this wrapper to bring it back. -->
+        <div id="charts-hidden-for-now" style="display: none;">
+          <div class="graph-container big with-legend">
+            <p class="text-center">Market_gen vs Adj_fpn</p>
+            <canvas class="chartjs_canvas" id="market-gen-vs-adj-fpn-chart"></canvas>
+            <ul class="chart-legend" id="market-gen-vs-adj-fpn-legend"></ul>
+          </div>
         </div>
 
-        <div class="graph-container">
-          <h2>Interconnector generation</h2>
-          <div class="fpn-table-wrap"><table id="tbl-interconnector-gen"><thead><tr></tr></thead><tbody></tbody></table></div>
+        <div class="fpn-card wide">
+          <p class="gen-title text-center">Real Time Generation</p>
+          <div class="fpn-table-wrap"><table id="tbl-fuelinst-max"><thead><tr></tr></thead><tbody></tbody></table></div>
         </div>
 
-        <div class="graph-container">
-          <h2>Generation by fuel type</h2>
-          <div class="fpn-table-wrap"><table id="tbl-other-gen"><thead><tr></tr></thead><tbody></tbody></table></div>
+        <div class="decision-summary" id="stat-cards">
+          <div class="decision-figure">
+            <span class="label">Average FPN</span>
+            <span class="value" id="stat-average-fpn">--</span>
+          </div>
+          <div class="decision-figure">
+            <span class="label">Average adjusted FPN</span>
+            <span class="value" id="stat-average-adj-fpn">--</span>
+          </div>
+          <div class="decision-figure">
+            <span class="label">Average MEL</span>
+            <span class="value" id="stat-avg-of-mells">--</span>
+          </div>
+          <div class="decision-figure">
+            <span class="label">Sum MEL/MIL downside</span>
+            <span class="value" id="stat-sum-mel-mil-downside">--</span>
+          </div>
+          <div class="decision-figure">
+            <span class="label">Sum MEL/MIL drop</span>
+            <span class="value" id="stat-sum-mel-mil-drop">--</span>
+          </div>
         </div>
 
-        <div class="graph-container">
+        <div class="fpn-card">
           <h2>Worst deviants</h2>
           <div class="fpn-table-wrap">
             <table id="worst-deviants-table">
