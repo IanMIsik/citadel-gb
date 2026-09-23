@@ -110,6 +110,31 @@ async def bm_unit_reference_all(pool: asyncpg.Pool) -> list[asyncpg.Record]:
     return await pool.fetch("SELECT * FROM bm_unit_reference")
 
 
+async def delete_stale_bm_unit_reference_duplicates(pool: asyncpg.Pool) -> int:
+    """Removes rows created by the exact bug
+    misco_fuel_type_reference.resolve_national_grid_bm_units() now prevents
+    from recurring: a row keyed under a synthetic national_grid_bm_unit
+    (== its own elexon_bm_unit) that only exists because a real row for that
+    same elexon_bm_unit, under its own genuine national_grid_bm_unit, was
+    already present. Only deletes when both conditions hold -- a unit whose
+    real national_grid_bm_unit genuinely equals its elexon_bm_unit (common,
+    not itself a bug) has no "other" row to compare against, so the EXISTS
+    check is false for it and it's left untouched.
+    """
+    result = await pool.execute(
+        """
+        DELETE FROM bm_unit_reference dup
+        WHERE dup.national_grid_bm_unit = dup.elexon_bm_unit
+          AND EXISTS (
+              SELECT 1 FROM bm_unit_reference real
+              WHERE real.elexon_bm_unit = dup.elexon_bm_unit
+                AND real.national_grid_bm_unit <> dup.national_grid_bm_unit
+          )
+        """
+    )
+    return int(result.split()[-1])
+
+
 async def replace_period_rows(pool: asyncpg.Pool, sd: date, sp: int, rows: list[StackRow]) -> int:
     """Deletes every existing row for (sd, sp) and inserts `rows` in its
     place, in one transaction. A recompute reflects the full current truth
@@ -394,6 +419,47 @@ async def pricing_stack_niv_spot_time_by_period(pool: asyncpg.Pool, sd: date, pe
         """
         SELECT settlement_date, settlement_period, spot_time, niv_spot_time_max
         FROM pricing_stack_niv_spot_time
+        WHERE settlement_date = $1 AND settlement_period = ANY($2::int[])
+        """,
+        sd, periods,
+    )
+
+
+async def replace_pricing_stack_unit_delta_5min_period(pool: asyncpg.Pool, sd: date, sp: int, rows: list[dict]) -> int:
+    """Same "current window, always overwritten" pattern as
+    replace_pricing_stack_niv_spot_time_period -- one period's worth of
+    engine/stack.py's spot_time_bm_unit_delta_5min() rows (settlement_date,
+    settlement_period, bm_unit, start_time, delta).
+    """
+    ts = datetime.now(timezone.utc)
+    async with pool.acquire() as conn, conn.transaction():
+        await conn.execute(
+            "DELETE FROM pricing_stack_unit_delta_5min WHERE settlement_date = $1 AND settlement_period = $2",
+            sd, sp,
+        )
+        if rows:
+            await conn.executemany(
+                """
+                INSERT INTO pricing_stack_unit_delta_5min
+                    (settlement_date, settlement_period, bm_unit, start_time, delta, computed_at)
+                VALUES ($1, $2, $3, $4, $5, $6)
+                """,
+                [(sd, sp, r["bm_unit"], r["start_time"], r["delta"], ts) for r in rows],
+            )
+    return len(rows)
+
+
+async def pricing_stack_unit_delta_5min_by_period(pool: asyncpg.Pool, sd: date, periods: list[int]) -> list[asyncpg.Record]:
+    """The pricing stack's real, per-BM-unit delta bucketed onto FUELINST's
+    own 5-minute grid, across the current window -- see schema.sql's
+    pricing_stack_unit_delta_5min docstring. engine/fpn.py's
+    pricing_stack_delta_by_fuel_5min() does the bmUnit -> fuel-type join and
+    per-fuel sum this feeds into.
+    """
+    return await pool.fetch(
+        """
+        SELECT settlement_date, settlement_period, bm_unit, start_time, delta
+        FROM pricing_stack_unit_delta_5min
         WHERE settlement_date = $1 AND settlement_period = ANY($2::int[])
         """,
         sd, periods,

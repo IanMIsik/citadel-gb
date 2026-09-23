@@ -244,6 +244,11 @@ class Runner:
         sd_date = sd.date() if hasattr(sd, "date") else sd
         await db.replace_pricing_stack_niv_spot_time_period(self.pool, sd_date, int(sp), rows)
 
+    async def _persist_unit_delta_5min_period(self, sd, sp, group: pd.DataFrame) -> None:
+        rows = [{"bm_unit": r.bmUnit, "start_time": r.startTime.to_pydatetime(), "delta": float(r.delta)} for r in group.itertuples()]
+        sd_date = sd.date() if hasattr(sd, "date") else sd
+        await db.replace_pricing_stack_unit_delta_5min_period(self.pool, sd_date, int(sp), rows)
+
     async def _recompute_and_persist(self) -> None:
         boalf = self.buffers.frame("boalf")
         if boalf.empty:
@@ -255,9 +260,9 @@ class Runner:
         )
         if self.process_pool is not None:
             loop = asyncio.get_running_loop()
-            result, spot_niv = await loop.run_in_executor(self.process_pool, compute)
+            result, spot_niv, unit_delta_5min = await loop.run_in_executor(self.process_pool, compute)
         else:
-            result, spot_niv = compute()
+            result, spot_niv, unit_delta_5min = compute()
         if result.empty:
             return
 
@@ -276,6 +281,11 @@ class Runner:
         tasks = [_bounded(self._persist_period(sd, sp, group)) for (sd, sp), group in result.groupby(["settlementDate", "settlementPeriod"])]
         if not spot_niv.empty:
             tasks += [_bounded(self._persist_spot_niv_period(sd, sp, group)) for (sd, sp), group in spot_niv.groupby(["settlementDate", "settlementPeriod"])]
+        if not unit_delta_5min.empty:
+            tasks += [
+                _bounded(self._persist_unit_delta_5min_period(sd, sp, group))
+                for (sd, sp), group in unit_delta_5min.groupby(["settlementDate", "settlementPeriod"])
+            ]
         await asyncio.gather(*tasks)
 
     async def run(self) -> None:

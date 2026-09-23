@@ -22,6 +22,7 @@ from citadel.engine.fpn import (
     explode_and_merge,
     fuel_type_reference,
     pricing_stack_delta_by_fuel,
+    pricing_stack_delta_by_fuel_5min,
     unit_sets,
 )
 
@@ -278,32 +279,77 @@ def test_pricing_stack_delta_by_fuel_strips_suffix_and_sums_by_fuel_type():
     assert ccgt_row["pricing_stack_delta"] == pytest.approx(-6.0)
 
 
+def test_pricing_stack_delta_by_fuel_5min_keeps_buckets_separate_and_needs_no_mw_conversion():
+    """Unlike `pricing_stack_delta_by_fuel` above, the 5-minute source is
+    already in MW (engine/stack.py's spot_time_bm_unit_delta_5min() sums
+    per-minute delta directly, before build_price_stack()'s /60 MWh
+    collapse) -- no `* 2` here -- and two buckets in the same settlement
+    period must stay distinct rows, not get collapsed into one period total.
+    """
+    ref = _bm_unit_reference([("T_DRAXX-1", "T_DRAXX-1", "BIOMASS")])
+    fuel_ref = fuel_type_reference(ref)
+    rows = [
+        {"bm_unit": "T_DRAXX-1_1", "start_time": "2026-01-01T00:00:00Z", "delta": 10.0},
+        {"bm_unit": "T_DRAXX-1_-2", "start_time": "2026-01-01T00:00:00Z", "delta": 5.0},
+        {"bm_unit": "T_DRAXX-1_1", "start_time": "2026-01-01T00:05:00Z", "delta": 40.0},
+    ]
+    out = pricing_stack_delta_by_fuel_5min(rows, fuel_ref)
+    by_start = out.set_index("startTime")["pricing_stack_delta"]
+
+    assert by_start[pd.Timestamp("2026-01-01T00:00:00Z")] == pytest.approx(15.0)
+    assert by_start[pd.Timestamp("2026-01-01T00:05:00Z")] == pytest.approx(40.0)
+
+
 def test_generation_by_fuel_uses_pricing_stack_delta_not_its_own_derived_one():
     """`market_gen`/`delta_gen` must come from the pricing stack's own real
-    accepted-volume delta (the same `pricing_stack_delta_by_fuel` the
-    "Market Gen vs Adjusted Fpn" table already uses), not a second,
-    independently re-derived figure -- confirmed against the user's own
-    direct comparison of this table's CCGT deviation against the real
-    pricing stack page (they disagreed; the pricing stack is the correct,
-    real one). `delta` in `pricing_stack_rows` is 230 MWh; `delta_gen` here
-    must be the MW-equivalent (`* 2` for a 30-minute period, see
-    `pricing_stack_delta_by_fuel`'s own docstring) to combine correctly
-    with FUELINST's own instantaneous-MW `real_gen`.
+    accepted-volume delta (`pricing_stack_delta_by_fuel_5min`, the per-5-
+    minute-bucket sibling of the figure `blend_generation_and_smooth`'s
+    "Market Gen vs Adjusted Fpn" table uses), not a second, independently
+    re-derived figure -- confirmed against the user's own direct comparison
+    of this table's CCGT deviation against the real pricing stack page
+    (they disagreed; the pricing stack is the correct, real one). Unlike
+    `pricing_stack_delta_by_fuel`'s own period-total figure, this source is
+    already in MW (see `pricing_stack_delta_by_fuel_5min`'s own docstring),
+    so no `* 2` conversion applies here -- `delta_gen` should equal the raw
+    230 MW directly.
     """
     ref = _bm_unit_reference([("T_GEN-1", "T_GEN-1", "CCGT")])
     fuel_ref = fuel_type_reference(ref)
     fuelinst_records = [{"fuelType": "CCGT", "generation": 1000.0, "startTime": "2026-01-01T00:00:00Z"}]
-    pricing_stack_delta_rows = [
-        {"settlement_date": date(2026, 1, 1), "settlement_period": 1, "bm_unit": "T_GEN-1", "delta": 230.0},
+    pricing_stack_unit_delta_5min_rows = [
+        {"bm_unit": "T_GEN-1", "start_time": "2026-01-01T00:00:00Z", "delta": 230.0},
     ]
 
-    result = compute_generation_by_fuel(fuelinst_records, pricing_stack_delta_rows, fuel_ref)
+    result = compute_generation_by_fuel(fuelinst_records, pricing_stack_unit_delta_5min_rows, fuel_ref)
 
     assert not result.empty
     row = result.iloc[0]
     assert row["real_gen"] == pytest.approx(1000.0)
-    assert row["delta_gen"] == pytest.approx(460.0)
-    assert row["market_gen"] == pytest.approx(540.0)
+    assert row["delta_gen"] == pytest.approx(230.0)
+    assert row["market_gen"] == pytest.approx(770.0)
+
+
+def test_generation_by_fuel_varies_delta_gen_across_5min_buckets_within_one_period():
+    """The whole point of switching to the 5-minute-bucketed source: two
+    buckets in the same settlement period must show their own distinct
+    `delta_gen`, not the same period-total value repeated.
+    """
+    ref = _bm_unit_reference([("T_GEN-1", "T_GEN-1", "CCGT")])
+    fuel_ref = fuel_type_reference(ref)
+    fuelinst_records = [
+        {"fuelType": "CCGT", "generation": 1000.0, "startTime": "2026-01-01T00:00:00Z"},
+        {"fuelType": "CCGT", "generation": 1000.0, "startTime": "2026-01-01T00:05:00Z"},
+    ]
+    pricing_stack_unit_delta_5min_rows = [
+        {"bm_unit": "T_GEN-1", "start_time": "2026-01-01T00:00:00Z", "delta": 10.0},
+        {"bm_unit": "T_GEN-1", "start_time": "2026-01-01T00:05:00Z", "delta": 40.0},
+    ]
+
+    result = compute_generation_by_fuel(fuelinst_records, pricing_stack_unit_delta_5min_rows, fuel_ref)
+
+    by_ts = result.set_index("TS")["delta_gen"]
+    assert by_ts[pd.Timestamp("2026-01-01T00:00:00Z")] == pytest.approx(10.0)
+    assert by_ts[pd.Timestamp("2026-01-01T00:05:00Z")] == pytest.approx(40.0)
 
 
 def _by_fuel_row(sd, sp, spot_time, ft="CCGT") -> dict:

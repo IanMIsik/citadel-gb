@@ -61,6 +61,25 @@ CREATE TABLE IF NOT EXISTS pricing_stack_niv_spot_time (
 );
 CREATE INDEX IF NOT EXISTS idx_pricing_stack_niv_spot_time_sd_sp ON pricing_stack_niv_spot_time(settlement_date, settlement_period);
 
+-- The pricing stack's own real, reversal/CADL-aware delta, kept per BM unit
+-- and bucketed onto FUELINST's own 5-minute grid instead of collapsed to
+-- one period-total figure -- see engine/stack.py's
+-- spot_time_bm_unit_delta_5min()/UNIT_DELTA_5MIN_COLUMNS docstring.
+-- engine/fpn.py's pricing_stack_delta_by_fuel_5min() does the bmUnit ->
+-- fuel-type join and per-fuel sum, feeding the Real Time Generation
+-- table's `_d` column with an actual per-5-minute figure instead of the
+-- same period-total value repeated across every bucket in that period.
+CREATE TABLE IF NOT EXISTS pricing_stack_unit_delta_5min (
+    settlement_date     DATE NOT NULL,
+    settlement_period   INTEGER NOT NULL,
+    bm_unit             TEXT NOT NULL,
+    start_time          TIMESTAMPTZ NOT NULL,
+    delta               DOUBLE PRECISION NOT NULL,
+    computed_at         TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (settlement_date, settlement_period, bm_unit, start_time)
+);
+CREATE INDEX IF NOT EXISTS idx_pricing_stack_unit_delta_5min_sd_sp ON pricing_stack_unit_delta_5min(settlement_date, settlement_period);
+
 -- Elexon's real, official settlement system price per period -- the ground
 -- truth this project's own `total_misik_price` is checked against.
 CREATE TABLE IF NOT EXISTS settlement_prices (

@@ -20,7 +20,7 @@ from ..config import settings
 from ..engine.fpn_runner import FpnRunner
 from ..engine.runner import Runner
 from ..engine.view import split_and_sort
-from ..ingest import gbpw_import
+from ..ingest import gbpw_import, misco_fuel_type_reference
 from ..ingest.elexon_rest import fetch_bmu_reference
 from ..settlement import current_period, window_around
 from ..storage import db
@@ -88,6 +88,29 @@ async def lifespan(app: FastAPI):
                 logger.info("gbpw database not found at %s -- fuel_type stays whatever Elexon's live API returned", gbpw_import.DEFAULT_GBPW_DB_PATH)
         except Exception:
             logger.exception("gbpw fuel-type import failed -- continuing with Elexon's live fuel_type only")
+
+        try:
+            misco_fuel_type_rows = misco_fuel_type_reference.read_bmu_fuel_types()
+            if misco_fuel_type_rows:
+                # The interconnector rows in this file have no real
+                # national_grid_bm_unit of their own (see that module's
+                # docstring) -- resolve them onto whatever real key Elexon's
+                # live fetch/gbpw import already gave that elexon_bm_unit,
+                # so this upsert corrects the existing row instead of
+                # leaving a dead duplicate beside it (see
+                # resolve_national_grid_bm_units()'s own docstring).
+                existing_rows = await db.bm_unit_reference_all(pool)
+                existing_by_elexon = misco_fuel_type_reference.preferred_national_grid_bm_unit_map(existing_rows)
+                misco_fuel_type_rows = misco_fuel_type_reference.resolve_national_grid_bm_units(misco_fuel_type_rows, existing_by_elexon)
+                await db.upsert_bm_unit_reference(pool, misco_fuel_type_rows, overwrite_fuel_type=True)
+                deleted = await db.delete_stale_bm_unit_reference_duplicates(pool)
+                logger.info(
+                    "applied %d fuel-type overrides from the user's own misco BM unit references "
+                    "(final say -- see ingest/misco_fuel_type_reference.py), removed %d stale duplicate rows",
+                    len(misco_fuel_type_rows), deleted,
+                )
+        except Exception:
+            logger.exception("misco BM unit fuel type reference import failed -- fuel_type stays whatever the earlier steps set")
 
     # Shared by both engines' per-cycle recompute (see engine/runner.py and
     # engine/fpn_runner.py) so neither one's pandas-heavy work ever blocks
@@ -225,13 +248,14 @@ async def fpn_generation_by_fuel(hours: float = 3.0):
 
 @app.get("/api/fpn/dashboard")
 async def fpn_dashboard():
-    """Everything the FPN Analytics page's left-hand column of tables
-    needs in one call: per-fuel-type FPN/MEL-MIL-drop/market-gen-vs-
-    adjusted-FPN across the current window's settlement periods (fpn_delta
-    is derived client-side from consecutive periods' own fpn_spot_vol), the
-    compact AUC/delta/niv_error/dmd_risk/dmd_error/unexp table, and the
-    niv_estimate decision table -- all "for relevant SPs" (this engine's
-    own rolling window, same one the recompute itself uses).
+    """Everything the FPN Analytics page needs in one call: per-fuel-type
+    FPN/MEL-MIL-drop/market-gen-vs-adjusted-FPN across the current window's
+    settlement periods (fpn_delta is derived client-side from consecutive
+    periods' own fpn_spot_vol), the Delta table, the niv_estimate decision
+    table -- all "for relevant SPs" (this engine's own rolling window, same
+    one the recompute itself uses) -- and `aggregated_window`, the same
+    window's per-minute rows for the Generation Chart (every SP in the
+    window, not just the current one).
     """
     cur = current_period()
     periods = window_around(cur.settlement_date, cur.settlement_period)
@@ -239,11 +263,15 @@ async def fpn_dashboard():
 
     by_fuel_sp = await db.fpn_by_fuel_sp_summary(app.state.pool, cur.settlement_date, same_date_periods)
     decision_drivers_sp = await db.fpn_decision_drivers_sp(app.state.pool, cur.settlement_date, same_date_periods)
+    market_gen_vs_adj_fpn_series = await db.fpn_market_gen_vs_adj_fpn_series(app.state.pool, cur.settlement_date, same_date_periods)
+    aggregated_window = await db.fpn_aggregated_for_periods(app.state.pool, cur.settlement_date, same_date_periods)
     return {
         "settlement_date": cur.settlement_date.isoformat(),
         "current_settlement_period": cur.settlement_period,
+        "market_gen_vs_adj_fpn_series": [_clean_record(r) for r in market_gen_vs_adj_fpn_series],
         "by_fuel_sp": [_clean_record(r) for r in by_fuel_sp],
         "decision_drivers_sp": [_clean_record(r) for r in decision_drivers_sp],
+        "aggregated_window": [_clean_record(r) for r in aggregated_window],
     }
 
 

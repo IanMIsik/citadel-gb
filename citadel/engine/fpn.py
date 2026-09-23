@@ -516,6 +516,35 @@ def pricing_stack_delta_by_fuel(pricing_stack_delta_rows: list[dict], fuel_ref: 
     return grouped.rename(columns={"delta": "pricing_stack_delta"})
 
 
+def pricing_stack_delta_by_fuel_5min(pricing_stack_unit_delta_5min_rows: list[dict], fuel_ref: pd.DataFrame) -> pd.DataFrame:
+    """`pricing_stack_unit_delta_5min_rows` (from
+    db.pricing_stack_unit_delta_5min_by_period) -> real accepted-offer/
+    reduced-accepted-bid volume per (startTime, FT) -- one row per FUELINST
+    5-minute bucket, unlike `pricing_stack_delta_by_fuel` above (one flat
+    figure for the whole settlement period). Feeds
+    compute_generation_by_fuel()'s `_d` column with the actual volume that
+    landed in each specific bucket, so it shows how BM actions build up
+    through a period instead of the same period-total repeated six times.
+
+    Source is engine/stack.py's spot_time_bm_unit_delta_5min() -- the same
+    reversal/CADL-aware `delta` `pricing_stack_delta_by_fuel` uses, just
+    kept per-bmUnit-per-5-minutes instead of collapsed to one acceptance-
+    level MWh figure. Already in MW (spot_time_bm_unit_delta_5min() sums
+    `combined`'s own per-minute delta directly, before build_price_stack()'s
+    /60 MWh collapse) -- unlike `pricing_stack_delta_by_fuel`, no `* 2`
+    conversion applies here.
+    """
+    columns = ["startTime", "FT", "pricing_stack_delta"]
+    if not pricing_stack_unit_delta_5min_rows:
+        return pd.DataFrame(columns=columns)
+    df = pd.DataFrame(pricing_stack_unit_delta_5min_rows)
+    df["bmUnit"] = df["bm_unit"].map(_strip_pair_id_suffix)
+    df["startTime"] = pd.to_datetime(df["start_time"], utc=True)
+    df = pd.merge(df, fuel_ref[["bmUnit", "FT"]].drop_duplicates(), how="left", on="bmUnit")
+    grouped = df.groupby(["startTime", "FT"])["delta"].sum().reset_index()
+    return grouped.rename(columns={"delta": "pricing_stack_delta"})
+
+
 def blend_generation_and_smooth(
     by_fuel: pd.DataFrame, fuelinst_df: pd.DataFrame, interconnector_rows_df: pd.DataFrame, natgrid_rows_df: pd.DataFrame,
     pricing_stack_delta_df: pd.DataFrame,
@@ -810,27 +839,29 @@ def build_decision_table(by_fuel: pd.DataFrame, aggregated: pd.DataFrame) -> pd.
 # Real generation by fuel type (Fuelinst notebook)
 # ---------------------------------------------------------------------------
 
-def compute_generation_by_fuel(fuelinst_records: list[dict], pricing_stack_delta_rows: list[dict], fuel_ref: pd.DataFrame) -> pd.DataFrame:
+def compute_generation_by_fuel(fuelinst_records: list[dict], pricing_stack_unit_delta_5min_rows: list[dict], fuel_ref: pd.DataFrame) -> pd.DataFrame:
     """Splits FUELINST's real generation, by fuel type, into "market-driven"
     (`market_gen`) and "BM-action-driven" (`delta_gen`) portions, using the
     pricing stack's own real, already-computed per-unit accepted-volume
-    delta (`pricing_stack_delta_by_fuel`, the exact same source
-    `blend_generation_and_smooth`'s own "Market Gen vs Adjusted Fpn" table
-    already uses) -- not this module's own independently re-derived
-    per-minute delta from `explode_and_merge`, which this used previously.
-    That own-derived delta disagreed with the pricing stack page's own
-    figures for the same real units/period (confirmed directly by the
-    user: current CCGT actions on the pricing stack page did not match
-    this table's own CCGT deviation, which instead matched the *old*
-    notebook-era approach this replaces) -- this module's own delta
-    docstring already called this out for `market_gen` generally, but this
-    function alone had not yet been switched over.
+    delta -- not this module's own independently re-derived per-minute
+    delta from `explode_and_merge`, which this used previously. That own-
+    derived delta disagreed with the pricing stack page's own figures for
+    the same real units/period (confirmed directly by the user: current
+    CCGT actions on the pricing stack page did not match this table's own
+    CCGT deviation, which instead matched the *old* notebook-era approach
+    this replaces) -- this module's own delta docstring already called this
+    out for `market_gen` generally, but this function alone had not yet
+    been switched over.
 
-    The pricing stack only computes delta at (settlementDate,
-    settlementPeriod, bmUnit) resolution, not per-minute, so that one
-    period-level figure is applied to every 5-minute FUELINST bucket
-    within its own settlement period (rather than varying every 5 minutes
-    the way the old per-minute-derived figure did).
+    Uses `pricing_stack_delta_by_fuel_5min` (per-fuel-type, per-5-minute-
+    bucket), not `pricing_stack_delta_by_fuel` (one flat period-total
+    figure) -- confirmed against the user's own direct request: repeating
+    the same period-total `_d` value across all six of a period's rows hid
+    exactly when new BM actions actually landed within it. Both sources are
+    the same underlying reversal/CADL-aware delta the pricing stack itself
+    uses; `pricing_stack_delta_by_fuel`'s own period-total figure still
+    backs `blend_generation_and_smooth`'s "Market Gen vs Adjusted Fpn" table
+    (a different, SP-level view) and this module's `build_aggregated`.
 
     Returns a long (TS, settlement_period, fuel_type, real_gen, market_gen,
     delta_gen) frame, replacing the notebook's wide `_r`/`_m`/`_d`-suffixed
@@ -850,11 +881,15 @@ def compute_generation_by_fuel(fuelinst_records: list[dict], pricing_stack_delta
     fuelinst["startTime"] = pd.to_datetime(fuelinst["startTime"], utc=True).dt.round("5min")
     fuelinst = fuelinst.rename(columns={"generation": "fuelinst_generation", "fuelType": "FT"})
     settlement = fuelinst["startTime"].map(utc_to_settlement)
-    fuelinst["settlementDate"] = pd.to_datetime(settlement.map(lambda t: t[0]))
     fuelinst["settlementPeriod"] = settlement.map(lambda t: t[1])
 
-    delta_by_fuel = pricing_stack_delta_by_fuel(pricing_stack_delta_rows or [], fuel_ref)
-    merged = pd.merge(fuelinst, delta_by_fuel, how="left", on=["settlementDate", "settlementPeriod", "FT"])
+    # Joined on (FT, startTime) alone -- not settlementDate/settlementPeriod
+    # too -- same reasoning as blend_generation_and_smooth()'s own FUELINST
+    # merge: startTime alone already uniquely identifies one 5-minute
+    # FUELINST block, and Elexon's own settlementPeriod label on a record
+    # doesn't always agree with this module's own derivation of it.
+    delta_by_fuel_5min = pricing_stack_delta_by_fuel_5min(pricing_stack_unit_delta_5min_rows or [], fuel_ref)
+    merged = pd.merge(fuelinst, delta_by_fuel_5min, how="left", on=["startTime", "FT"])
     merged["pricing_stack_delta"] = merged["pricing_stack_delta"].fillna(0)
     merged["market_gen"] = merged["fuelinst_generation"] - merged["pricing_stack_delta"]
 
@@ -880,6 +915,7 @@ def compute(
     now: datetime | None = None,
     pricing_stack_niv_rows: list[dict] | None = None,
     pricing_stack_niv_spot_time_rows: list[dict] | None = None,
+    pricing_stack_unit_delta_5min_rows: list[dict] | None = None,
 ) -> dict[str, pd.DataFrame]:
     """Runs the whole pipeline for the current rolling window and returns
     the frames FpnRunner persists: `by_fuel`, `worst_deviants`,
@@ -920,7 +956,7 @@ def compute(
         aggregated, decision[group_cols + ["wind_deviation", "other_gen_deviation", "niv_estimate"]], on=group_cols, how="left"
     )
 
-    generation_by_fuel = compute_generation_by_fuel(fuelinst_records, pricing_stack_delta_rows, fuel_ref)
+    generation_by_fuel = compute_generation_by_fuel(fuelinst_records, pricing_stack_unit_delta_5min_rows, fuel_ref)
 
     return {
         "by_fuel": by_fuel,

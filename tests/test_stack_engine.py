@@ -13,7 +13,14 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from citadel.engine.stack import compute_cadl_flags, compute_stack, custom_round, spot_time_niv, vectorized_exploder
+from citadel.engine.stack import (
+    compute_cadl_flags,
+    compute_stack,
+    custom_round,
+    spot_time_bm_unit_delta_5min,
+    spot_time_niv,
+    vectorized_exploder,
+)
 
 
 def test_custom_round():
@@ -92,7 +99,12 @@ def test_compute_stack_return_spot_niv_gives_per_minute_niv_before_the_mwh_colla
     value is 10.0 (MW), not `10 / 60` (MWh, what the acceptance-level
     `result['delta']` shows once build_price_stack() sums the full
     acceptance and divides by 60). Confirms spot_time_niv() needs no
-    separate unit conversion of its own.
+    separate unit conversion of its own. Also confirms the third value,
+    spot_time_bm_unit_delta_5min()'s own per-unit/5-minute-bucketed sibling,
+    attributes that same 10 MW to its own bmUnit (with the pairId suffix
+    blend_disbsad() appends) instead of summing system-wide -- then divides
+    by 5 (ported from the original notebook's own `non_market_gen`
+    averaging step), giving 2.0 for this single one-minute acceptance.
     """
     sd = "2026-01-01"
     boalf_df = pd.DataFrame([_flat_acceptance("T_TEST-1", 10.0, sd)])
@@ -113,12 +125,17 @@ def test_compute_stack_return_spot_niv_gives_per_minute_niv_before_the_mwh_colla
     }])
     disbsad_df = pd.DataFrame(columns=["settlementDate", "settlementPeriod", "soFlag", "storFlag", "volume", "cost"])
 
-    result, niv = compute_stack(boalf_df, bod_df, pn_df, mel_df, disbsad_df, return_spot_niv=True)
+    result, niv, unit_delta = compute_stack(boalf_df, bod_df, pn_df, mel_df, disbsad_df, return_spot_niv=True)
 
     assert result.iloc[0]["delta"] == pytest.approx(10 / 60)
     assert len(niv) == 1
     assert niv.iloc[0]["niv_spot_time_max"] == pytest.approx(10.0)
     assert niv.iloc[0]["spot_time"] == pd.Timestamp("2026-01-01T00:00:00Z")
+
+    assert len(unit_delta) == 1
+    assert unit_delta.iloc[0]["bmUnit"] == "T_TEST-1_1"
+    assert unit_delta.iloc[0]["delta"] == pytest.approx(2.0)
+    assert unit_delta.iloc[0]["startTime"] == pd.Timestamp("2026-01-01T00:00:00Z")
 
 
 def test_compute_stack_without_return_spot_niv_keeps_the_original_single_frame_return():
@@ -166,6 +183,38 @@ def test_spot_time_niv_empty_input_has_expected_columns():
     assert list(niv.columns) == ["settlementDate", "settlementPeriod", "spot_time", "niv_spot_time_max"]
 
 
+def test_spot_time_bm_unit_delta_5min_keeps_bm_unit_and_buckets_onto_five_minutes():
+    """Unlike spot_time_niv() (system-wide sum), this keeps each bmUnit's
+    own delta separate, and groups by FUELINST's own 5-minute grid instead
+    of the raw minute -- two units in the same 5-minute block stay separate
+    rows; a unit's own minutes within one block sum together, then divide
+    by 5 (ported from the original Fuelinst notebook's own `non_market_gen`
+    step -- see this function's own docstring): summing raw per-minute MW
+    readings across a 5-minute bucket overcounts by up to 5x, since each
+    row is already an instantaneous MW value, not an energy amount to add up.
+    """
+    combined = pd.DataFrame([
+        {"settlementDate": pd.Timestamp("2026-01-01"), "settlementPeriod": 1, "bmUnit": "T_A-1", "spot_time": pd.Timestamp("2026-01-01T00:00:00Z"), "delta": 10.0},
+        {"settlementDate": pd.Timestamp("2026-01-01"), "settlementPeriod": 1, "bmUnit": "T_A-1", "spot_time": pd.Timestamp("2026-01-01T00:01:00Z"), "delta": 4.0},
+        {"settlementDate": pd.Timestamp("2026-01-01"), "settlementPeriod": 1, "bmUnit": "T_B-1", "spot_time": pd.Timestamp("2026-01-01T00:00:00Z"), "delta": -3.0},
+        {"settlementDate": pd.Timestamp("2026-01-01"), "settlementPeriod": 1, "bmUnit": "T_A-1", "spot_time": pd.Timestamp("2026-01-01T00:05:00Z"), "delta": 100.0},
+    ])
+    out = spot_time_bm_unit_delta_5min(combined)
+    by_key = {(r.bmUnit, r.startTime): r.delta for r in out.itertuples()}
+
+    first_bucket = pd.Timestamp("2026-01-01T00:00:00Z")
+    second_bucket = pd.Timestamp("2026-01-01T00:05:00Z")
+    assert by_key[("T_A-1", first_bucket)] == pytest.approx(14.0 / 5)
+    assert by_key[("T_B-1", first_bucket)] == pytest.approx(-3.0 / 5)
+    assert by_key[("T_A-1", second_bucket)] == pytest.approx(100.0 / 5)
+
+
+def test_spot_time_bm_unit_delta_5min_empty_input_has_expected_columns():
+    out = spot_time_bm_unit_delta_5min(pd.DataFrame())
+    assert out.empty
+    assert list(out.columns) == ["settlementDate", "settlementPeriod", "bmUnit", "startTime", "delta"]
+
+
 def test_compute_stack_empty_boalf_returns_empty_frame():
     empty = pd.DataFrame()
     result = compute_stack(empty, empty, empty, empty, empty)
@@ -174,9 +223,10 @@ def test_compute_stack_empty_boalf_returns_empty_frame():
 
 def test_compute_stack_empty_boalf_with_return_spot_niv_returns_empty_tuple():
     empty = pd.DataFrame()
-    result, niv = compute_stack(empty, empty, empty, empty, empty, return_spot_niv=True)
+    result, niv, unit_delta = compute_stack(empty, empty, empty, empty, empty, return_spot_niv=True)
     assert result.empty
     assert niv.empty
+    assert unit_delta.empty
 
 
 def test_compute_stack_mel_gate_drops_unmatched_minute():

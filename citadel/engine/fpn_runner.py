@@ -188,6 +188,15 @@ class FpnRunner:
         pricing_stack_niv_spot_time_rows = [
             dict(r) for r in await db.pricing_stack_niv_spot_time_by_period(self.pool, cur.settlement_date, same_date_periods)
         ]
+        # Same real, reversal/CADL-aware delta as pricing_stack_delta_rows
+        # above, but kept per-5-minute-bucket instead of collapsed to one
+        # period-total figure -- feeds the Real Time Generation table's `_d`
+        # column with an actual per-bucket value instead of the same
+        # period-total repeated across every row of a period (see
+        # engine/stack.py's spot_time_bm_unit_delta_5min() docstring).
+        pricing_stack_unit_delta_5min_rows = [
+            dict(r) for r in await db.pricing_stack_unit_delta_5min_by_period(self.pool, cur.settlement_date, same_date_periods)
+        ]
 
         loop = asyncio.get_running_loop()
         # Runs in its own OS process (see api/app.py's shared
@@ -201,6 +210,7 @@ class FpnRunner:
             self.fpn_buffers.indo, self.fpn_buffers.itsdo, self.fpn_buffers.da_ndf,
             self.fpn_buffers.neso_trades, self.bm_unit_reference, self._demand_window,
             pricing_stack_delta_rows, None, pricing_stack_niv_rows, pricing_stack_niv_spot_time_rows,
+            pricing_stack_unit_delta_5min_rows,
         )
         if not results:
             return

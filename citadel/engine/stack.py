@@ -75,6 +75,11 @@ STACK_COLUMNS = [
 # figures do.
 SPOT_NIV_COLUMNS = ["settlementDate", "settlementPeriod", "spot_time", "niv_spot_time_max"]
 
+# Same source, kept per-bmUnit and bucketed onto FUELINST's own 5-minute
+# grid instead of summed system-wide across the whole minute -- see
+# spot_time_bm_unit_delta_5min()'s own docstring for what this feeds.
+UNIT_DELTA_5MIN_COLUMNS = ["settlementDate", "settlementPeriod", "bmUnit", "startTime", "delta"]
+
 
 def custom_round(x: float, base: int = 5) -> int:
     return int(base * round(float(x) / base))
@@ -146,6 +151,15 @@ def boalf_exploder(boalf_df: pd.DataFrame, overlap_resolution: str = "latest_win
         build_marginal_deltas()'s own "reversal_aware" mode, which uses it
         to find just the specific extra rows worth keeping -- see
         _reversal_tail_rows()'s docstring for the full worked example.
+
+    Ties on `acceptanceTime` are broken by `acceptanceNumber` (assigned in
+    true submission order even when the coarser timestamp can't tell two
+    acceptances apart) -- confirmed live against Elexon's real settlement
+    stack: T_GRAI-7's acceptances 164254/164255 (SP35, 2026-09-23) share
+    the identical acceptanceTime 16:01:00Z, and a plain `idxmax()` breaks
+    that tie by whichever row happens to come first in fetch order,
+    silently dropping one of two genuinely real, separately-priced
+    acceptances (164255 alone: -22.5 MWh in Elexon's own ISPSTACK).
     """
     if boalf_df.empty:
         return pd.DataFrame()
@@ -155,6 +169,7 @@ def boalf_exploder(boalf_df: pd.DataFrame, overlap_resolution: str = "latest_win
         return pd.DataFrame()
 
     exploded["acceptanceTime"] = pd.to_datetime(exploded["acceptanceTime"], utc=True)
+    exploded = exploded.sort_values(["acceptanceTime", "acceptanceNumber"])
 
     if overlap_resolution == "independent":
         # Only collapse literal duplicate rows for the SAME acceptance at
@@ -162,11 +177,11 @@ def boalf_exploder(boalf_df: pd.DataFrame, overlap_resolution: str = "latest_win
         # settlement-period queries) -- never collapse a DIFFERENT
         # acceptanceNumber's row just because it shares a minute.
         dedupe_cols = ["settlementDate", "spot_time", "bmUnit", "acceptanceNumber"]
-        exploded = exploded.loc[exploded.groupby(dedupe_cols)["acceptanceTime"].idxmax()]
+        exploded = exploded.drop_duplicates(subset=dedupe_cols, keep="last")
     else:
         grp1 = ["settlementDate", "settlementPeriodFrom", "settlementPeriodTo", "spot_time", "bmUnit"]
-        exploded = exploded.loc[exploded.groupby(grp1)["acceptanceTime"].idxmax()]
-        exploded = exploded.loc[exploded.groupby(["settlementDate", "spot_time", "bmUnit"])["acceptanceTime"].idxmax()]
+        exploded = exploded.drop_duplicates(subset=grp1, keep="last")
+        exploded = exploded.drop_duplicates(subset=["settlementDate", "spot_time", "bmUnit"], keep="last")
 
     cols_to_drop = [
         "timeFrom", "timeTo", "levelFrom", "levelTo",
@@ -741,6 +756,58 @@ def spot_time_niv(combined: pd.DataFrame) -> pd.DataFrame:
     return grouped.rename(columns={"delta": "niv_spot_time_max"})
 
 
+def spot_time_bm_unit_delta_5min(combined: pd.DataFrame) -> pd.DataFrame:
+    """Per-(settlementDate, settlementPeriod, bmUnit), 5-minute-bucketed sum
+    of `combined`'s own `delta` -- the same real, reversal/CADL-aware figure
+    `spot_time_niv()` sums system-wide, kept per-unit here and bucketed onto
+    FUELINST's own 5-minute grid instead of one flat period-total.
+
+    This module deliberately has no notion of fuel type (see its own module
+    docstring), so it stops at bmUnit -- engine/fpn.py's own
+    pricing_stack_delta_by_fuel_5min() does the bmUnit -> fuel-type join and
+    the final per-fuel-type sum, the same split of responsibility
+    pricing_stack_delta_by_fuel() already has with `pricing_stack_rows`.
+
+    The `-1.51 minutes then round to 5min` bucketing matches
+    engine/fpn.py's own `blend_generation_and_smooth()`/
+    `compute_generation_by_fuel()` exactly, so a bmUnit's minute-level
+    delta lands in the same 5-minute FUELINST block those functions already
+    align everything else onto.
+
+    Excludes `combined`'s own synthetic DISBSAD rows (`bmUnit LIKE
+    'disbsad_%'`, from blend_disbsad()) -- same exclusion
+    db.pricing_stack_delta_by_bm_unit's own SQL already applies for the
+    period-level figure, for the same reason: those rows represent National
+    Grid's own non-BM balancing actions, not a specific generating unit, so
+    they have no fuel type to ever join onto and would just be dead rows
+    here.
+
+    Divides the summed delta by 5 after bucketing -- ported directly from
+    the original Fuelinst notebook's own `non_market_gen` block
+    (Fuelinst_Development_Continous.ipynb, cell 13:
+    `non_market_gen['delta'] = non_market_gen['delta']/5`, applied right
+    after its own equivalent `groupby(['bmUnit','startTime'])['delta'].sum()`).
+    `combined` carries one row per (bmUnit, minute), so summing raw across a
+    5-minute bucket adds up to five ~1x MW-level minute readings instead of
+    averaging them -- a confirmed ~5x overcount whenever an acceptance was
+    active for most/all of the bucket, exactly the "missing /5 averaging"
+    bug this project's own history already hit once in an earlier version
+    of this same table (see engine/fpn.py's compute_generation_by_fuel()
+    module history). The notebook divides by a flat 5, not by however many
+    of the bucket's minutes actually had data -- replicated as-is here for
+    fidelity, not "corrected" to a per-actual-minute average.
+    """
+    if combined.empty:
+        return pd.DataFrame(columns=UNIT_DELTA_5MIN_COLUMNS)
+    df = combined[~combined["bmUnit"].str.startswith("disbsad_")].copy()
+    if df.empty:
+        return pd.DataFrame(columns=UNIT_DELTA_5MIN_COLUMNS)
+    df["startTime"] = (df["spot_time"] - pd.Timedelta(seconds=1.51 * 60)).dt.round("5min")
+    grouped = df.groupby(["settlementDate", "settlementPeriod", "bmUnit", "startTime"])["delta"].sum().reset_index()
+    grouped["delta"] = grouped["delta"] / 5
+    return grouped
+
+
 def build_price_stack(
     combined: pd.DataFrame,
     max_ta,
@@ -956,16 +1023,19 @@ def compute_stack(
     for comparison via scripts/backtest_sp.py.
 
     `return_spot_niv`: additionally returns spot_time_niv()'s per-minute NIV
-    trajectory (columns: SPOT_NIV_COLUMNS) as a second value, computed from
-    the same `combined` frame this function already builds internally --
-    opt-in and defaulted off so every existing caller (tests included) sees
-    the exact same single-DataFrame return as before.
+    trajectory and spot_time_bm_unit_delta_5min()'s per-unit, 5-minute-
+    bucketed delta (columns: SPOT_NIV_COLUMNS, UNIT_DELTA_5MIN_COLUMNS) as a
+    second and third value, both computed from the same `combined` frame
+    this function already builds internally -- opt-in and defaulted off so
+    every existing caller (tests included) sees the exact same single-
+    DataFrame return as before.
     """
     empty_stack = pd.DataFrame(columns=STACK_COLUMNS)
     empty_niv = pd.DataFrame(columns=SPOT_NIV_COLUMNS)
+    empty_unit_delta = pd.DataFrame(columns=UNIT_DELTA_5MIN_COLUMNS)
 
     def _empty():
-        return (empty_stack, empty_niv) if return_spot_niv else empty_stack
+        return (empty_stack, empty_niv, empty_unit_delta) if return_spot_niv else empty_stack
 
     if boalf_df.empty:
         return _empty()
@@ -1017,4 +1087,4 @@ def compute_stack(
     )
     if not return_spot_niv:
         return stack_result
-    return stack_result, spot_time_niv(combined)
+    return stack_result, spot_time_niv(combined), spot_time_bm_unit_delta_5min(combined)
