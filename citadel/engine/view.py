@@ -86,6 +86,7 @@ def _to_view_row(record: dict[str, Any], cumulative_mwh: float, effective_flagge
         "bm_unit": record["bm_unit"],
         "direction": "Offer" if delta > 0 else "Bid",
         "so_flag": bool(record["so_flag"]),
+        "cadl_flag": bool(record["cadl_flag"]),
         "effective_flagged": effective_flagged,
         "stor_flag": bool(record["stor_flag"]),
         "deemed_bo_flag": bool(record["deemed_bo_flag"]),

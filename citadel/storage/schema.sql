@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS pricing_stack_rows (
     stor_flag           BOOLEAN NOT NULL DEFAULT FALSE,
     deemed_bo_flag      BOOLEAN NOT NULL DEFAULT FALSE,
     so_flag             BOOLEAN NOT NULL DEFAULT FALSE,
+    cadl_flag           BOOLEAN NOT NULL DEFAULT FALSE,
     acceptance_number   BIGINT NOT NULL DEFAULT 0,
     reversal            DOUBLE PRECISION NOT NULL DEFAULT 1,
     ap_mult_vol         DOUBLE PRECISION NOT NULL,
@@ -136,6 +137,48 @@ CREATE TABLE IF NOT EXISTS fpn_worst_deviants (
 );
 CREATE INDEX IF NOT EXISTS idx_fpn_worst_deviants_sd_sp ON fpn_worst_deviants(settlement_date, settlement_period);
 
+-- Plant trip detector: one durable row per detected trip (edge-triggered,
+-- see engine/fpn.py's detect_trips()) -- append-only history, not a
+-- rolling window, so the worst-behavior profile has something to look
+-- back over.
+CREATE TABLE IF NOT EXISTS trip_events (
+    id                  BIGSERIAL PRIMARY KEY,
+    bm_unit             TEXT NOT NULL,
+    fuel_type           TEXT,
+    settlement_date     DATE NOT NULL,
+    settlement_period   INTEGER NOT NULL,
+    drop_mw             DOUBLE PRECISION NOT NULL,
+    detected_at         TIMESTAMPTZ NOT NULL,
+    status              TEXT NOT NULL DEFAULT 'open',  -- open | matched | resolved
+    remit_mrid          TEXT,
+    resolved_at         TIMESTAMPTZ,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_trip_events_bm_unit ON trip_events(bm_unit, detected_at);
+CREATE INDEX IF NOT EXISTS idx_trip_events_status ON trip_events(status);
+
+-- One row per REMIT revision (never overwritten -- see remit.py) so the
+-- worst-behavior profile can measure how far a unit's own eventEndTime
+-- estimate moved between its first and its last revision.
+CREATE TABLE IF NOT EXISTS remit_revisions (
+    mrid                  TEXT NOT NULL,
+    revision_number       INTEGER NOT NULL,
+    message_id            BIGINT NOT NULL,
+    asset_id              TEXT NOT NULL,
+    fuel_type             TEXT,
+    event_status          TEXT,
+    event_start_time      TIMESTAMPTZ,
+    event_end_time        TIMESTAMPTZ,
+    normal_capacity       DOUBLE PRECISION,
+    available_capacity    DOUBLE PRECISION,
+    unavailable_capacity  DOUBLE PRECISION,
+    publish_time          TIMESTAMPTZ,
+    cause                 TEXT,
+    fetched_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (mrid, revision_number)
+);
+CREATE INDEX IF NOT EXISTS idx_remit_revisions_asset ON remit_revisions(asset_id, event_start_time);
+
 -- One row per spot_time -- generation-vs-plan, demand-side error, and the
 -- niv_estimate decision figure broadcast onto every minute of its
 -- settlement period (see engine/fpn.py:compute's own docstring).
@@ -196,6 +239,156 @@ CREATE TABLE IF NOT EXISTS fpn_generation_by_fuel (
 );
 ALTER TABLE fpn_generation_by_fuel ADD COLUMN IF NOT EXISTS settlement_period INTEGER;
 CREATE INDEX IF NOT EXISTS idx_fpn_generation_by_fuel_ts ON fpn_generation_by_fuel(ts);
+
+-- Fundies dashboard (engine/fundies.py) -- one row per settlement period,
+-- matching the notebook's own two Google Sheet tabs (fundies_rt_data,
+-- da_data). Rebuilt wholesale on every FundiesRunner recompute (delete +
+-- reinsert the day's rows via db.replace_fundies_period_rows), same
+-- pattern as replace_fpn_period_rows.
+CREATE TABLE IF NOT EXISTS fundies_real_time (
+    settlement_date       DATE NOT NULL,
+    settlement_period     INTEGER NOT NULL,
+    latest_ndf            DOUBLE PRECISION,
+    latestwindfor         DOUBLE PRECISION,
+    indo                  DOUBLE PRECISION,
+    wind_ot               DOUBLE PRECISION,
+    shut_volume           DOUBLE PRECISION,
+    total_wind_outturn    DOUBLE PRECISION,
+    itso                  DOUBLE PRECISION,
+    pv_live               DOUBLE PRECISION,
+    net_imbalance_volume  DOUBLE PRECISION,
+    system_buy_price      DOUBLE PRECISION,
+    buy_price_adjustment  DOUBLE PRECISION,
+    sell_price_adjustment DOUBLE PRECISION,
+    market_index_price    DOUBLE PRECISION,
+    market_index_volume   DOUBLE PRECISION,
+    ng_vol                DOUBLE PRECISION,
+    -- Real (metered, FUELHH-derived) interconnector flows, for the
+    -- Interconnector Graphs page's "real vs scheduled" overlay -- see
+    -- engine/fundies.py's interconnector_real_flows() docstring.
+    real_ifa_net          DOUBLE PRECISION,
+    real_ifa2_net         DOUBLE PRECISION,
+    real_eleclink_net     DOUBLE PRECISION,
+    real_nl_net           DOUBLE PRECISION,
+    real_be_net           DOUBLE PRECISION,
+    real_norway_net       DOUBLE PRECISION,
+    real_dk_net           DOUBLE PRECISION,
+    real_ew_net           DOUBLE PRECISION,
+    real_moyle_net        DOUBLE PRECISION,
+    real_grnl_net         DOUBLE PRECISION,
+    imbalngc              DOUBLE PRECISION,
+    computed_at           TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (settlement_date, settlement_period)
+);
+ALTER TABLE fundies_real_time ADD COLUMN IF NOT EXISTS wind_ot DOUBLE PRECISION;
+ALTER TABLE fundies_real_time ADD COLUMN IF NOT EXISTS shut_volume DOUBLE PRECISION;
+ALTER TABLE fundies_real_time ADD COLUMN IF NOT EXISTS real_ifa_net DOUBLE PRECISION;
+ALTER TABLE fundies_real_time ADD COLUMN IF NOT EXISTS real_ifa2_net DOUBLE PRECISION;
+ALTER TABLE fundies_real_time ADD COLUMN IF NOT EXISTS real_eleclink_net DOUBLE PRECISION;
+ALTER TABLE fundies_real_time ADD COLUMN IF NOT EXISTS real_nl_net DOUBLE PRECISION;
+ALTER TABLE fundies_real_time ADD COLUMN IF NOT EXISTS real_be_net DOUBLE PRECISION;
+ALTER TABLE fundies_real_time ADD COLUMN IF NOT EXISTS real_norway_net DOUBLE PRECISION;
+ALTER TABLE fundies_real_time ADD COLUMN IF NOT EXISTS real_dk_net DOUBLE PRECISION;
+ALTER TABLE fundies_real_time ADD COLUMN IF NOT EXISTS real_ew_net DOUBLE PRECISION;
+ALTER TABLE fundies_real_time ADD COLUMN IF NOT EXISTS real_moyle_net DOUBLE PRECISION;
+ALTER TABLE fundies_real_time ADD COLUMN IF NOT EXISTS real_grnl_net DOUBLE PRECISION;
+
+CREATE TABLE IF NOT EXISTS fundies_day_ahead (
+    settlement_date               DATE NOT NULL,
+    settlement_period             INTEGER NOT NULL,
+    da_ndf                        DOUBLE PRECISION,
+    da_windfor                    DOUBLE PRECISION,
+    eleclink_net                  DOUBLE PRECISION,
+    uk_ifa_net                    DOUBLE PRECISION,
+    uk_ifa2_net                   DOUBLE PRECISION,
+    uk_nl_net                     DOUBLE PRECISION,
+    uk_be_net                     DOUBLE PRECISION,
+    uk_norway_net                 DOUBLE PRECISION,
+    uk_dk_net                     DOUBLE PRECISION,
+    nuke_214                      DOUBLE PRECISION,
+    intew_net                     DOUBLE PRECISION,
+    intmoyle_net                  DOUBLE PRECISION,
+    intgrnl_net                   DOUBLE PRECISION,
+    embedded_wind_forecast        DOUBLE PRECISION,
+    embedded_solar_forecast       DOUBLE PRECISION,
+    da_price                      DOUBLE PRECISION,
+    da_volume                     DOUBLE PRECISION,
+    -- Zapdos-style derived rows (see engine/fundies.py:build_derived_rows) --
+    -- ride along on this table since they need both real-time and
+    -- day-ahead inputs together, same as the real Zapdos table renders
+    -- them as rows alongside everything else.
+    indo_da_ndf_delta             DOUBLE PRECISION,
+    fake_wind_ot_da_winfor_delta  DOUBLE PRECISION,
+    domestic_tight_delta          DOUBLE PRECISION,
+    interconnector_ng             DOUBLE PRECISION,
+    latest_resid                  DOUBLE PRECISION,
+    computed_at                   TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (settlement_date, settlement_period)
+);
+
+-- Upsert-on-(settlement_date, settlement_period) caches, one per
+-- independently-refreshing Fundies ingest source -- these replace the
+-- notebook's own Drive pickles (scheduled_flows.pkl, semo_flows.pkl,
+-- imbalngc_data.pkl, natgrid_embedded_data.pkl, epex_da_data.pkl) with
+-- real durable upserts: "newest write wins, survive a failed fetch" via
+-- ON CONFLICT DO UPDATE instead of a combine_first/dedup-and-resave cycle
+-- against a file. FundiesRunner reads these every recompute regardless of
+-- which dataset's own interval last fired, so a slow-refreshing source
+-- (e.g. the embedded-forecast CSV, every 5 minutes) doesn't blank out
+-- between its own ticks.
+CREATE TABLE IF NOT EXISTS fundies_entsoe_flows (
+    settlement_date   DATE NOT NULL,
+    settlement_period INTEGER NOT NULL,
+    eleclink_net      DOUBLE PRECISION,
+    uk_ifa_net        DOUBLE PRECISION,
+    uk_ifa2_net       DOUBLE PRECISION,
+    uk_nl_net         DOUBLE PRECISION,
+    uk_be_net         DOUBLE PRECISION,
+    uk_norway_net     DOUBLE PRECISION,
+    uk_dk_net         DOUBLE PRECISION,
+    updated_at        TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (settlement_date, settlement_period)
+);
+
+CREATE TABLE IF NOT EXISTS fundies_semo_flows (
+    settlement_date   DATE NOT NULL,
+    settlement_period INTEGER NOT NULL,
+    intew_net         DOUBLE PRECISION,
+    intmoyle_net      DOUBLE PRECISION,
+    intgrnl_net       DOUBLE PRECISION,
+    updated_at        TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (settlement_date, settlement_period)
+);
+
+CREATE TABLE IF NOT EXISTS fundies_imbalngc (
+    settlement_date   DATE NOT NULL,
+    settlement_period INTEGER NOT NULL,
+    imbalngc          DOUBLE PRECISION,
+    updated_at        TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (settlement_date, settlement_period)
+);
+
+CREATE TABLE IF NOT EXISTS fundies_embedded_forecast (
+    settlement_date         DATE NOT NULL,
+    settlement_period       INTEGER NOT NULL,
+    embedded_wind_forecast  DOUBLE PRECISION,
+    embedded_solar_forecast DOUBLE PRECISION,
+    updated_at              TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (settlement_date, settlement_period)
+);
+
+-- settlement_date here is the auction's *delivery* date (the day the
+-- scraped prices/volumes apply to) -- also what epex.should_fetch_da_prices()
+-- checks against to decide whether a delivery date's auction is already
+-- stored and the scrape can be skipped this cycle.
+CREATE TABLE IF NOT EXISTS fundies_epex_da (
+    settlement_date   DATE NOT NULL,
+    settlement_period INTEGER NOT NULL,
+    da_price          DOUBLE PRECISION,
+    da_volume         DOUBLE PRECISION,
+    updated_at        TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (settlement_date, settlement_period)
+);
 
 CREATE TABLE IF NOT EXISTS refresh_log (
     id          BIGSERIAL PRIMARY KEY,

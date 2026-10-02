@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Citadel — BM Stack</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
+</head>
+<body>
+  <header>
+    <h1>BM Stack</h1>
+    <span id="env-badge" class="env-badge hidden"></span>
+    <span id="connection-status" class="disconnected">connecting…</span>
+  </header>
+  <nav class="top-nav">
+    <a href="/fpn" target="citadel-fpn" rel="noopener">FPN Analytics</a>
+    <a href="/pricing-stack" target="citadel-pricing-stack" rel="noopener">Pricing Stack</a>
+    <a href="/fundies" target="citadel-fundies" rel="noopener">Fundies</a>
+    <a href="/fundies-graphs" target="citadel-fundies-graphs" rel="noopener">Fundies Graphs</a>
+    <a href="/all-plants-boalf" target="citadel-all-plants-boalf" rel="noopener">All Plants BOALF</a>
+    <a href="/trips" target="citadel-trips" rel="noopener">Plant Trips</a>
+    <a href="/bm-stack" class="active">BM Stack</a>
+  </nav>
+
+  <!-- The plants National Grid could still call for balancing: untouched
+       bid/offer capacity, aggregated by price and coloured by fuel type.
+       Layout and behaviour follow Zapdos's own BM Stack window (stacked
+       price bars, running-sum line in GW, SP / Vol Sign / FT controls on
+       the right) -- see engine/bm_stack.py for how availability is derived
+       and web/bm-stack.js for the chart. -->
+  <main class="bm-stack-layout">
+    <div class="bm-stack-main">
+      <div id="bm-summary" class="bm-summary"></div>
+      <div class="graph-container bm-chart">
+        <p class="text-center" id="bm-chart-title">BM Stack</p>
+        <!-- Scrolls sideways: each price gets its own readable slot instead of
+             ~160 categories squeezed into one screen width. -->
+        <div class="bm-chart-scroll" id="bm-chart-scroll">
+          <div class="bm-chart-inner" id="bm-chart-inner">
+            <canvas id="bm-stack-canvas"></canvas>
+          </div>
+        </div>
+      </div>
+      <div class="fpn-card wide bm-fuel-card">
+        <h2>By fuel type</h2>
+        <div class="fpn-table-wrap">
+          <table id="bm-fuel-table">
+            <thead><tr><th>Fuel</th><th>Units</th><th>Available MW</th><th>Min £</th><th>Max £</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+    <aside class="control-panel">
+      <p class="panel-heading">Settlement period</p>
+      <div id="bm-sp-selector"></div>
+      <p class="panel-heading">Vol sign</p>
+      <div id="bm-side-selector">
+        <label><input type="radio" name="bm-side" value="bid" /> -1 (Bid)</label>
+        <label><input type="radio" name="bm-side" value="offer" checked /> 1 (Offer)</label>
+      </div>
+      <p class="panel-heading">Prices</p>
+      <label title="Only show bands priced at or below this (absolute value). Units that don't want to be called bid/offer at +/-99,999 and similar, which would flatten the chart. Set very high to show everything.">
+        Max price &pound;/MWh<br />
+        <input type="number" id="bm-max-price" value="1000" min="0" step="100" style="width: 6rem;" />
+      </label>
+      <p class="panel-heading">Fuel type</p>
+      <div id="bm-fuel-selector"></div>
+    </aside>
+  </main>
+
+  <script src="/static/bm-stack.js"></script>
+</body>
+</html>

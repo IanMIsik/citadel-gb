@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Citadel — Interconnector Graphs</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <header>
+    <h1>Interconnector Graphs</h1>
+    <span id="env-badge" class="env-badge hidden"></span>
+  </header>
+  <nav class="top-nav">
+    <!-- Named targets -- see fundies.html's own nav comment for why: every
+         page's nav reuses the same target name per destination, so each
+         one opens (and re-focuses) its own tab instead of navigating the
+         current page away. -->
+    <a href="/fpn" target="citadel-fpn" rel="noopener">FPN Analytics</a>
+    <a href="/pricing-stack" target="citadel-pricing-stack" rel="noopener">Pricing Stack</a>
+    <a href="/fundies" target="citadel-fundies" rel="noopener">Fundies</a>
+    <a href="/fundies-graphs" target="citadel-fundies-graphs" rel="noopener">← Fundies Graphs</a>
+    <a href="/all-plants-boalf" target="citadel-all-plants-boalf" rel="noopener">All Plants BOALF</a>
+    <a href="/trips" target="citadel-trips" rel="noopener">Plant Trips</a>
+    <a href="/bm-stack" target="citadel-bm-stack" rel="noopener">BM Stack</a>
+  </nav>
+
+  <main id="interconnectors-page">
+    <!-- One graph per interconnector -- 7 from ENTSO-E, 3 from SEMO
+         (Ireland/NI, which ENTSO-E's own pair list doesn't cover, see
+         ingest/entsoe_flows.py's module docstring), plus the aggregated
+         (sum of all 10 + natgrid) movement as an 11th entry, FIRST in the
+         grid rather than its own oversized `.graph-container.big` -- same
+         size as every other chart here, by request, so all 11 fit
+         together on one screen instead of the aggregate alone pushing the
+         rest below the fold. Positive = net import into GB, both series
+         (scheduled = ENTSO-E/SEMO, dotted; real = FUELHH-metered, solid)
+         use that same sign convention, see
+         engine/fundies.py's interconnector_real_flows() docstring. -->
+    <div class="interconnector-grid">
+      <div class="graph-container"><p class="text-center">Aggregated (scheduled vs real)</p><canvas class="chartjs_canvas" id="ic-aggregate"></canvas></div>
+      <div class="graph-container"><p class="text-center">GB ↔ FR (ElecLink)</p><canvas class="chartjs_canvas" id="ic-eleclink"></canvas></div>
+      <div class="graph-container"><p class="text-center">GB ↔ FR (IFA)</p><canvas class="chartjs_canvas" id="ic-ifa"></canvas></div>
+      <div class="graph-container"><p class="text-center">GB ↔ FR (IFA2)</p><canvas class="chartjs_canvas" id="ic-ifa2"></canvas></div>
+      <div class="graph-container"><p class="text-center">GB ↔ NL (BritNed)</p><canvas class="chartjs_canvas" id="ic-nl"></canvas></div>
+      <div class="graph-container"><p class="text-center">GB ↔ BE (Nemo Link)</p><canvas class="chartjs_canvas" id="ic-be"></canvas></div>
+      <div class="graph-container"><p class="text-center">GB ↔ NO (North Sea Link)</p><canvas class="chartjs_canvas" id="ic-norway"></canvas></div>
+      <div class="graph-container"><p class="text-center">GB ↔ DK1 (Viking Link)</p><canvas class="chartjs_canvas" id="ic-dk"></canvas></div>
+      <div class="graph-container"><p class="text-center">GB ↔ IE (East-West)</p><canvas class="chartjs_canvas" id="ic-ew"></canvas></div>
+      <div class="graph-container"><p class="text-center">GB ↔ NI (Moyle)</p><canvas class="chartjs_canvas" id="ic-moyle"></canvas></div>
+      <div class="graph-container"><p class="text-center">GB ↔ IE (Greenlink)</p><canvas class="chartjs_canvas" id="ic-grnl"></canvas></div>
+    </div>
+  </main>
+
+  <script src="/static/interconnectors.js"></script>
+</body>
+</html>

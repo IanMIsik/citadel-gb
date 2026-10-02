@@ -9,11 +9,18 @@
 <body>
   <header>
     <h1>Pricing Stack</h1>
+    <span id="env-badge" class="env-badge hidden"></span>
     <span id="connection-status" class="disconnected">connecting…</span>
   </header>
   <nav class="top-nav">
-    <a href="/" class="active">Pricing Stack</a>
-    <a href="/fpn">FPN Analytics</a>
+    <!-- Named targets -- see fundies.html's own nav comment for why. -->
+    <a href="/fpn" target="citadel-fpn" rel="noopener">FPN Analytics</a>
+    <a href="/pricing-stack" class="active">Pricing Stack</a>
+    <a href="/fundies" target="citadel-fundies" rel="noopener">Fundies</a>
+    <a href="/fundies-graphs" target="citadel-fundies-graphs" rel="noopener">Fundies Graphs</a>
+    <a href="/all-plants-boalf" target="citadel-all-plants-boalf" rel="noopener">All Plants BOALF</a>
+    <a href="/trips" target="citadel-trips" rel="noopener">Plant Trips</a>
+    <a href="/bm-stack" target="citadel-bm-stack" rel="noopener">BM Stack</a>
   </nav>
 
   <div id="now-delivering">

@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Citadel — Fundies</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header>
+    <h1>Fundies</h1>
+    <span id="env-badge" class="env-badge hidden"></span>
+    <span id="connection-status" class="disconnected">connecting…</span>
+  </header>
+  <nav class="top-nav">
+    <!-- Named targets (not plain hrefs) -- every page's nav now does this
+         consistently (previously only fpn.html's own nav did), so a link
+         clicked from ANY page opens its destination in its own reusable
+         tab: a second click on the same link re-focuses that already-open
+         tab instead of navigating the CURRENT page away or spawning a
+         duplicate. Target names are shared across every page's nav (e.g.
+         "citadel-fundies" here matches fpn.html's own), so the same
+         destination always reuses the same tab regardless of which page
+         you clicked it from. -->
+    <a href="/fpn" target="citadel-fpn" rel="noopener">FPN Analytics</a>
+    <a href="/pricing-stack" target="citadel-pricing-stack" rel="noopener">Pricing Stack</a>
+    <a href="/fundies" class="active">Fundies</a>
+    <a href="/fundies-graphs" target="citadel-fundies-graphs" rel="noopener">Fundies Graphs</a>
+    <a href="/all-plants-boalf" target="citadel-all-plants-boalf" rel="noopener">All Plants BOALF</a>
+    <a href="/trips" target="citadel-trips" rel="noopener">Plant Trips</a>
+    <a href="/bm-stack" target="citadel-bm-stack" rel="noopener">BM Stack</a>
+  </nav>
+
+  <main id="fundies-page">
+    <!-- Row/column structure and row ORDER ported from the user's own
+         Fundies.xlsx (the real, currently-in-use arrangement -- day-ahead
+         demand, real-time demand, delta, then the same pattern for wind,
+         then interconnectors, natgrid, nuke, resid, solar, prices) plus
+         the real Zapdos app's own `fundies.html` (Old World/
+         zapdos_extracted/app_source/src/views/windows/fundies.html) for
+         the visual mechanics: settlement periods 1-48 as columns, a
+         half-hour clock header with a yesterday/today/tomorrow date
+         picker, and per-row percentile-heatmap colouring (formulas ported
+         verbatim from that app's own custom.css). ONE table mixing
+         real-time and day-ahead metrics together, same as both references
+         -- not two separate tables. Data itself comes from Fundies.ipynb's
+         own working pipeline (see engine/fundies.py's module docstring)
+         instead of the Electron app's dead RNP/SEMO/EuroWind feeds. No
+         `max-width` cap on the card -- the whole point is seeing as many
+         of the 48 periods as the screen allows without scrolling. -->
+    <div class="fpn-card fundies-card">
+      <div class="fpn-table-wrap">
+        <table id="fundies-table" class="fundies-table">
+          <thead>
+            <tr id="fundies-date-header"></tr>
+            <tr id="fundies-sp-header"></tr>
+          </thead>
+          <tbody id="fundies-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </main>
+
+  <script src="/static/fundies.js"></script>
+</body>
+</html>

@@ -45,15 +45,6 @@ const DELTA_SERIES = [
   { key: "niv_error", label: "niv_error", color: "green" },
 ];
 
-const FUEL_COLOR_PALETTE = [
-  "#72c4f6", "#e0645a", "#58b06a", "#f6c445", "#b06af6", "#4d8dff",
-  "#ff9f4d", "#4de0c8", "#e04dd0", "#a3d94d", "#d94d8f", "#4d76d9",
-];
-
-function fuelColor(fuelType, index) {
-  return FUEL_COLOR_PALETTE[index % FUEL_COLOR_PALETTE.length];
-}
-
 function fmt(value, digits = 1) {
   return value == null || Number.isNaN(Number(value)) ? "--" : Number(value).toFixed(digits);
 }
@@ -86,6 +77,28 @@ function tdShaded(value, digits = 0) {
   else if (v <= -301) range = "high-negative";
   else if (v <= -201) range = "medium-negative";
   else if (v <= -51) range = "low-negative";
+  const rangeAttr = range ? ` data-range="${range}"` : "";
+  return `<td data-sign="${value}"${rangeAttr}>${fmt(value, digits)}</td>`;
+}
+
+// Same band thresholds as tdShaded() above, but the real Zapdos app source's
+// own SEPARATE blue/red "delta-positive/negative" data-range names (see
+// custom.css) instead of its green/orange "low/medium/high" ones -- used
+// for a genuine delta/change metric like Mil Mel Drop, distinct from
+// tdShaded()'s plain-magnitude tables (confirmed against real user usage;
+// the source page that assigns these classes wasn't recoverable from the
+// reference set, so this mapping is per direct user confirmation, not a
+// verified source citation like tdShaded()'s own).
+function tdDeltaShaded(value, digits = 0) {
+  if (value == null) return td(value, digits);
+  const v = Number(value);
+  let range = null;
+  if (v > 300) range = "delta-positive-high";
+  else if (v > 200) range = "delta-positive-medium";
+  else if (v > 50) range = "delta-positive-low";
+  else if (v <= -301) range = "delta-negative-high";
+  else if (v <= -201) range = "delta-negative-medium";
+  else if (v <= -51) range = "delta-negative-low";
   const rangeAttr = range ? ` data-range="${range}"` : "";
   return `<td data-sign="${value}"${rangeAttr}>${fmt(value, digits)}</td>`;
 }
@@ -151,23 +164,6 @@ function makeChart(canvasId, series) {
   });
 }
 
-function renderLegend(elId, chart, series) {
-  const el = document.getElementById(elId);
-  if (!el) return;
-  el.innerHTML = "";
-  series.forEach((s, i) => {
-    const li = document.createElement("li");
-    li.innerHTML = `<span style="background:${s.color}"></span>${s.label}`;
-    li.onclick = () => {
-      const meta = chart.getDatasetMeta(i);
-      meta.hidden = meta.hidden === null ? !chart.data.datasets[i].hidden : !meta.hidden;
-      li.classList.toggle("strike", !!meta.hidden);
-      chart.update();
-    };
-    el.appendChild(li);
-  });
-}
-
 // Ticks only ever land on a settlement period's own first minute (its real
 // start), labelled with that period's number stacked above its own real
 // start time -- not an arbitrary minute-level index Chart.js's own
@@ -195,32 +191,142 @@ function updateChart(chart, series, rows) {
   chart.update();
 }
 
-// Market_gen vs Adj_fpn is one toggleable line per fuel type (matches the
-// real Zapdos home page's own chart, which plots biomass/ccgt/coal/wind/
-// etc as separate series -- not a single aggregate line).
-function updateDynamicFuelChart(chart, legendElId, rows, valueKey) {
-  const fuelTypes = [...new Set(rows.map((r) => r.fuel_type))].filter(Boolean).sort();
-  const byKey = new Map();
-  for (const r of rows) {
-    const key = r.fuel_type;
-    if (!byKey.has(key)) byKey.set(key, new Map());
-    byKey.get(key).set(r.spot_time, r[valueKey]);
-  }
-  const spotTimes = [...new Set(rows.map((r) => r.spot_time))].sort((a, b) => new Date(a) - new Date(b));
+// Market_gen vs Adj_fpn -- port of Zapdos's max_gen_vs_adj_fpn_chart.js:
+// one line per fuel type of (market generation - adjusted FPN), so above
+// zero is over-performance and below zero under-performance. Same design as
+// that chart: its own per-fuel colour map (lowercase fuel names), 1.5px
+// lines without points, legend on the right whose click toggles a fuel and
+// rescales y to the fuels still visible, a name label (white, 11px) on
+// points with |value| >= 200 MW, and Zapdos's grey y ticks/gridlines.
+const MARKET_GEN_COLORS = {
+  biomass: "#96031A", ccgt: "#D90368", coal: "#daaffd", intew: "#588B8B",
+  intfr: "#FAA916", intirl: "#57B8FF", intned: "#cccccc", intnem: "#F2E86D",
+  npshyd: "#9c8eff", nuclear: "#ffa493", ps: "#fde17c", wind: "#248232",
+  other: "#30d4ec", ocgt: "#beffbb", oil: "#eaba8a",
+};
+const MARKET_GEN_LABEL_MW = 200;
+const MARKET_GEN_TICK = "rgb(185,185,185)";
+const MARKET_GEN_GRID = "rgba(155,155,155,0.2)";
 
-  chart.data.labels = spotTimes.map((t) => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }));
-  chart.data.datasets = fuelTypes.map((ft, i) => ({
-    label: ft, data: spotTimes.map((t) => byKey.get(ft)?.get(t)),
-    borderColor: fuelColor(ft, i), backgroundColor: fuelColor(ft, i),
-    pointRadius: 0, borderWidth: 1.5, tension: 0.15,
-  }));
+// Fuels Zapdos has no colour for (e.g. other interconnectors, NATGRID):
+// stable hash so a fuel keeps its colour between refreshes.
+function marketGenColor(fuelType) {
+  const key = String(fuelType).toLowerCase();
+  if (MARKET_GEN_COLORS[key]) return MARKET_GEN_COLORS[key];
+  let h = 0;
+  for (const c of key) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  return `hsl(${h % 360}, 60%, 62%)`;
+}
+
+const LONDON_PARTS = new Intl.DateTimeFormat("en-GB", {
+  timeZone: "Europe/London", hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+});
+
+// SP number + HH:MM in London time (the market's clock) for one instant.
+function londonSp(t) {
+  const parts = Object.fromEntries(LONDON_PARTS.formatToParts(new Date(t)).map((p) => [p.type, p.value]));
+  const mins = Number(parts.hour) * 60 + Number(parts.minute);
+  return { sp: Math.floor(mins / 30) + 1, mins, clock: `${parts.hour}:${parts.minute}` };
+}
+
+function makeMarketGenChart(canvasId) {
+  const chart = new Chart(document.getElementById(canvasId), {
+    type: "line",
+    plugins: window.ChartDataLabels ? [window.ChartDataLabels] : [],
+    data: { labels: [], datasets: [] },
+    options: {
+      animation: false,
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: "nearest", intersect: false },
+      hover: { mode: "nearest", intersect: false },
+      scales: {
+        x: {
+          ticks: { color: MARKET_GEN_TICK, autoSkip: false, maxRotation: 0, minRotation: 0, font: { size: 9 }, padding: 2 },
+          grid: { color: MARKET_GEN_GRID },
+          afterBuildTicks: (axis) => {
+            const keep = axis.chart.$tickIndices;
+            if (keep) axis.ticks = axis.ticks.filter((t) => keep.has(t.value));
+          },
+        },
+        y: {
+          grace: "5%",
+          ticks: { color: MARKET_GEN_TICK, font: { size: 9 }, maxTicksLimit: 7 },
+          grid: { color: MARKET_GEN_GRID, zeroLineColor: MARKET_GEN_GRID },
+        },
+      },
+      plugins: {
+        legend: {
+          position: "right",
+          labels: { color: MARKET_GEN_TICK, boxWidth: 10, font: { size: 9 } },
+        },
+        tooltip: {
+          mode: "nearest", intersect: false,
+          backgroundColor: "#171a21", borderColor: "#2a2e38", borderWidth: 1,
+          titleColor: "#b9bbb3", bodyColor: "#b9bbb3",
+          callbacks: { label: (c) => `${c.dataset.label}: ${Number(c.parsed.y).toFixed(1)} MW` },
+        },
+        datalabels: {
+          color: "#fff",
+          font: { size: 11 },
+          align: "top",
+          clip: false,
+          // Name the fuel only where it is far from plan, and only once per
+          // settlement-period boundary tick so 180 minute-points don't
+          // smother the chart in text.
+          display: (ctx) => {
+            const keep = ctx.chart.$tickIndices;
+            const v = ctx.dataset.data[ctx.dataIndex];
+            return !!keep && keep.has(ctx.dataIndex) && v != null && Math.abs(v) >= MARKET_GEN_LABEL_MW;
+          },
+          formatter: (_v, ctx) => ctx.dataset.label,
+        },
+      },
+    },
+  });
+  return chart;
+}
+
+function updateMarketGenChart(chart, rows, valueKey) {
+  const spotTimes = [...new Set(rows.map((r) => r.spot_time))].sort((a, b) => new Date(a) - new Date(b));
+  // NATGRID isn't a generating fuel type, so it is left off this chart.
+  rows = rows.filter((r) => String(r.fuel_type).toUpperCase() !== "NATGRID");
+  const fuelTypes = [...new Set(rows.map((r) => r.fuel_type))].filter(Boolean).sort();
+  const byFuel = new Map(fuelTypes.map((ft) => [ft, new Map()]));
+  for (const r of rows) if (r.fuel_type) byFuel.get(r.fuel_type).set(r.spot_time, r[valueKey]);
+
+  // Keep which fuels the user has toggled off across the 30s refreshes.
+  const hidden = new Set(chart.data.datasets.filter((_, i) => !chart.isDatasetVisible(i)).map((d) => d.label));
+
+  const sps = spotTimes.map(londonSp);
+  chart.data.labels = sps.map((p) => [`SP${p.sp}`, p.clock]);
+  chart.data.datasets = fuelTypes.map((ft) => {
+    const color = marketGenColor(ft);
+    return {
+      label: ft.toLowerCase(), data: spotTimes.map((t) => byFuel.get(ft).get(t) ?? null),
+      borderColor: color, backgroundColor: color,
+      pointRadius: 0, borderWidth: 1.5, tension: 0.15, spanGaps: true,
+      hidden: hidden.has(ft.toLowerCase()),
+    };
+  });
+
+  // Ticks only at a settlement-period start (minute-of-day on a half hour).
+  const boundaries = [];
+  sps.forEach((p, i) => { if (p.mins % 30 === 0 && (i === 0 || sps[i - 1].mins !== p.mins)) boundaries.push(i); });
+  const width = chart.width || chart.canvas.clientWidth || 300;
+  // Zapdos puts the legend on the right; on a narrow screen its 19 entries
+  // would eat the plot, so it drops underneath there.
+  chart.options.plugins.legend.position = width < 700 ? "bottom" : "right";
+  const plotWidth = width < 700 ? width : width * 0.85;
+  const maxTicks = Math.max(2, Math.floor(plotWidth / 65));
+  const step = Math.max(1, Math.ceil(boundaries.length / maxTicks));
+  chart.$tickIndices = new Set(boundaries.filter((_, i) => i % step === 0));
   chart.update();
-  renderLegend(legendElId, chart, fuelTypes.map((ft, i) => ({ label: ft, color: fuelColor(ft, i) })));
 }
 
 const generationChart = makeChart("generation-chart", GENERATION_SERIES);
 const deltaChart = makeChart("delta-chart", DELTA_SERIES);
-const marketGenChart = makeChart("market-gen-vs-adj-fpn-chart", []);
+const marketGenChart = makeMarketGenChart("market-gen-vs-adj-fpn-chart");
 
 async function loadCurrent() {
   const resp = await fetch("/api/fpn/current");
@@ -237,9 +343,12 @@ async function loadCurrent() {
 
 // --- Left column: per-fuel-type / per-SP pivot tables ---
 
-function renderFuelPivot(tableId, rows, valueKey, digits = 0, shaded = false) {
+// `shadeMode`: null/false (plain), "magnitude" (tdShaded's green/orange
+// bands) or "delta" (tdDeltaShaded's blue/red bands) -- see those
+// functions' own docstrings for which table each is confirmed/intended for.
+function renderFuelPivot(tableId, rows, valueKey, digits = 0, shadeMode = null) {
   const table = document.getElementById(tableId);
-  const cell = shaded ? tdShaded : td;
+  const cell = shadeMode === "delta" ? tdDeltaShaded : shadeMode === "magnitude" ? tdShaded : td;
   const fuelTypes = [...new Set(rows.map((r) => r.fuel_type))].filter(Boolean).sort();
   const periods = [...new Set(rows.map((r) => r.settlement_period))].sort((a, b) => a - b);
   const byKey = new Map(rows.map((r) => [`${r.settlement_period}|${r.fuel_type}`, r[valueKey]]));
@@ -322,6 +431,13 @@ function renderMetricPivot(tableId, rows, columns, labels) {
   });
 }
 
+// Cached for the decision table (renderDecisionColumn() below), which
+// recalculates independently of these tables' own render cycle -- on every
+// keystroke, not just on a dashboard refresh.
+let latestByFuelSp = [];
+let latestDecisionDriversSp = [];
+let latestGenerationByFuel = [];
+
 async function loadDashboard() {
   const resp = await fetch("/api/fpn/dashboard");
   if (!resp.ok) return;
@@ -329,11 +445,13 @@ async function loadDashboard() {
   const byFuelSp = data.by_fuel_sp || [];
   const decisionDriversSp = data.decision_drivers_sp || [];
   const marketGenSeries = data.market_gen_vs_adj_fpn_series || [];
+  latestByFuelSp = byFuelSp;
+  latestDecisionDriversSp = decisionDriversSp;
 
   renderFuelPivot("tbl-fpn-by-fuel", byFuelSp, "fpn_spot_vol");
   renderFuelPivot("tbl-fpn-delta", computeFpnDelta(byFuelSp), "fpn_delta");
-  renderFuelPivot("tbl-mel-mil-drop", excludeInterconnectorsAndNatgrid(byFuelSp), "mel_mil_drop");
-  renderFuelPivot("tbl-market-gen-vs-adj-fpn", excludeNatgrid(byFuelSp), "market_gen_vs_adj_fpn", 0, true);
+  renderFuelPivot("tbl-mel-mil-drop", excludeInterconnectorsAndNatgrid(byFuelSp), "mel_mil_drop", 0, "delta");
+  renderFuelPivot("tbl-market-gen-vs-adj-fpn", excludeNatgrid(byFuelSp), "market_gen_vs_adj_fpn", 0, "magnitude");
 
   // Row order is the user's own preference (AUC, Delta, NIV error, Dmd
   // risk, Dmd error, Unexp), not the real Zapdos "Delta table" (components/
@@ -357,7 +475,7 @@ async function loadDashboard() {
   updateChart(generationChart, GENERATION_SERIES, aggregatedWindow);
   updateChart(deltaChart, DELTA_SERIES, aggregatedWindow);
 
-  updateDynamicFuelChart(marketGenChart, "market-gen-vs-adj-fpn-legend", marketGenSeries, "market_gen_vs_adj_fpn");
+  updateMarketGenChart(marketGenChart, marketGenSeries, "market_gen_vs_adj_fpn");
 
   const melValues = byFuelSp.map((r) => r.mel_spot_vol).filter((v) => v != null);
   setFigure("stat-avg-of-mells", melValues.length ? melValues.reduce((a, b) => a + b, 0) / melValues.length : null);
@@ -366,6 +484,8 @@ async function loadDashboard() {
   const latestDropSum = byFuelSp.filter((r) => r.settlement_period === latestSp)
     .reduce((sum, r) => sum + (r.mel_mil_drop || 0), 0);
   setFigure("stat-sum-mel-mil-drop", byFuelSp.length ? latestDropSum : null);
+
+  renderDecisionTable();
 }
 
 // --- Right column: worst deviants + generation-by-fuel-type tables ---
@@ -396,9 +516,11 @@ async function loadWorstDeviants() {
 // Suffix rule per fuel type started from the real Zapdos app source's own
 // three-way split (components/tables/generate-real-time-generation-table-html.js),
 // then trimmed further by request: OTHER keeps just `_m`/`_d` (no `_r`),
-// NPSHYD/OCGT drop `_r` (keep `_m`/`_d` only), and every interconnector is
-// `_r`-only now (the 5 that source's own "anything else" rule would have
-// given `_m`/`_d` too are cut back to match the other 5). Column ORDER is
+// NPSHYD/OCGT drop `_r` (keep `_m`/`_d` only), PS switched from `_r`-only
+// to `_m`/`_d` (same reasoning as OTHER/NPSHYD/OCGT), and every
+// interconnector is `_r`-only now (the 5 that source's own "anything else"
+// rule would have given `_m`/`_d` too are cut back to match the other 5).
+// Column ORDER is
 // the user's own original request -- the main fuel types in this exact
 // sequence, with every interconnector grouped at the tail end (not
 // interspersed the way that source's own orderedArray does it). COAL
@@ -409,7 +531,7 @@ const GENERATION_TABLE_FUELS = [
   { ft: "WIND", suffixes: ["m", "d"] },
   { ft: "CCGT", suffixes: ["m", "d"] },
   { ft: "OTHER", suffixes: ["m", "d"] },
-  { ft: "PS", suffixes: ["r"] },
+  { ft: "PS", suffixes: ["m", "d"] },
   { ft: "BIOMASS", suffixes: ["m", "d"] },
   { ft: "NPSHYD", suffixes: ["m", "d"] },
   { ft: "OCGT", suffixes: ["m", "d"] },
@@ -445,6 +567,29 @@ function renderRealTimeGenerationTable(tableId, rows, maxRows = 24) {
     tr.innerHTML = spCell + timeCell + cells;
     tbody.appendChild(tr);
   }
+
+  // wind5/wind15/wind30 -- how much WIND_m has moved over the trailing
+  // 5/15/30 minutes, at the bottom-right of this table (also on Zapdos'
+  // own FPN accuracy page). Rows sit on FUELINST's 5-minute grid (see
+  // `timestamps` above), so 5/15/30 minutes back is simply 1/3/6 rows back
+  // from the latest (index 0, since `timestamps` sorts newest-first).
+  const windMarketGenAt = (idx) => byKey.get(`${timestamps[idx]}|WIND`)?.market_gen;
+  const windChangeOver = (rowsBack) => {
+    const latest = windMarketGenAt(0);
+    const prior = windMarketGenAt(rowsBack);
+    return latest != null && prior != null ? latest - prior : null;
+  };
+  // Explicit "+" for a non-negative change -- same convention as the
+  // pricing stack's own NIV figure (app.js's nivHtml()).
+  const setWindDiff = (id, value) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.textContent = value == null ? "--" : `${value >= 0 ? "+" : ""}${value.toFixed(1)}`;
+    el.setAttribute("data-sign", value == null ? "" : String(value));
+  };
+  setWindDiff("stat-wind5", windChangeOver(1));
+  setWindDiff("stat-wind15", windChangeOver(3));
+  setWindDiff("stat-wind30", windChangeOver(6));
 }
 
 async function loadGenerationByFuel() {
@@ -452,8 +597,136 @@ async function loadGenerationByFuel() {
   if (!resp.ok) return;
   const data = await resp.json();
   const rows = data.generation_by_fuel || [];
+  latestGenerationByFuel = rows;
   renderRealTimeGenerationTable("tbl-fuelinst-max", rows, 12);
+  renderDecisionTable();
 }
+
+// ---------------------------------------------------------------------------
+// Decision table -- ported from the real Zapdos app source
+// (components/tables/decision-table/{index,data-utils}.js, found in the
+// Old World install; only CSS fragments of this page survived in this
+// project's own reference/ folder). Three independent "what if" scenario
+// columns, each its own settlement period plus six trader inputs,
+// recalculated on every keystroke and every dashboard refresh. Inputs are
+// session-only (per request) -- nothing here is persisted server-side.
+// ---------------------------------------------------------------------------
+
+const DECISION_COLUMNS = ["1", "2", "3"];
+
+function decisionInputValue(id) {
+  const el = document.getElementById(id);
+  return el ? el.value : "";
+}
+
+function decisionInputNumber(id) {
+  const v = decisionInputValue(id);
+  return v === "" ? 0 : Number(v);
+}
+
+function latestByPeriod(rows) {
+  if (!rows.length) return null;
+  return rows.reduce((a, b) => (a.settlement_period > b.settlement_period ? a : b));
+}
+
+// FPN for a specific fuel type at a specific (trader-chosen) settlement
+// period -- not necessarily the latest one, unlike the other lookups below.
+function fpnForSpAndFuel(sp, fuelType) {
+  const row = latestByFuelSp.find((r) => r.settlement_period === sp && r.fuel_type === fuelType);
+  return row ? row.fpn_spot_vol : null;
+}
+
+// Latest live market_gen for a fuel type, off the same 5-minute grid the
+// Real Time Generation table itself uses (renderRealTimeGenerationTable()).
+function latestMarketGen(fuelType) {
+  const rows = latestGenerationByFuel.filter((r) => r.fuel_type === fuelType);
+  if (!rows.length) return null;
+  const latest = rows.reduce((a, b) => (new Date(a.ts) > new Date(b.ts) ? a : b));
+  return latest.market_gen;
+}
+
+// Sum of market_gen_vs_adj_fpn across every fuel type except WIND, for the
+// most recently completed settlement period -- matches the real source's
+// own generateOtherGen() exactly (it only ever excludes wind, nothing else).
+function latestOtherGenDeviationTotal() {
+  const latest = latestByPeriod(latestByFuelSp);
+  if (!latest) return null;
+  const values = latestByFuelSp
+    .filter((r) => r.settlement_period === latest.settlement_period && r.fuel_type !== "WIND")
+    .map((r) => r.market_gen_vs_adj_fpn)
+    .filter((v) => v != null);
+  return values.length ? values.reduce((a, b) => a + b, 0) : null;
+}
+
+function latestDriver(field) {
+  const latest = latestByPeriod(latestDecisionDriversSp);
+  return latest ? latest[field] : null;
+}
+
+function setDecisionText(id, value, digits = 0) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = value == null || Number.isNaN(value) ? "--" : fmt(value, digits);
+  el.setAttribute("data-sign", value == null ? "" : String(value));
+}
+
+// One scenario column's full set of rows -- mirrors the real source's
+// renderInputValues()/getSummation() exactly:
+//   column total    = fcauc - wind_in - othergen_in + dmd_in + nonbm_in + unexp_in - rnp_vs_fpn
+//   vs-now total     = -wind_vs_now - othergen_vs_now + dmd_derived + unexp_derived
+//   CF NIV           = column total - vs-now total - unexp_derived
+function renderDecisionColumn(col) {
+  const spRaw = decisionInputValue(`sp-input-${col}`);
+  const sp = spRaw === "" ? null : Number(spRaw);
+
+  const auc = sp != null ? (latestDecisionDriversSp.find((r) => r.settlement_period === sp) || {}).auc : null;
+  setDecisionText(`fcauc-${col}`, auc);
+
+  // RNP vs FPN: the real source displays a pre-fetched Regional Nomination
+  // Platform value here, no calculation. We have no RNP data source (per
+  // direct confirmation -- that's a paid feed not yet integrated), so this
+  // stays "N/A" and contributes 0 to the totals below until that's wired in.
+  const rnpVsFpn = null;
+
+  const windInput = decisionInputNumber(`wind-input-${col}`);
+  const windFpn = sp != null ? fpnForSpAndFuel(sp, "WIND") : null;
+  const windMarketGen = latestMarketGen("WIND");
+  const windVsNow = windFpn != null && windMarketGen != null ? windFpn + windInput - windMarketGen : null;
+  setDecisionText(`wind-text-${col}`, windVsNow);
+
+  const otherGenInput = decisionInputNumber(`othergen-input-${col}`);
+  const otherGenCurrent = latestOtherGenDeviationTotal();
+  const otherGenVsNow = otherGenCurrent != null ? otherGenInput - otherGenCurrent : null;
+  setDecisionText(`othergen-text-${col}`, otherGenVsNow);
+
+  const dmdInput = decisionInputNumber(`dmd-input-${col}`);
+  const dmdCurrent = latestDriver("dmd_error");
+  const dmdDerived = dmdCurrent != null ? dmdInput - dmdCurrent : null;
+  setDecisionText(`dmd-text-${col}`, dmdDerived);
+
+  const unexpInput = decisionInputNumber(`unexp-input-${col}`);
+  const unexpCurrent = latestDriver("unexp");
+  const unexpDerived = unexpCurrent != null ? unexpInput - unexpCurrent : null;
+  setDecisionText(`unexp-text-${col}`, unexpDerived);
+
+  const nonBmInput = decisionInputNumber(`nonbm-input-${col}`);
+
+  const columnTotal = (auc || 0) - windInput - otherGenInput + dmdInput + nonBmInput + unexpInput - (rnpVsFpn || 0);
+  const vsNowTotal = -(windVsNow || 0) - (otherGenVsNow || 0) + (dmdDerived || 0) + (unexpDerived || 0);
+  const cfNiv = columnTotal - vsNowTotal - (unexpDerived || 0);
+
+  setDecisionText(`col-total-${col}`, columnTotal);
+  setDecisionText(`col-vs-now-total-${col}`, vsNowTotal);
+  setDecisionText(`col-cf-niv-${col}`, cfNiv);
+}
+
+function renderDecisionTable() {
+  DECISION_COLUMNS.forEach(renderDecisionColumn);
+}
+
+document.querySelectorAll("#decision-input-table .decision-input").forEach((el) => {
+  el.addEventListener("input", () => renderDecisionColumn(el.dataset.col));
+});
 
 async function loadAll() {
   await Promise.all([loadCurrent(), loadDashboard(), loadWorstDeviants(), loadGenerationByFuel()]);
@@ -478,6 +751,141 @@ function connectWebSocket() {
   setInterval(() => { if (ws.readyState === WebSocket.OPEN) ws.send("ping"); }, 30000);
 }
 
+function loadEnvBadge() {
+  fetch("/api/health").then(r => r.json()).then(data => {
+    if (data.environment_label === "prod") return;
+    const badge = document.getElementById("env-badge");
+    badge.textContent = data.environment_label.toUpperCase();
+    badge.classList.remove("hidden");
+  });
+}
+
+// Plant trip alerts -- a short WebAudio beep (no binary asset needed) plus
+// an in-page toast, per request: no OS Notification permission, just
+// something impossible to miss while this tab is open. See
+// engine/fpn.py's detect_trips() for what counts as a trip (>50MW single-
+// unit MIL/MEL drop, edge-triggered) and engine/fpn_runner.py's
+// _remit_poll_loop for the REMIT match/revision/resolved follow-ups this
+// same toast gets updated in place with.
+function playTripAlarm() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    [0, 0.18, 0.36].forEach((delay, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "square";
+      osc.frequency.value = i % 2 === 0 ? 880 : 660;
+      gain.gain.setValueAtTime(0.15, ctx.currentTime + delay);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + delay + 0.15);
+      osc.connect(gain).connect(ctx.destination);
+      osc.start(ctx.currentTime + delay);
+      osc.stop(ctx.currentTime + delay + 0.15);
+    });
+  } catch (e) { /* WebAudio unavailable -- toast alone still shows */ }
+}
+
+const tripToasts = new Map(); // trip_id -> toast element
+
+function tripToastContainer() {
+  let el = document.getElementById("trip-toast-container");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "trip-toast-container";
+    document.body.appendChild(el);
+  }
+  return el;
+}
+
+function showTripToast(msg) {
+  playTripAlarm();
+  const el = document.createElement("div");
+  el.className = "trip-toast";
+  el.innerHTML =
+    `<button class="trip-toast-close" aria-label="Dismiss">&times;</button>` +
+    `<div class="trip-toast-title">Plant trip -- ${msg.bm_unit}</div>` +
+    `<div class="trip-toast-body">${msg.fuel_type || "Unknown fuel"} &middot; dropped ${msg.drop_mw.toFixed(0)} MW</div>` +
+    `<div class="trip-toast-status">Checking REMIT for expected return time…</div>` +
+    `<a class="trip-toast-link" href="/trips" target="citadel-trips" rel="noopener">Open Plant Trips</a>`;
+  el.querySelector(".trip-toast-close").addEventListener("click", () => el.remove());
+  tripToastContainer().appendChild(el);
+  tripToasts.set(msg.trip_id ?? `${msg.bm_unit}:${msg.detected_at}`, el);
+  setTimeout(() => el.remove(), 60000);
+}
+
+function updateTripToast(tripId, text) {
+  const el = tripToasts.get(tripId);
+  if (!el) return;
+  const status = el.querySelector(".trip-toast-status");
+  if (status) status.textContent = text;
+}
+
+// "Trip going away" pop-up (green, softer rising chime): `partial` once the
+// drop has halved from its peak, `full` once it's cleared. Fires once per
+// stage per trip -- see engine/fpn.py's detect_trips().
+function playRecoveryChime() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    [0, 0.15].forEach((delay, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.value = i === 0 ? 523 : 784;
+      gain.gain.setValueAtTime(0.12, ctx.currentTime + delay);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + delay + 0.25);
+      osc.connect(gain).connect(ctx.destination);
+      osc.start(ctx.currentTime + delay);
+      osc.stop(ctx.currentTime + delay + 0.25);
+    });
+  } catch (e) { /* toast alone still shows */ }
+}
+
+function showRecoveryToast(msg) {
+  playRecoveryChime();
+  const back = Math.max(0, Math.min(100, Math.round((1 - msg.drop_mw / msg.peak_mw) * 100)));
+  const full = msg.kind === "full";
+  const expected = msg.expected_back
+    ? `<div class="trip-toast-status">REMIT expected back: ${new Date(msg.expected_back).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</div>` : "";
+  const el = document.createElement("div");
+  el.className = "trip-toast recovery";
+  el.innerHTML =
+    `<button class="trip-toast-close" aria-label="Dismiss">&times;</button>` +
+    `<div class="trip-toast-title">${full ? "Back online" : "Coming back"} -- ${msg.bm_unit}</div>` +
+    `<div class="trip-toast-body">${msg.fuel_type || "Unknown fuel"} &middot; ` +
+    (full ? `trip cleared (peak drop was ${msg.peak_mw.toFixed(0)} MW)`
+          : `drop ${msg.peak_mw.toFixed(0)} &rarr; ${msg.drop_mw.toFixed(0)} MW (${back}% recovered)`) +
+    ` &middot; SP${msg.settlement_period}</div>` +
+    `<div class="trip-toast-bar"><span style="width:${full ? 100 : back}%"></span></div>` + expected +
+    `<a class="trip-toast-link" href="/trips" target="citadel-trips" rel="noopener">Open Plant Trips</a>`;
+  el.querySelector(".trip-toast-close").addEventListener("click", () => el.remove());
+  tripToastContainer().appendChild(el);
+  setTimeout(() => el.remove(), 60000);
+}
+
+function connectTripsWebSocket() {
+  const proto = location.protocol === "https:" ? "wss:" : "ws:";
+  const ws = new WebSocket(`${proto}//${location.host}/ws/trips`);
+  ws.onclose = () => setTimeout(connectTripsWebSocket, 2000);
+  ws.onerror = () => ws.close();
+  ws.onmessage = (event) => {
+    const msg = JSON.parse(event.data);
+    if (msg.type === "trip") {
+      showTripToast(msg);
+    } else if (msg.type === "remit_match") {
+      updateTripToast(msg.trip_id, "Matched to REMIT -- fetching expected return time…");
+    } else if (msg.type === "remit_revision") {
+      const when = msg.event_end_time ? new Date(msg.event_end_time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "unknown";
+      updateTripToast(msg.trip_id, `Revised: now expected back ~${when}.`);
+    } else if (msg.type === "trip_recovery") {
+      showRecoveryToast(msg);
+    } else if (msg.type === "resolved") {
+      updateTripToast(msg.trip_id, "Resolved -- unit is back per REMIT.");
+    }
+  };
+  setInterval(() => { if (ws.readyState === WebSocket.OPEN) ws.send("ping"); }, 30000);
+}
+
+loadEnvBadge();
 loadAll();
 connectWebSocket();
+connectTripsWebSocket();
 setInterval(loadAll, 30000);

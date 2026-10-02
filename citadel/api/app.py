@@ -18,14 +18,18 @@ from fastapi.staticfiles import StaticFiles
 
 from ..config import settings
 from ..engine.fpn_runner import FpnRunner
+from ..engine.fundies_runner import FundiesRunner
 from ..engine.runner import Runner
 from ..engine.view import split_and_sort
 from ..ingest import gbpw_import, misco_fuel_type_reference
 from ..ingest.elexon_rest import fetch_bmu_reference
-from ..settlement import current_period, window_around
+from ..settlement import current_period, rolling_window, utc_to_settlement, window_around
 from ..storage import db
 from .broadcast import Broadcaster
+from .exploded_boalf_broadcast import ExplodedBoalfBroadcaster
 from .fpn_broadcast import FpnBroadcaster
+from .fundies_broadcast import FundiesBroadcaster
+from .trip_broadcast import TripBroadcaster
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 logger = logging.getLogger("citadel.api.app")
@@ -112,6 +116,25 @@ async def lifespan(app: FastAPI):
         except Exception:
             logger.exception("misco BM unit fuel type reference import failed -- fuel_type stays whatever the earlier steps set")
 
+        # Dev-only fuel-type corrections not yet validated enough to apply
+        # to prod -- see data/misco_bmu_fuel_type_dev_overrides.csv. Loaded
+        # the same way as the main misco file, just gated on
+        # environment_label (config.py) so prod's bm_unit_reference (and
+        # its FPN Analytics fuel-by-fuel breakdown) is never touched by
+        # these until they're promoted into the main file.
+        if settings.environment_label != "prod":
+            try:
+                dev_override_path = misco_fuel_type_reference.DEFAULT_PATH.with_name("misco_bmu_fuel_type_dev_overrides.csv")
+                dev_override_rows = misco_fuel_type_reference.read_bmu_fuel_types(dev_override_path)
+                if dev_override_rows:
+                    existing_rows = await db.bm_unit_reference_all(pool)
+                    existing_by_elexon = misco_fuel_type_reference.preferred_national_grid_bm_unit_map(existing_rows)
+                    dev_override_rows = misco_fuel_type_reference.resolve_national_grid_bm_units(dev_override_rows, existing_by_elexon)
+                    await db.upsert_bm_unit_reference(pool, dev_override_rows, overwrite_fuel_type=True)
+                    logger.info("applied %d dev-only fuel-type overrides (environment_label=%s)", len(dev_override_rows), settings.environment_label)
+            except Exception:
+                logger.exception("dev-only fuel type override import failed -- fuel_type stays whatever the earlier steps set")
+
     # Shared by both engines' per-cycle recompute (see engine/runner.py and
     # engine/fpn_runner.py) so neither one's pandas-heavy work ever blocks
     # this event loop -- the two recomputes are independent (same raw
@@ -123,15 +146,25 @@ async def lifespan(app: FastAPI):
 
     broadcaster = Broadcaster()
     app.state.broadcaster = broadcaster
-    runner = Runner(settings, pool, broadcaster, process_pool=process_pool)
+    exploded_boalf_broadcaster = ExplodedBoalfBroadcaster()
+    app.state.exploded_boalf_broadcaster = exploded_boalf_broadcaster
+    runner = Runner(settings, pool, broadcaster, process_pool=process_pool, exploded_boalf_broadcaster=exploded_boalf_broadcaster)
     app.state.runner = runner
     runner_task = asyncio.create_task(runner.run())
 
     fpn_broadcaster = FpnBroadcaster()
     app.state.fpn_broadcaster = fpn_broadcaster
-    fpn_runner = FpnRunner(settings, pool, fpn_broadcaster, runner.buffers, process_pool)
+    trip_broadcaster = TripBroadcaster()
+    app.state.trip_broadcaster = trip_broadcaster
+    fpn_runner = FpnRunner(settings, pool, fpn_broadcaster, runner.buffers, process_pool, trip_broadcaster=trip_broadcaster)
     app.state.fpn_runner = fpn_runner
     fpn_runner_task = asyncio.create_task(fpn_runner.run())
+
+    fundies_broadcaster = FundiesBroadcaster()
+    app.state.fundies_broadcaster = fundies_broadcaster
+    fundies_runner = FundiesRunner(settings, pool, fundies_broadcaster, process_pool)
+    app.state.fundies_runner = fundies_runner
+    fundies_runner_task = asyncio.create_task(fundies_runner.run())
 
     yield
 
@@ -139,6 +172,8 @@ async def lifespan(app: FastAPI):
     runner_task.cancel()
     await fpn_runner.stop()
     fpn_runner_task.cancel()
+    await fundies_runner.stop()
+    fundies_runner_task.cancel()
     process_pool.shutdown(wait=False, cancel_futures=True)
     await pool.close()
 
@@ -148,7 +183,7 @@ app = FastAPI(title="Citadel Pricing Stack", lifespan=lifespan)
 
 @app.get("/api/health")
 async def health():
-    return {"ok": True, "iris_configured": settings.iris_configured}
+    return {"ok": True, "iris_configured": settings.iris_configured, "environment_label": settings.environment_label}
 
 
 @app.get("/api/stack/current")
@@ -235,7 +270,7 @@ async def fpn_current():
 
 @app.get("/api/fpn/worst-deviants")
 async def fpn_worst_deviants():
-    records = await db.fpn_worst_deviants_current(app.state.pool)
+    records = await db.fpn_worst_deviants_current(app.state.pool, rolling_window())
     return {"worst_deviants": [_clean_record(r) for r in records]}
 
 
@@ -300,14 +335,253 @@ async def ws_fpn(websocket: WebSocket):
         await broadcaster.disconnect(websocket)
 
 
+@app.websocket("/ws/trips")
+async def ws_trips(websocket: WebSocket):
+    broadcaster: TripBroadcaster = app.state.trip_broadcaster
+    await broadcaster.connect(websocket)
+    try:
+        while True:
+            await websocket.receive_text()  # clients don't send anything meaningful; just keeps the connection open
+    except WebSocketDisconnect:
+        pass
+    finally:
+        await broadcaster.disconnect(websocket)
+
+
+def _with_affected_sps(d: dict, end_dt) -> dict:
+    """The trip's own settlement_date/settlement_period (already on the
+    record) is the first SP it affects; the "expected/actual back" instant
+    (REMIT's eventEndTime, or resolved_at once truly resolved) converts to
+    the last one via the same settlement.py utc_to_settlement() every other
+    Elexon-time-to-SP conversion in this codebase uses.
+    """
+    if end_dt is not None:
+        end_sd, end_sp = utc_to_settlement(end_dt)
+        d["end_settlement_date"] = end_sd.isoformat()
+        d["end_settlement_period"] = end_sp
+    else:
+        d["end_settlement_date"] = None
+        d["end_settlement_period"] = None
+    return d
+
+
+@app.get("/api/trips/recent")
+async def trips_recent(limit: int = 50):
+    records = await db.fetch_recent_trips(app.state.pool, limit)
+    trips = [_with_affected_sps(_clean_record(r), r["resolved_at"] or r["event_end_time"]) for r in records]
+    return {"trips": trips}
+
+
+@app.get("/api/trips/{trip_id}/revisions")
+async def trip_revisions(trip_id: int):
+    trips = await db.fetch_recent_trips(app.state.pool, 500)
+    trip = next((t for t in trips if t["id"] == trip_id), None)
+    if trip is None or not trip["remit_mrid"]:
+        return {"trip_id": trip_id, "revisions": []}
+    records = await db.fetch_remit_revisions(app.state.pool, trip["remit_mrid"])
+    revisions = [_with_affected_sps(_clean_record(r), r["event_end_time"]) for r in records]
+    return {
+        "trip_id": trip_id, "mrid": trip["remit_mrid"],
+        "start_settlement_date": trip["settlement_date"].isoformat(), "start_settlement_period": trip["settlement_period"],
+        "revisions": revisions,
+    }
+
+
+@app.get("/api/trips/worst-behaviour")
+async def trips_worst_behaviour_graph():
+    """Zapdos-style "Worst Behaviour Plants" data: for each tripped (or
+    just-recovered) unit, its effective MW (`vol`), FPN and MEL across the
+    last-3 .. next-2 settlement periods -- the future part of `vol` is the
+    plant's published plan for coming back. Built by engine/fpn.py's
+    worst_behaviour_series() inside every FPN recompute.
+    """
+    runner: FpnRunner = app.state.fpn_runner
+    units: dict[str, dict] = {}
+    for r in runner.latest_wb_series:
+        u = units.setdefault(r["bm_unit"], {"bm_unit": r["bm_unit"], "fuel_type": r["fuel_type"], "status": r["status"], "series": []})
+        u["series"].append({"t": r["spot_time"], "sp": r["settlement_period"], "fpn": r["fpn"], "mel": r["mel"], "vol": r["vol"]})
+    cur = current_period()
+    return {
+        "computed_at": runner.wb_computed_at.isoformat() if runner.wb_computed_at else None,
+        "current_period": cur.settlement_period,
+        "units": sorted(units.values(), key=lambda u: (u["status"] != "tripped", u["bm_unit"])),
+    }
+
+
+@app.get("/api/trips/mel-plan")
+async def trips_mel_plan(bm_unit: str):
+    """How `bm_unit`'s MEL (its plan for coming back) has changed with each
+    notification since it tripped -- see engine/mel_plan.py."""
+    from ..engine.mel_plan import mel_vintages
+
+    runner: FpnRunner = app.state.fpn_runner
+    now = datetime.now(timezone.utc)
+    trips = [t for t in await db.fetch_recent_trips(app.state.pool, 200) if t["bm_unit"] == bm_unit]
+    trip_at = trips[0]["detected_at"] if trips else now - timedelta(hours=3)
+    vintages = mel_vintages(runner.shared_buffers.frame("mel"), bm_unit, trip_at)
+    fpn = [
+        {"t": r["spot_time"], "fpn": r["fpn"]}
+        for r in runner.latest_wb_series if r["bm_unit"] == bm_unit
+    ]
+    return {"bm_unit": bm_unit, "trip_at": trip_at.strftime("%Y-%m-%dT%H:%M:%SZ"), "vintages": vintages, "fpn": fpn}
+
+
+@app.get("/api/trips/worst-behavior")
+async def trips_worst_behavior():
+    records = await db.fetch_worst_behavior_profile(app.state.pool)
+    return {"units": [_clean_record(r) for r in records]}
+
+
+@app.get("/api/fundies/real-time")
+async def fundies_real_time(settlement_date: date | None = None):
+    sd = settlement_date or current_period().settlement_date
+    records = await db.fundies_real_time_for_date(app.state.pool, sd)
+    return {"settlement_date": sd.isoformat(), "rows": [_clean_record(r) for r in records]}
+
+
+@app.get("/api/fundies/day-ahead")
+async def fundies_day_ahead(settlement_date: date | None = None):
+    sd = settlement_date or current_period().settlement_date
+    records = await db.fundies_day_ahead_for_date(app.state.pool, sd)
+    return {"settlement_date": sd.isoformat(), "rows": [_clean_record(r) for r in records]}
+
+
+@app.get("/api/fundies/interconnectors")
+async def fundies_interconnectors(settlement_date: date | None = None):
+    """Per-pair SCHEDULED flow series (ENTSO-E's 7 pairs + SEMO's 3) plus
+    the REAL (FUELHH-metered) flow for the same pairs on `settlement_date`
+    (defaults to today) -- backs the interconnector graphs page's
+    scheduled-vs-real overlay.
+    """
+    sd = settlement_date or current_period().settlement_date
+    entsoe_rows = await db.fundies_cache_rows(app.state.pool, "fundies_entsoe_flows", [sd])
+    semo_rows = await db.fundies_cache_rows(app.state.pool, "fundies_semo_flows", [sd])
+    real_rows = await db.fundies_real_time_for_date(app.state.pool, sd)
+    return {
+        "settlement_date": sd.isoformat(),
+        "entsoe": [_clean_record(r) for r in entsoe_rows],
+        "semo": [_clean_record(r) for r in semo_rows],
+        "real": [_clean_record(r) for r in real_rows],
+    }
+
+
+@app.websocket("/ws/fundies")
+async def ws_fundies(websocket: WebSocket):
+    broadcaster: FundiesBroadcaster = app.state.fundies_broadcaster
+    await broadcaster.connect(websocket)
+    try:
+        while True:
+            await websocket.receive_text()  # clients don't send anything meaningful; just keeps the connection open
+    except WebSocketDisconnect:
+        pass
+    finally:
+        await broadcaster.disconnect(websocket)
+
+
+@app.get("/api/all-plants-boalf")
+async def all_plants_boalf():
+    """The current in-memory rolling window (no DB table -- see
+    engine/stack.py's exploded_boalf_by_unit() docstring) for a fresh
+    page's first paint, before its own WebSocket delivers the first push.
+    """
+    cur = current_period()
+    df = app.state.runner.latest_exploded_boalf
+    if df.empty:
+        return {"rows": [], "live_settlement_date": cur.settlement_date.isoformat(), "live_settlement_period": cur.settlement_period}
+    rows = [
+        {
+            "settlement_date": r.settlementDate.isoformat() if hasattr(r.settlementDate, "isoformat") else str(r.settlementDate),
+            "settlement_period": int(r.settlementPeriod),
+            "bmUnit": r.bmUnit,
+            "spot_time": r.spot_time.isoformat(),
+            "delta": float(r.delta),
+            "fuel_bucket": r.fuel_bucket,
+        }
+        for r in df.itertuples()
+    ]
+    return {"rows": rows, "live_settlement_date": cur.settlement_date.isoformat(), "live_settlement_period": cur.settlement_period}
+
+
+@app.websocket("/ws/all-plants-boalf")
+async def ws_all_plants_boalf(websocket: WebSocket):
+    broadcaster: ExplodedBoalfBroadcaster = app.state.exploded_boalf_broadcaster
+    await broadcaster.connect(websocket)
+    try:
+        while True:
+            await websocket.receive_text()  # clients don't send anything meaningful; just keeps the connection open
+    except WebSocketDisconnect:
+        pass
+    finally:
+        await broadcaster.disconnect(websocket)
+
+
 app.mount("/static", StaticFiles(directory=str(WEB_DIR)), name="static")
 
 
 @app.get("/")
 async def index():
-    return FileResponse(str(WEB_DIR / "index.html"))
+    # FPN Analytics is the default landing page (per user request) -- the
+    # original pricing-stack page moved to its own path below rather than
+    # disappearing.
+    return FileResponse(str(WEB_DIR / "fpn.html"))
 
 
 @app.get("/fpn")
 async def fpn_page():
     return FileResponse(str(WEB_DIR / "fpn.html"))
+
+
+@app.get("/pricing-stack")
+async def pricing_stack_page():
+    return FileResponse(str(WEB_DIR / "index.html"))
+
+
+@app.get("/fundies")
+async def fundies_page():
+    return FileResponse(str(WEB_DIR / "fundies.html"))
+
+
+@app.get("/fundies-graphs")
+async def fundies_graphs_page():
+    return FileResponse(str(WEB_DIR / "fundies-graphs.html"))
+
+
+@app.get("/interconnectors")
+async def interconnectors_page():
+    return FileResponse(str(WEB_DIR / "interconnectors.html"))
+
+
+@app.get("/all-plants-boalf")
+async def all_plants_boalf_page():
+    return FileResponse(str(WEB_DIR / "all-plants-boalf.html"))
+
+
+@app.get("/trips")
+async def trips_page():
+    return FileResponse(str(WEB_DIR / "trips.html"))
+
+
+@app.get("/bm-stack")
+async def bm_stack_page():
+    return FileResponse(str(WEB_DIR / "bm-stack.html"))
+
+
+@app.get("/api/bm-stack")
+async def bm_stack():
+    """The current in-memory BM Stack snapshot (see engine/bm_stack.py):
+    untouched bids/offers for the last 3 .. next 2 settlement periods.
+    `enabled: false` where BM_STACK_ENABLED is off (prod until promoted).
+    """
+    if not settings.bm_stack_enabled:
+        return {"enabled": False, "computed_at": None, "periods": [], "rows": []}
+    runner: FpnRunner = app.state.fpn_runner
+    rows = runner.latest_bm_stack
+    periods = sorted({(r["settlement_date"], r["settlement_period"]) for r in rows})
+    cur = current_period()
+    return {
+        "enabled": True,
+        "current": {"settlement_date": cur.settlement_date.isoformat(), "settlement_period": cur.settlement_period},
+        "computed_at": runner.bm_stack_computed_at.isoformat() if runner.bm_stack_computed_at else None,
+        "periods": [{"settlement_date": sd, "settlement_period": sp} for sd, sp in periods],
+        "rows": rows,
+    }

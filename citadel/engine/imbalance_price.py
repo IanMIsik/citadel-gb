@@ -81,24 +81,25 @@ def _de_minimis(tags: list[_Tag]) -> list[_Tag]:
     a known, deliberate simplification, not a literal reading).
 
     An acceptance-level version (grouping every band fragment of the same
-    originating action together before testing DMAT) was tried IN THIS
-    function and reverted: it measurably closed the gap between our
-    displayed NIV and Elexon's own reported netImbalanceVolume on several
-    real periods, but on another real period (SP40, 2026-09-18) it
-    rescued two genuinely real, larger acceptances that our own BOD-band
-    split had spread across several price levels -- and PAR Tagging is
-    sensitive enough to exactly which price levels hold volume that
-    adding that (correctly totalled) volume back in at OUR band-split's
-    price points displaced the action that was actually setting the real
-    settlement price, turning an exact match into a real, confirmed price
-    regression.
-
-    compute_niv() below fixes the DISPLAY gap the acceptance-level version
-    was chasing without that risk, precisely by NOT touching this function
-    (or _arbitrage()/_niv_tag(), which compute_imbalance_price() also
-    still calls unchanged) -- it's a separate, standalone calculation used
-    only for the `total_delta` shown to the user, deliberately never fed
-    back into pricing.
+    originating action together before testing DMAT) was tried and
+    reverted: it measurably closed the gap between our displayed NIV
+    (`total_delta`, the raw pre-tagging sum) and Elexon's own reported
+    netImbalanceVolume on several real periods, but on another real period
+    (SP40, 2026-09-18) it rescued two genuinely real, larger acceptances
+    that our own BOD-band split had spread across several price levels --
+    and PAR Tagging is sensitive enough to exactly which price levels hold
+    volume that adding that (correctly totalled) volume back in at OUR
+    band-split's price points displaced the action that was actually
+    setting the real settlement price, turning an exact match into a
+    real, confirmed price regression. A follow-up, fully decoupled
+    display-only NIV calculation (never touching this function) was also
+    tried and later reverted at the user's request, reverting `total_delta`
+    back to the plain raw sum shown here. The per-row NIV gap (0.6-1 MWh,
+    more on a small-NIV period) is a real, understood, and bounded side
+    effect of the same known simplification; fixing it safely would need
+    our own BOD-band splitting to match Elexon's own price-level
+    distribution more closely first, not just a smarter DMAT check
+    downstream of it.
     """
     return [t for t in tags if t.vol >= DMAT]
 
@@ -255,38 +256,3 @@ def compute_imbalance_price(
 
     contributions = {id(t.ref): t.par_vol * t.priced_at / PAR for t in survivors if t.par_vol > 0}
     return price, contributions
-
-
-def compute_niv(rows: list[dict]) -> float:
-    """This period's Net Imbalance Volume, for DISPLAY purposes only --
-    deliberately independent from compute_imbalance_price()'s own pricing
-    pipeline (does not call _de_minimis()/_arbitrage()/_niv_tag(), and
-    mutates nothing those functions touch), so it's safe to compute this
-    more accurately than the raw per-row sum without any risk of the kind
-    of price regression _de_minimis()'s own docstring describes.
-
-    An optional 'acceptance_key' per row groups BOD-band fragments of the
-    SAME originating acceptance (see engine/stack.py's own caller) so De
-    Minimis Tagging is checked against a whole acceptance's total volume,
-    matching the guide's actual definition -- a row without one defaults
-    to its own standalone group. Arbitrage Tagging is deliberately NOT
-    replicated here: it always removes EQUAL volume from both sides, so
-    it can only ever change which individual actions survive, never the
-    net NIV (offer_total - bid_total) itself -- confirmed on real data
-    that it doesn't fire at all for the periods checked, but the identity
-    holds regardless.
-    """
-    if not rows:
-        return 0.0
-    offer_totals: dict[object, float] = {}
-    bid_totals: dict[object, float] = {}
-    for i, r in enumerate(rows):
-        delta = float(r["delta"])
-        key = r.get("acceptance_key", i)
-        if delta > 0:
-            offer_totals[key] = offer_totals.get(key, 0.0) + delta
-        elif delta < 0:
-            bid_totals[key] = bid_totals.get(key, 0.0) + abs(delta)
-    offer_total = sum(v for v in offer_totals.values() if v >= DMAT)
-    bid_total = sum(v for v in bid_totals.values() if v >= DMAT)
-    return offer_total - bid_total

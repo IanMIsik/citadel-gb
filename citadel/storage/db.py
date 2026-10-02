@@ -33,6 +33,7 @@ class StackRow:
     stor_flag: bool
     deemed_bo_flag: bool
     so_flag: bool
+    cadl_flag: bool
     acceptance_number: int
     reversal: float
     ap_mult_vol: float
@@ -153,15 +154,15 @@ async def replace_period_rows(pool: asyncpg.Pool, sd: date, sp: int, rows: list[
                 """
                 INSERT INTO pricing_stack_rows (
                     settlement_date, settlement_period, bm_unit, stor_flag, deemed_bo_flag,
-                    so_flag, acceptance_number, reversal, ap_mult_vol, delta, vol_to_price,
+                    so_flag, cadl_flag, acceptance_number, reversal, ap_mult_vol, delta, vol_to_price,
                     disbsad_cost, m_orig_price, total_delta, delta_sign, action_sign,
                     vol_for_price, misik_imb_price, total_misik_price, max_ta, computed_at
-                ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
+                ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
                 """,
                 [
                     (
                         r.settlement_date, r.settlement_period, r.bm_unit, r.stor_flag, r.deemed_bo_flag,
-                        r.so_flag, r.acceptance_number, r.reversal, r.ap_mult_vol, r.delta, r.vol_to_price,
+                        r.so_flag, r.cadl_flag, r.acceptance_number, r.reversal, r.ap_mult_vol, r.delta, r.vol_to_price,
                         r.disbsad_cost, r.m_orig_price, r.total_delta, r.delta_sign, r.action_sign,
                         r.vol_for_price, r.misik_imb_price, r.total_misik_price, r.max_ta, ts,
                     )
@@ -482,13 +483,34 @@ async def fpn_market_gen_vs_adj_fpn_series(pool: asyncpg.Pool, sd: date, periods
     )
 
 
-async def fpn_worst_deviants_current(pool: asyncpg.Pool) -> list[asyncpg.Record]:
+async def fpn_worst_deviants_current(pool: asyncpg.Pool, window: list[tuple[date, int]]) -> list[asyncpg.Record]:
     """Every worst-deviant row currently in the window (spans whichever
     settlement periods are still in scope), most recent minute first per
     unit -- there's no single "period" a trader is asking about here,
     unlike the other FPN views.
+
+    Explicitly filtered to `window` (the caller's own `rolling_window()`)
+    rather than a bare `SELECT *` -- confirmed live that a period falling
+    out of the rolling window is never revisited by the recompute cycle's
+    own delete+reinsert (`replace_fpn_period_rows` only touches keys it's
+    actively recomputing this cycle), so its rows just sit in the table
+    forever. Without this filter the dashboard showed days-old rows
+    indefinitely, mixed in with -- and often ranked ahead of, since this
+    has no ORDER BY severity -- genuinely current ones.
     """
-    return await pool.fetch("SELECT * FROM fpn_worst_deviants ORDER BY bm_unit, spot_time DESC")
+    if not window:
+        return []
+    dates = [sd for sd, _ in window]
+    periods = [sp for _, sp in window]
+    return await pool.fetch(
+        """
+        SELECT w.* FROM fpn_worst_deviants w
+        JOIN UNNEST($1::date[], $2::int[]) AS win(settlement_date, settlement_period)
+          ON w.settlement_date = win.settlement_date AND w.settlement_period = win.settlement_period
+        ORDER BY w.bm_unit, w.spot_time DESC
+        """,
+        dates, periods,
+    )
 
 
 async def upsert_fpn_generation_by_fuel(pool: asyncpg.Pool, rows: list[dict]) -> int:
@@ -514,3 +536,215 @@ async def prune_fpn_generation_by_fuel(pool: asyncpg.Pool, older_than: datetime)
 
 async def fpn_generation_by_fuel_recent(pool: asyncpg.Pool, since: datetime) -> list[asyncpg.Record]:
     return await pool.fetch("SELECT * FROM fpn_generation_by_fuel WHERE ts >= $1 ORDER BY ts", since)
+
+
+# ---------------------------------------------------------------------------
+# Fundies -- see engine/fundies.py. The two main tables reuse
+# replace_fpn_period_rows() above (same PK shape: settlement_date,
+# settlement_period). The five cache tables below replace the notebook's
+# own Drive pickles (scheduled_flows.pkl, semo_flows.pkl, imbalngc_data.pkl,
+# natgrid_embedded_data.pkl, epex_da_data.pkl) with real upserts -- each
+# dataset's own FundiesRunner loop writes to its cache table on its own
+# interval; every recompute reads all five regardless of which one(s) just
+# ticked, so a slower-refreshing source doesn't blank out between its own
+# writes (same "combine_first survives a failed fetch" resilience the
+# notebook's pickles gave it, via ON CONFLICT DO UPDATE instead of a file).
+# ---------------------------------------------------------------------------
+
+FUNDIES_REAL_TIME_COLUMNS = [
+    "settlement_date", "settlement_period", "latest_ndf", "latestwindfor", "indo",
+    "wind_ot", "shut_volume", "total_wind_outturn",
+    "itso", "pv_live", "net_imbalance_volume", "system_buy_price", "buy_price_adjustment",
+    "sell_price_adjustment", "market_index_price", "market_index_volume", "ng_vol",
+    "real_ifa_net", "real_ifa2_net", "real_eleclink_net", "real_nl_net", "real_be_net",
+    "real_norway_net", "real_dk_net", "real_ew_net", "real_moyle_net", "real_grnl_net",
+    "imbalngc",
+]
+
+FUNDIES_DAY_AHEAD_COLUMNS = [
+    "settlement_date", "settlement_period", "da_ndf", "da_windfor",
+    "eleclink_net", "uk_ifa_net", "uk_ifa2_net", "uk_nl_net", "uk_be_net", "uk_norway_net", "uk_dk_net",
+    "nuke_214", "intew_net", "intmoyle_net", "intgrnl_net",
+    "embedded_wind_forecast", "embedded_solar_forecast", "da_price", "da_volume",
+    "indo_da_ndf_delta", "fake_wind_ot_da_winfor_delta", "domestic_tight_delta", "interconnector_ng", "latest_resid",
+]
+
+FUNDIES_ENTSOE_FLOWS_COLUMNS = ["eleclink_net", "uk_ifa_net", "uk_ifa2_net", "uk_nl_net", "uk_be_net", "uk_norway_net", "uk_dk_net"]
+FUNDIES_SEMO_FLOWS_COLUMNS = ["intew_net", "intmoyle_net", "intgrnl_net"]
+FUNDIES_IMBALNGC_COLUMNS = ["imbalngc"]
+FUNDIES_EMBEDDED_FORECAST_COLUMNS = ["embedded_wind_forecast", "embedded_solar_forecast"]
+FUNDIES_EPEX_DA_COLUMNS = ["da_price", "da_volume"]
+
+
+async def upsert_fundies_cache(pool: asyncpg.Pool, table: str, value_columns: list[str], rows: list[dict]) -> int:
+    """Generic upsert for the five Fundies cache tables above -- all share
+    the same (settlement_date, settlement_period) PK plus `updated_at`,
+    differing only in their value columns.
+    """
+    if not rows:
+        return 0
+    ts = datetime.now(timezone.utc)
+    columns = ["settlement_date", "settlement_period"] + value_columns
+    col_list = ", ".join(columns + ["updated_at"])
+    placeholders = ", ".join(f"${i + 1}" for i in range(len(columns) + 1))
+    # COALESCE keeps the previously stored value whenever the new row has
+    # NULL there -- e.g. ENTSO-E timing out for one interconnector pair
+    # leaves that pair's column missing from the fetch, and without this the
+    # upsert would blank the last good scheduled flow with NULL.
+    update_set = ", ".join(f"{c} = COALESCE(excluded.{c}, {table}.{c})" for c in value_columns) + ", updated_at = excluded.updated_at"
+    await pool.executemany(
+        f"""
+        INSERT INTO {table} ({col_list}) VALUES ({placeholders})
+        ON CONFLICT (settlement_date, settlement_period) DO UPDATE SET {update_set}
+        """,  # noqa: S608 -- table/columns are internal constants, never user input
+        [tuple(r.get(c) for c in columns) + (ts,) for r in rows],
+    )
+    return len(rows)
+
+
+async def fundies_cache_rows(pool: asyncpg.Pool, table: str, sds: list[date]) -> list[asyncpg.Record]:
+    return await pool.fetch(
+        f"SELECT * FROM {table} WHERE settlement_date = ANY($1::date[])",  # noqa: S608
+        sds,
+    )
+
+
+async def fundies_epex_existing_delivery_dates(pool: asyncpg.Pool) -> set[date]:
+    """Every delivery date already stored -- feeds
+    epex.should_fetch_da_prices()'s "is this delivery date already
+    fetched" check, so a cleared auction stops being re-scraped.
+    """
+    rows = await pool.fetch("SELECT DISTINCT settlement_date FROM fundies_epex_da")
+    return {r["settlement_date"] for r in rows}
+
+
+async def fundies_real_time_for_date(pool: asyncpg.Pool, sd: date) -> list[asyncpg.Record]:
+    return await pool.fetch("SELECT * FROM fundies_real_time WHERE settlement_date = $1 ORDER BY settlement_period", sd)
+
+
+async def fundies_day_ahead_for_date(pool: asyncpg.Pool, sd: date) -> list[asyncpg.Record]:
+    return await pool.fetch("SELECT * FROM fundies_day_ahead WHERE settlement_date = $1 ORDER BY settlement_period", sd)
+
+
+# ---------------------------------------------------------------------------
+# Plant trip detector + REMIT
+# ---------------------------------------------------------------------------
+
+async def insert_trip_events(pool: asyncpg.Pool, trips: list) -> int:
+    """Pure append -- unlike replace_fpn_period_rows's delete+insert window,
+    trips need durable history (the worst-behavior profile looks back over
+    it), so this never deletes anything. `trips` are engine/fpn.py's
+    TripEvent dataclass instances.
+    """
+    if not trips:
+        return 0
+    await pool.executemany(
+        """
+        INSERT INTO trip_events (bm_unit, fuel_type, settlement_date, settlement_period, drop_mw, detected_at)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        """,
+        [(t.bm_unit, t.fuel_type, t.settlement_date, t.settlement_period, t.drop_mw, t.detected_at) for t in trips],
+    )
+    return len(trips)
+
+
+async def fetch_open_trips(pool: asyncpg.Pool) -> list[asyncpg.Record]:
+    return await pool.fetch("SELECT * FROM trip_events WHERE status != 'resolved' ORDER BY detected_at DESC")
+
+
+async def fetch_recent_trips(pool: asyncpg.Pool, limit: int = 50) -> list[asyncpg.Record]:
+    return await pool.fetch(
+        """
+        SELECT t.*, r.event_end_time, r.event_status, r.unavailable_capacity, r.available_capacity, r.normal_capacity
+        FROM trip_events t
+        LEFT JOIN LATERAL (
+            SELECT * FROM remit_revisions rr WHERE rr.mrid = t.remit_mrid ORDER BY rr.revision_number DESC LIMIT 1
+        ) r ON true
+        ORDER BY t.detected_at DESC LIMIT $1
+        """,
+        limit,
+    )
+
+
+async def set_trip_remit_match(pool: asyncpg.Pool, trip_id: int, mrid: str) -> None:
+    await pool.execute("UPDATE trip_events SET remit_mrid = $1, status = 'matched' WHERE id = $2", mrid, trip_id)
+
+
+async def resolve_trip(pool: asyncpg.Pool, trip_id: int, resolved_at: datetime) -> None:
+    await pool.execute("UPDATE trip_events SET status = 'resolved', resolved_at = $1 WHERE id = $2", resolved_at, trip_id)
+
+
+async def resolve_open_trips_for_unit(pool: asyncpg.Pool, bm_unit: str, resolved_at: datetime) -> None:
+    """The unit's MIL/MEL drop has cleared (engine/fpn.py's detect_trips full
+    recovery) -- close every still-open trip row for it."""
+    await pool.execute(
+        "UPDATE trip_events SET status = 'resolved', resolved_at = $1 WHERE bm_unit = $2 AND status != 'resolved'",
+        resolved_at, bm_unit,
+    )
+
+
+async def upsert_remit_revisions(pool: asyncpg.Pool, revisions: list[dict]) -> int:
+    """One row per revision, `ON CONFLICT DO UPDATE` only to make repeated
+    polls idempotent (a revision's own fields never actually change once
+    published) -- never deletes, so the full history stays queryable for
+    the worst-behavior profile.
+    """
+    if not revisions:
+        return 0
+    ts = datetime.now(timezone.utc)
+    cols = [
+        "mrid", "revision_number", "message_id", "asset_id", "fuel_type", "event_status",
+        "event_start_time", "event_end_time", "normal_capacity", "available_capacity",
+        "unavailable_capacity", "publish_time", "cause",
+    ]
+    col_list = ", ".join(cols + ["fetched_at"])
+    placeholders = ", ".join(f"${i + 1}" for i in range(len(cols) + 1))
+    update_set = ", ".join(f"{c} = excluded.{c}" for c in cols if c not in ("mrid", "revision_number"))
+    await pool.executemany(
+        f"""
+        INSERT INTO remit_revisions ({col_list}) VALUES ({placeholders})
+        ON CONFLICT (mrid, revision_number) DO UPDATE SET {update_set}, fetched_at = excluded.fetched_at
+        """,
+        [tuple(r.get(c) for c in cols) + (ts,) for r in revisions],
+    )
+    return len(revisions)
+
+
+async def fetch_remit_revisions(pool: asyncpg.Pool, mrid: str) -> list[asyncpg.Record]:
+    return await pool.fetch("SELECT * FROM remit_revisions WHERE mrid = $1 ORDER BY revision_number", mrid)
+
+
+async def fetch_worst_behavior_profile(pool: asyncpg.Pool) -> list[asyncpg.Record]:
+    """Per bm_unit: how many outages, how many revisions each averaged, and
+    how far the expected return time (eventEndTime) slipped between a
+    unit's first and last revision of the same outage -- the "worst
+    behavior" leaderboard for the new Trips page, ranked worst-first.
+    """
+    return await pool.fetch(
+        """
+        WITH per_mrid AS (
+            SELECT
+                mrid,
+                asset_id,
+                MAX(fuel_type) AS fuel_type,
+                COUNT(*) AS revision_count,
+                (array_agg(event_end_time ORDER BY revision_number ASC))[1] AS first_end_time,
+                (array_agg(event_end_time ORDER BY revision_number DESC))[1] AS last_end_time,
+                (array_agg(event_status ORDER BY revision_number DESC))[1] AS final_status
+            FROM remit_revisions
+            GROUP BY mrid, asset_id
+        )
+        SELECT
+            asset_id AS bm_unit,
+            fuel_type,
+            COUNT(*) AS outage_count,
+            AVG(revision_count) AS avg_revisions,
+            AVG(EXTRACT(EPOCH FROM (last_end_time - first_end_time)) / 3600.0) AS avg_slippage_hours,
+            MAX(EXTRACT(EPOCH FROM (last_end_time - first_end_time)) / 3600.0) AS worst_slippage_hours,
+            SUM(CASE WHEN last_end_time > first_end_time THEN 1 ELSE 0 END) AS times_slipped_later
+        FROM per_mrid
+        WHERE first_end_time IS NOT NULL AND last_end_time IS NOT NULL
+        GROUP BY asset_id, fuel_type
+        ORDER BY avg_slippage_hours DESC NULLS LAST
+        """
+    )

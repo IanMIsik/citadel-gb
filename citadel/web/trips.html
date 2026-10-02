@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Citadel — Plant Trips</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+</head>
+<body>
+  <header>
+    <h1>Plant Trips</h1>
+    <span id="env-badge" class="env-badge hidden"></span>
+    <span id="connection-status" class="disconnected">connecting…</span>
+  </header>
+  <nav class="top-nav">
+    <a href="/fpn" target="citadel-fpn" rel="noopener">FPN Analytics</a>
+    <a href="/pricing-stack" target="citadel-pricing-stack" rel="noopener">Pricing Stack</a>
+    <a href="/fundies" target="citadel-fundies" rel="noopener">Fundies</a>
+    <a href="/fundies-graphs" target="citadel-fundies-graphs" rel="noopener">Fundies Graphs</a>
+    <a href="/all-plants-boalf" target="citadel-all-plants-boalf" rel="noopener">All Plants BOALF</a>
+    <a href="/trips" class="active">Plant Trips</a>
+    <a href="/bm-stack" target="citadel-bm-stack" rel="noopener">BM Stack</a>
+  </nav>
+
+  <!-- Detects a plant trip the moment a single BM unit's MIL/MEL constraint
+       drop crosses 50MW (engine/fpn.py's detect_trips()), then cross-checks
+       Elexon's own REMIT outage messages (ingest/remit.py) for that unit to
+       show the expected return time and every revision it goes through --
+       the trip itself alerts on the FPN page (fpn.js's toast+sound), this
+       page is the durable record: what tripped, whether REMIT's confirmed
+       it, how its own return-time estimate has moved, and (via the worst
+       behavior profile) which units chronically revise that estimate later
+       than first promised. -->
+  <main id="trips-page">
+    <div class="fpn-card wide">
+      <h2>Open &amp; recent trips</h2>
+      <div class="fpn-table-wrap">
+        <table id="trips-table">
+          <thead>
+            <tr>
+              <th>BM Unit</th><th>Fuel</th><th>Drop</th><th>Detected</th>
+              <th>Status</th><th>SPs affected</th><th>REMIT expected back</th><th>Capacity</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p class="trips-hint">Click a row to see its REMIT revision history.</p>
+      <div id="trip-revisions"></div>
+    </div>
+
+    <!-- Worst-behaviour graphs (Zapdos' "Worst Behaviour Plants" chart plus the
+         MEL history Zapdos never had) -- see web/trips.js. -->
+    <div class="fpn-card wide">
+      <h2>Worst behaviour &mdash; plants coming back</h2>
+      <p class="trips-hint">Effective MW (FPN limited by MEL/MIL) of every tripped or just-recovered plant, last 3 to next 2 settlement periods. The right-hand side (after the dashed "now" line) is each plant's <strong>published plan</strong> for coming back.</p>
+      <div class="wb-canvas-wrap"><canvas id="wb-chart"></canvas></div>
+      <p id="wb-empty" class="trips-hint"></p>
+    </div>
+
+    <div class="fpn-card wide">
+      <h2>Return plan &mdash; MEL history <select id="mel-plan-unit"></select></h2>
+      <p class="trips-hint">Each line is the plant's MEL as it stood after one of its MEL notifications since the trip (older = darker). Lines drifting right mean the plant keeps pushing its return later. Dashed white = FPN, dashed red = trip detected. MEL data held covers roughly &plusmn;2 hours.</p>
+      <div class="wb-canvas-wrap"><canvas id="mel-plan-chart"></canvas></div>
+      <p id="mel-plan-empty" class="trips-hint"></p>
+    </div>
+
+    <div class="fpn-card wide">
+      <h2>Worst behavior profile</h2>
+      <p class="trips-hint">Units ranked by how far their own REMIT return-time estimate has slipped between the first and the last revision of an outage -- a chronic late-revisor here means "treat this unit's REMIT return time with caution."</p>
+      <div class="fpn-table-wrap">
+        <table id="worst-behavior-table">
+          <thead>
+            <tr>
+              <th>BM Unit</th><th>Fuel</th><th>Outages</th><th>Avg revisions</th>
+              <th>Avg slip</th><th>Worst slip</th><th>Times slipped later</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </main>
+
+  <script src="/static/trips.js"></script>
+</body>
+</html>

@@ -6,15 +6,26 @@
   <title>Citadel — FPN Analytics</title>
   <link rel="stylesheet" href="/static/style.css" />
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
 </head>
 <body>
   <header>
     <h1>FPN Analytics</h1>
+    <span id="env-badge" class="env-badge hidden"></span>
     <span id="connection-status" class="disconnected">connecting…</span>
   </header>
   <nav class="top-nav">
-    <a href="/">Pricing Stack</a>
-    <a href="/fpn" class="active">FPN Analytics</a>
+    <a href="/" class="active">FPN Analytics</a>
+    <!-- Named targets (not "_blank") -- clicking one of these again reuses
+         the same tab it already opened instead of spawning a new one each
+         time, since browsers route a link to an EXISTING window/tab whose
+         name matches its own target rather than always opening fresh. -->
+    <a href="/pricing-stack" target="citadel-pricing-stack" rel="noopener">Pricing Stack</a>
+    <a href="/fundies" target="citadel-fundies" rel="noopener">Fundies</a>
+    <a href="/fundies-graphs" target="citadel-fundies-graphs" rel="noopener">Fundies Graphs</a>
+    <a href="/all-plants-boalf" target="citadel-all-plants-boalf" rel="noopener">All Plants BOALF</a>
+    <a href="/trips" target="citadel-trips" rel="noopener">Plant Trips</a>
+    <a href="/bm-stack" target="citadel-bm-stack" rel="noopener">BM Stack</a>
   </nav>
 
   <main id="fpn-page">
@@ -44,6 +55,121 @@
             <table id="tbl-decision-drivers">
               <thead><tr></tr></thead>
               <tbody></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Decision table: validated on dev, now live on prod too -- ported
+             from the real Zapdos app source. The row/column structure below
+             is copied directly from the real markup found in
+             `Old World/zapdos_extracted/app_source/src/views/index.html`'s
+             `.decision-table-container`: one row per driver, each scenario
+             contributing an "Input" column immediately followed by its own
+             "Vs now" column in that SAME row (not a separate row underneath),
+             repeated x3 -- exactly the real table's own layout, not a
+             reconstruction. Card is a plain `.fpn-card` (no `wide`, matching
+             the real source's own 348px `.card`) to match the Delta table
+             directly above it, and placed right below it per the user's
+             request. Formulas themselves come from decision-table/data-utils.js
+             + index.js (see fpn.js's renderDecisionColumn()), since this
+             page's IDs are our own, not lifted from that JS file's IDs. -->
+        <div class="fpn-card" id="decision-table-card">
+          <p class="gen-title text-center">Decision table</p>
+          <div class="fpn-table-wrap">
+            <table id="decision-input-table">
+              <thead>
+                <tr>
+                  <th rowspan="2">Metric</th>
+                  <th colspan="2">Scenario 1</th>
+                  <th colspan="2">Scenario 2</th>
+                  <th colspan="2">Scenario 3</th>
+                </tr>
+                <tr>
+                  <th>Input</th><th>Vs now</th>
+                  <th>Input</th><th>Vs now</th>
+                  <th>Input</th><th>Vs now</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Settlement period</td>
+                  <td><input type="number" id="sp-input-1" class="decision-input" data-col="1"></td>
+                  <td></td>
+                  <td><input type="number" id="sp-input-2" class="decision-input" data-col="2"></td>
+                  <td></td>
+                  <td><input type="number" id="sp-input-3" class="decision-input" data-col="3"></td>
+                  <td></td>
+                </tr>
+                <tr>
+                  <td>FC AUC</td>
+                  <td id="fcauc-1">--</td><td></td>
+                  <td id="fcauc-2">--</td><td></td>
+                  <td id="fcauc-3">--</td><td></td>
+                </tr>
+                <tr>
+                  <td>Wind</td>
+                  <td><input type="number" id="wind-input-1" class="decision-input" data-col="1"></td>
+                  <td id="wind-text-1">--</td>
+                  <td><input type="number" id="wind-input-2" class="decision-input" data-col="2"></td>
+                  <td id="wind-text-2">--</td>
+                  <td><input type="number" id="wind-input-3" class="decision-input" data-col="3"></td>
+                  <td id="wind-text-3">--</td>
+                </tr>
+                <tr>
+                  <td>Other gen</td>
+                  <td><input type="number" id="othergen-input-1" class="decision-input" data-col="1"></td>
+                  <td id="othergen-text-1">--</td>
+                  <td><input type="number" id="othergen-input-2" class="decision-input" data-col="2"></td>
+                  <td id="othergen-text-2">--</td>
+                  <td><input type="number" id="othergen-input-3" class="decision-input" data-col="3"></td>
+                  <td id="othergen-text-3">--</td>
+                </tr>
+                <tr>
+                  <td>Dmd</td>
+                  <td><input type="number" id="dmd-input-1" class="decision-input" data-col="1"></td>
+                  <td id="dmd-text-1">--</td>
+                  <td><input type="number" id="dmd-input-2" class="decision-input" data-col="2"></td>
+                  <td id="dmd-text-2">--</td>
+                  <td><input type="number" id="dmd-input-3" class="decision-input" data-col="3"></td>
+                  <td id="dmd-text-3">--</td>
+                </tr>
+                <tr>
+                  <td>Unexp</td>
+                  <td><input type="number" id="unexp-input-1" class="decision-input" data-col="1"></td>
+                  <td id="unexp-text-1">--</td>
+                  <td><input type="number" id="unexp-input-2" class="decision-input" data-col="2"></td>
+                  <td id="unexp-text-2">--</td>
+                  <td><input type="number" id="unexp-input-3" class="decision-input" data-col="3"></td>
+                  <td id="unexp-text-3">--</td>
+                </tr>
+                <tr>
+                  <td>Non-BM input</td>
+                  <td><input type="number" id="nonbm-input-1" class="decision-input" data-col="1"></td>
+                  <td></td>
+                  <td><input type="number" id="nonbm-input-2" class="decision-input" data-col="2"></td>
+                  <td></td>
+                  <td><input type="number" id="nonbm-input-3" class="decision-input" data-col="3"></td>
+                  <td></td>
+                </tr>
+                <tr>
+                  <td>RNP vs FPN</td>
+                  <td id="rnp-text-1">N/A</td><td></td>
+                  <td id="rnp-text-2">N/A</td><td></td>
+                  <td id="rnp-text-3">N/A</td><td></td>
+                </tr>
+                <tr class="total-row">
+                  <td>Total</td>
+                  <td id="col-total-1">--</td><td id="col-vs-now-total-1">--</td>
+                  <td id="col-total-2">--</td><td id="col-vs-now-total-2">--</td>
+                  <td id="col-total-3">--</td><td id="col-vs-now-total-3">--</td>
+                </tr>
+                <tr class="total-row headline-row">
+                  <td>CF NIV</td>
+                  <td id="col-cf-niv-1">--</td><td></td>
+                  <td id="col-cf-niv-2">--</td><td></td>
+                  <td id="col-cf-niv-3">--</td><td></td>
+                </tr>
+              </tbody>
             </table>
           </div>
         </div>
@@ -92,20 +218,29 @@
           <canvas class="chartjs_canvas" id="delta-chart"></canvas>
         </div>
 
-        <!-- Still hidden -- being worked on one at a time. Markup/JS left
-             intact; just drop this wrapper to bring it back. -->
-        <div id="charts-hidden-for-now" style="display: none;">
-          <div class="graph-container big with-legend">
-            <p class="text-center">Market_gen vs Adj_fpn</p>
-            <canvas class="chartjs_canvas" id="market-gen-vs-adj-fpn-chart"></canvas>
-            <ul class="chart-legend" id="market-gen-vs-adj-fpn-legend"></ul>
-          </div>
+        <!-- Market_gen vs Adj_fpn -- the real Zapdos chart of the same name
+             (components/chartjs/max_gen_vs_adj_fpn_chart.js), directly below
+             the Delta Chart as in its own #charts-container: one line per
+             fuel type of (market generation - adjusted FPN), so above zero is
+             over-performance and below zero under-performance. Styling and
+             behaviour follow fpn.js's updateMarketGenChart. -->
+        <div class="graph-container big">
+          <p class="text-center">Market_gen vs Adj_fpn</p>
+          <canvas class="chartjs_canvas" id="market-gen-vs-adj-fpn-chart"></canvas>
         </div>
 
         <div class="fpn-card wide">
           <p class="gen-title text-center">Real Time Generation</p>
           <div class="fpn-table-wrap"><table id="tbl-fuelinst-max"><thead><tr></tr></thead><tbody></tbody></table></div>
         </div>
+
+        <table id="wind-diff-table">
+          <tbody>
+            <tr><td>wind5</td><td data-sign="" id="stat-wind5">--</td></tr>
+            <tr><td>wind15</td><td data-sign="" id="stat-wind15">--</td></tr>
+            <tr><td>wind30</td><td data-sign="" id="stat-wind30">--</td></tr>
+          </tbody>
+        </table>
 
         <div class="decision-summary" id="stat-cards">
           <div class="decision-figure">

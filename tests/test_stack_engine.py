@@ -14,9 +14,13 @@ import pandas as pd
 import pytest
 
 from citadel.engine.stack import (
+    allocate_volumes,
+    build_bod_ladder,
+    build_marginal_deltas,
     compute_cadl_flags,
     compute_stack,
     custom_round,
+    fpn_exploder,
     spot_time_bm_unit_delta_5min,
     spot_time_niv,
     vectorized_exploder,
@@ -45,6 +49,39 @@ def test_vectorized_exploder_empty_input_has_expected_columns():
     out = vectorized_exploder(df)
     assert out.empty
     assert "spot_time" in out.columns and "spot_level" in out.columns
+
+
+def test_fpn_exploder_keeps_only_the_latest_revision_per_minute():
+    """A PN revision that re-declares an overlapping window for the same
+    bmUnit (no explicit publish timestamp exists on the raw feed to sort
+    by, unlike BOALF's acceptanceTime or MEL's notificationTime) must not
+    accumulate alongside the stale one -- confirmed as the actual cause of
+    a real ~2.3x SP24 NIV inflation live (2026-09-29, T_KEAD-2/acceptance
+    46124): WindowBuffers.add()'s IRIS path only dedupes whole-record
+    duplicates, so a stale and a revised PN row for the same minute both
+    survived into this exploder, fanning out build_marginal_deltas()'s
+    BOALF join into two rows per minute instead of one.
+    """
+    pn_df = pd.DataFrame([
+        {"bmUnit": "T_X-1", "timeFrom": "2026-01-01T00:00:00Z", "timeTo": "2026-01-01T00:02:00Z", "levelFrom": 100, "levelTo": 100},
+        # A later-arriving revision of the same window at a different level --
+        # the stale row above should no longer govern either minute.
+        {"bmUnit": "T_X-1", "timeFrom": "2026-01-01T00:00:00Z", "timeTo": "2026-01-01T00:02:00Z", "levelFrom": 40, "levelTo": 40},
+    ])
+    out = fpn_exploder(pn_df)
+    assert len(out) == 2  # one row per minute, not four
+    assert (out["fpn_spot_vol"] == 40).all()
+
+
+def test_build_marginal_deltas_does_not_fan_out_on_a_stale_pn_revision():
+    boalf_df = pd.DataFrame([_flat_acceptance("T_X-1", 140)])
+    pn_df = pd.DataFrame([
+        {"bmUnit": "T_X-1", "timeFrom": "2026-01-01T00:00:00Z", "timeTo": "2026-01-01T00:01:00Z", "levelFrom": 100, "levelTo": 100},
+        {"bmUnit": "T_X-1", "timeFrom": "2026-01-01T00:00:00Z", "timeTo": "2026-01-01T00:01:00Z", "levelFrom": 0, "levelTo": 0},
+    ])
+    out = build_marginal_deltas(boalf_df, pn_df)
+    assert len(out) == 1  # exactly one governing minute, not two
+    assert out["marginal_delta"].iloc[0] == 140  # against the latest PN (0), not the stale one (100)
 
 
 def _flat_acceptance(bm_unit: str, level: float, sd: str = "2026-01-01") -> dict:
@@ -295,11 +332,14 @@ def test_compute_cadl_flags_does_not_flag_a_rolling_series_within_one_long_episo
     assert by_acceptance == {1: False, 2: False, 3: False}
 
 
-def test_compute_cadl_flags_folds_into_so_flag():
-    """compute_stack() must OR the computed CADL flag into `soFlag` itself
-    (per the guide, SO-Flagged and CADL Flagged actions are both First
-    Stage Flagged and get identical downstream treatment) rather than
-    tracking it separately.
+def test_compute_cadl_flags_shown_separately_from_display_so_flag():
+    """The *displayed* `soFlag` column must stay exactly as the raw BOALF
+    dataset carries it (so a CADL-flagged-but-raw-unflagged action shows
+    up on the unflagged side of the stack, per view.py's split_and_sort),
+    with the computed CADL flag visible in its own `cadlFlag` column
+    rather than folded into `soFlag` -- see compute_stack()'s own comment
+    on why Classification/PAR Tagging eligibility still folds CADL in
+    separately, via `firstStageFlag`, without touching this display field.
     """
     sd = "2026-01-01"
     boalf_df = pd.DataFrame([_span_acceptance("T_TEST-1", 1, "00:00:00", "00:05:00", 10.0, sd)])  # isolated 5 min -> CADL flagged
@@ -317,9 +357,10 @@ def test_compute_cadl_flags_folds_into_so_flag():
 
     result = compute_stack(boalf_df, bod_df, pn_df, no_mel, disbsad_df, use_mel_gate=False)
     assert not result.empty
-    # Raw soFlag on the acceptance itself is False -- only the computed
-    # CADL flag should make the resulting row's soFlag True.
-    assert bool(result.iloc[0]["soFlag"]) is True
+    # Raw soFlag on the acceptance itself is False, and stays False here --
+    # the computed CADL flag is visible in its own column instead.
+    assert bool(result.iloc[0]["soFlag"]) is False
+    assert bool(result.iloc[0]["cadlFlag"]) is True
 
 
 def test_reversal_aware_recovers_a_superseded_acceptances_own_reversal():
@@ -392,3 +433,163 @@ def test_reversal_aware_does_not_double_count_a_same_level_revision():
     aware = compute_stack(boalf_df, bod_df, pn_df, no_mel, disbsad_df, use_mel_gate=False)  # reversal_aware is now the default
 
     assert aware["delta"].sum() == pytest.approx(latest["delta"].sum())
+
+
+def test_reversal_side_fix_flag_is_currently_a_no_op():
+    """`reversal_side_fix=True` is accepted (config.py's
+    `reversal_side_fix_enabled` still wires through to it) but does nothing
+    right now -- both tried implementations (override `base_value` only for
+    reversal-flagged rows; override it for every row) were confirmed live
+    to make the computed NIV worse against Elexon's real
+    netImbalanceVolume, not better (see build_marginal_deltas()'s own
+    docstring for the full evidence). Pending a real redesign, the flag is
+    a pass-through so turning it on in .env.dev is safe -- it must produce
+    byte-identical output to leaving it off.
+    """
+    sd = "2026-01-01"
+    boalf_df = pd.DataFrame([
+        _span_acceptance("T_TEST-1", 1, "00:00:00", "00:10:00", -20.0, sd),
+        _span_acceptance("T_TEST-1", 2, "00:10:00", "00:20:00", 10.0, sd),
+    ])
+    pn_df = pd.DataFrame([{
+        "bmUnit": "T_TEST-1", "timeFrom": f"{sd}T00:00:00Z", "timeTo": f"{sd}T00:20:00Z",
+        "levelFrom": 50.0, "levelTo": 50.0, "dataset": "PN", "nationalGridBmUnit": "T_TEST-1",
+        "settlementDate": sd, "settlementPeriod": 1,
+    }])
+
+    without_fix = build_marginal_deltas(boalf_df, pn_df, overlap_resolution="reversal_aware", reversal_side_fix=False)
+    with_fix = build_marginal_deltas(boalf_df, pn_df, overlap_resolution="reversal_aware", reversal_side_fix=True)
+
+    pd.testing.assert_frame_equal(without_fix, with_fix)
+
+
+def test_disaggregate_disbsad_keeps_each_actions_own_price():
+    """Two DISBSAD actions sharing (soFlag=False, storFlag=False): one at
+    GBP100/MWh (2 MWh), one at GBP200/MWh (2 MWh) -- mirrors SP39
+    2026-09-25 in miniature (34 real actions ranging GBP212.50-235.00/MWh,
+    all blended into one row). Without the fix, blend_disbsad() pre-sums
+    them into ONE row at the volume-weighted blend (GBP150/MWh here);
+    PAR Tagging never sees the two real prices. With the fix, both
+    survive as separate disbsad_ rows at their own real price -- confirmed
+    live this reproduces Elexon's actual settlement price exactly on
+    SP33/35/39 2026-09-25 (was off by GBP1.86-4.82/MWh without it).
+    """
+    sd = "2026-01-01"
+    boalf_df = pd.DataFrame([_flat_acceptance("T_TEST-1", 10.0, sd)])
+    pn_df = pd.DataFrame([{
+        "bmUnit": "T_TEST-1", "timeFrom": f"{sd}T00:00:00Z", "timeTo": f"{sd}T00:01:00Z",
+        "levelFrom": 0.0, "levelTo": 0.0, "dataset": "PN", "nationalGridBmUnit": "T_TEST-1",
+        "settlementDate": sd, "settlementPeriod": 1,
+    }])
+    mel_df = pd.DataFrame([{
+        "bmUnit": "T_TEST-1", "timeFrom": f"{sd}T00:00:00Z", "timeTo": f"{sd}T00:01:00Z",
+        "levelFrom": 100.0, "levelTo": 100.0, "dataset": "MELS", "nationalGridBmUnit": "T_TEST-1",
+        "settlementDate": sd, "settlementPeriod": 1, "notificationTime": f"{sd}T00:00:00Z",
+        "notificationSequence": 1,
+    }])
+    bod_df = pd.DataFrame([{
+        "settlementDate": sd, "settlementPeriod": 1, "bmUnit": "T_TEST-1",
+        "bid": -50.0, "offer": 75.0, "levelTo": 20.0, "pairId": 1,
+    }])
+    disbsad_df = pd.DataFrame([
+        {"id": 1, "settlementDate": sd, "settlementPeriod": 1, "soFlag": False, "storFlag": False, "volume": 2.0, "cost": 200.0},
+        {"id": 2, "settlementDate": sd, "settlementPeriod": 1, "soFlag": False, "storFlag": False, "volume": 2.0, "cost": 400.0},
+    ])
+
+    blended = compute_stack(boalf_df, bod_df, pn_df, mel_df, disbsad_df, disaggregate_disbsad=False)
+    disaggregated = compute_stack(boalf_df, bod_df, pn_df, mel_df, disbsad_df, disaggregate_disbsad=True)
+
+    blended_disbsad = blended[blended["bmUnit"].str.startswith("disbsad_")]
+    disaggregated_disbsad = disaggregated[disaggregated["bmUnit"].str.startswith("disbsad_")]
+
+    assert len(blended_disbsad) == 1
+    assert blended_disbsad.iloc[0]["m_orig_price"] == pytest.approx(150.0)  # volume-weighted blend
+
+    assert len(disaggregated_disbsad) == 2
+    assert sorted(disaggregated_disbsad["m_orig_price"]) == pytest.approx([100.0, 200.0])  # each action's own price
+
+
+def test_allocate_volumes_fifth_band_gets_its_full_four_band_lookback():
+    """build_bod_ladder()'s cumulative lower/higher bound for a unit's 5th
+    (outermost, and entirely ordinary -- a BM unit may submit up to 5
+    Bid-Offer Pairs per side, confirmed against Elexon's own documented
+    limit) band must sum all FOUR bands before it, not just three.
+
+    Reproduces T_LIONB-3's own real SP22 2026-09-30 bid ladder shape
+    (bands -1..-4 at levels -10/-10/-10/-5, band -5 at level -100) and its
+    real accepted level (-30, landing exactly on band -4's own boundary):
+    with only a 3-band lookback, band -5's own lower_bound came out as -25
+    (missing band -1's own -10) instead of the correct -35, wrongly
+    overlapping band -4's range and letting -30 match band -5's own case-2
+    mask -- attributing 5 MWh of real volume to a band Elexon's real
+    settlement never allocates anything to for this unit/period at all
+    (confirmed: every real row has parAdjustedVolume 0, band -5 never
+    appears in the accepted stack).
+    """
+    sd = "2026-01-01"
+    fpn_mel_boalf = pd.DataFrame([{
+        "bmUnit": "T_LIONB-3", "settlementDate": sd, "settlementPeriod": 1,
+        "acceptanceTime": f"{sd}T00:00:00Z", "spot_time": f"{sd}T00:00:00Z",
+        "marginal_delta": -30.0, "base_value": 0.0, "band_reversal": 1.0,
+        "fpn_spot_vol": 0.0, "boalf_spot_vol": -30.0,
+    }])
+    bod_df = pd.DataFrame([
+        {"settlementDate": sd, "settlementPeriod": 1, "bmUnit": "T_LIONB-3", "bid": 87.0, "offer": 183.0, "levelTo": -10.0, "pairId": -1},
+        {"settlementDate": sd, "settlementPeriod": 1, "bmUnit": "T_LIONB-3", "bid": 80.0, "offer": 183.0, "levelTo": -10.0, "pairId": -2},
+        {"settlementDate": sd, "settlementPeriod": 1, "bmUnit": "T_LIONB-3", "bid": 80.0, "offer": 183.0, "levelTo": -10.0, "pairId": -3},
+        {"settlementDate": sd, "settlementPeriod": 1, "bmUnit": "T_LIONB-3", "bid": 50.0, "offer": 183.0, "levelTo": -5.0, "pairId": -4},
+        {"settlementDate": sd, "settlementPeriod": 1, "bmUnit": "T_LIONB-3", "bid": 0.0, "offer": 183.0, "levelTo": -100.0, "pairId": -5},
+    ])
+
+    dp = allocate_volumes(fpn_mel_boalf, bod_df)
+    by_band = dict(zip(dp["pairId"], dp["vol_to_price"]))
+    assert by_band.get(-5, 0) == 0  # no phantom volume in the untouched outermost band
+    assert dp["delta"].sum() == pytest.approx(-30.0)  # full accepted volume still lands somewhere real
+
+
+def test_build_bod_ladder_gives_the_fifth_band_its_own_four_prior_levels():
+    sd = "2026-01-01"
+    bod_df = pd.DataFrame([
+        {"settlementDate": sd, "settlementPeriod": 1, "bmUnit": "T_X-1", "bid": 1.0, "offer": 1.0, "levelTo": -10.0, "pairId": -1},
+        {"settlementDate": sd, "settlementPeriod": 1, "bmUnit": "T_X-1", "bid": 1.0, "offer": 1.0, "levelTo": -10.0, "pairId": -2},
+        {"settlementDate": sd, "settlementPeriod": 1, "bmUnit": "T_X-1", "bid": 1.0, "offer": 1.0, "levelTo": -10.0, "pairId": -3},
+        {"settlementDate": sd, "settlementPeriod": 1, "bmUnit": "T_X-1", "bid": 1.0, "offer": 1.0, "levelTo": -5.0, "pairId": -4},
+        {"settlementDate": sd, "settlementPeriod": 1, "bmUnit": "T_X-1", "bid": 1.0, "offer": 1.0, "levelTo": -100.0, "pairId": -5},
+    ])
+    ladder = build_bod_ladder(bod_df, ["T_X-1"])
+    band5 = ladder[ladder["pairId"] == -5].iloc[0]
+    assert band5["levelTo1"] + band5["levelTo2"] + band5["levelTo3"] + band5["levelTo4"] == -35.0
+
+
+def test_reversal_tail_sign_is_anchored_per_settlement_period():
+    """T_WBURB-1 SP21 2026-10-02 in miniature: acceptance 1 holds 100MW
+    across a period boundary while the FPN baseline drops from 300 (SP1:
+    marginal negative) to 0 (SP2: marginal positive). Acceptance 2 then
+    takes over at the same level partway into SP2. SP2's positive marginal
+    is acceptance 1's ordinary first-direction in that period, NOT a
+    reversal of SP1's negative one -- anchored across the whole window it
+    looked like one and was added on top of the governing acceptance
+    (+~46 MWh spurious NIV that live period). "reversal_aware" must match
+    "latest_wins" exactly here.
+    """
+    sd = "2026-01-01"
+    boalf_df = pd.DataFrame([
+        _span_acceptance("T_TEST-1", 1, "00:10:00", "00:50:00", 100.0, sd),
+        _span_acceptance("T_TEST-1", 2, "00:40:00", "01:10:00", 100.0, sd),
+    ])
+    pn_df = pd.DataFrame([
+        {"bmUnit": "T_TEST-1", "timeFrom": f"{sd}T00:00:00Z", "timeTo": f"{sd}T00:30:00Z",
+         "levelFrom": 300.0, "levelTo": 300.0, "dataset": "PN", "nationalGridBmUnit": "T_TEST-1",
+         "settlementDate": sd, "settlementPeriod": 1},
+        {"bmUnit": "T_TEST-1", "timeFrom": f"{sd}T00:30:00Z", "timeTo": f"{sd}T01:30:00Z",
+         "levelFrom": 0.0, "levelTo": 0.0, "dataset": "PN", "nationalGridBmUnit": "T_TEST-1",
+         "settlementDate": sd, "settlementPeriod": 2},
+    ])
+
+    latest = build_marginal_deltas(boalf_df, pn_df, overlap_resolution="latest_wins")
+    aware = build_marginal_deltas(boalf_df, pn_df, overlap_resolution="reversal_aware")
+
+    assert len(aware) == len(latest)
+    assert (aware["boalf_spot_vol"] - aware["fpn_spot_vol"]).sum() == pytest.approx(
+        (latest["boalf_spot_vol"] - latest["fpn_spot_vol"]).sum()
+    )

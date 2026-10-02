@@ -20,7 +20,7 @@ from citadel.engine.view import split_and_sort
 
 def _row(bm_unit: str, delta: float, price: float, so_flag: bool, total_delta: float = 50.0) -> dict:
     return {
-        "bm_unit": bm_unit, "delta": delta, "m_orig_price": price, "so_flag": so_flag,
+        "bm_unit": bm_unit, "delta": delta, "m_orig_price": price, "so_flag": so_flag, "cadl_flag": False,
         "stor_flag": False, "deemed_bo_flag": False, "acceptance_number": 1,
         "misik_imb_price": 0.0, "reversal": 1.0, "total_misik_price": 100.0, "total_delta": total_delta,
     }

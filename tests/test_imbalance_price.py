@@ -8,14 +8,11 @@ from __future__ import annotations
 
 import pytest
 
-from citadel.engine.imbalance_price import compute_imbalance_price, compute_niv
+from citadel.engine.imbalance_price import compute_imbalance_price
 
 
-def _row(bm_unit: str, delta: float, price: float, so_flag: bool = False, acceptance_key: object = None) -> dict:
-    row = {"bm_unit": bm_unit, "delta": delta, "m_orig_price": price, "so_flag": so_flag}
-    if acceptance_key is not None:
-        row["acceptance_key"] = acceptance_key
-    return row
+def _row(bm_unit: str, delta: float, price: float, so_flag: bool = False) -> dict:
+    return {"bm_unit": bm_unit, "delta": delta, "m_orig_price": price, "so_flag": so_flag}
 
 
 def test_niv_tagging_nets_smaller_side_off_top_of_larger_one():
@@ -123,39 +120,3 @@ def test_without_market_index_price_falls_back_to_original_price():
     ]
     price, _ = compute_imbalance_price(rows)
     assert price == pytest.approx(-50.0)
-
-
-def test_compute_niv_is_the_raw_net_of_offers_minus_bids():
-    rows = [_row("offer", 10, 50.0), _row("offer", 5, 40.0), _row("bid", -8, -30.0)]
-    assert compute_niv(rows) == pytest.approx(10 + 5 - 8)
-
-
-def test_compute_niv_de_minimis_checks_a_whole_acceptance_not_its_band_fragments():
-    # Same acceptance (acceptance_key=1) split across two BOD-band
-    # fragments by engine/stack.py's own six-case allocation -- each
-    # fragment is individually under DMAT (0.1 MWh), but the acceptance's
-    # own total (0.15) is not, so neither fragment should be dropped.
-    # A second, genuinely tiny acceptance (key=2, total 0.05) should be.
-    rows = [
-        _row("unit_1", -0.06, -20.0, acceptance_key=1),
-        _row("unit_1", -0.09, -25.0, acceptance_key=1),
-        _row("unit_2", -0.05, -10.0, acceptance_key=2),
-        _row("offer", 10, 50.0),
-    ]
-    assert compute_niv(rows) == pytest.approx(10 - 0.15)
-
-
-def test_compute_niv_never_affects_the_priced_result():
-    # compute_niv() must be read-only with respect to pricing -- calling
-    # it (in either order, any number of times) must never change what
-    # compute_imbalance_price() returns for the same rows.
-    rows = [
-        _row("unit_1", -0.06, -20.0, acceptance_key=1),
-        _row("unit_1", -0.09, -25.0, acceptance_key=1),
-        _row("offer", 10, 50.0),
-    ]
-    price_before, contributions_before = compute_imbalance_price(rows)
-    compute_niv(rows)
-    price_after, contributions_after = compute_imbalance_price(rows)
-    assert price_before == pytest.approx(price_after)
-    assert contributions_before.keys() == contributions_after.keys()

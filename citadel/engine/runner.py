@@ -27,8 +27,9 @@ import pandas as pd
 from ..config import Settings
 from ..ingest import elexon_rest
 from ..ingest.iris_client import run_iris_consumer_with_restart
-from ..settlement import PERIOD_MINUTES, rolling_window, sp_start_utc
+from ..settlement import PERIOD_MINUTES, current_period, rolling_window, sp_start_utc
 from ..storage import db
+from . import fpn as fpn_engine
 from . import stack as stack_engine
 
 if TYPE_CHECKING:
@@ -41,6 +42,19 @@ logger = logging.getLogger("citadel.engine.runner")
 
 DEBOUNCE_SECONDS = 1.0
 MEL_MIL_LOOKAHEAD_HOURS = (-2, -1, 0, 1, 2)
+# How long a dataset can go without a fresh IRIS message before REST takes
+# back over fetching it every cycle -- generous relative to how often MEL/MIL
+# actually change, so a few seconds' gap between individual IRIS messages
+# (normal) doesn't bounce this back and forth; a genuine IRIS outage still
+# gets caught well within a couple of minutes.
+IRIS_FRESHNESS_SECONDS = 120
+# While IRIS is fresh, REST still fetches MEL/MIL this often (in REST poll
+# cycles, not seconds) purely to prune WindowBuffers.add()'s own
+# ever-growing list back down to the current rolling window -- IRIS only
+# ever appends, it never removes what's scrolled out of the window, so
+# without this periodic REST resync the buffer would grow unbounded even
+# though prices stay correct. 60 cycles * the default 5s interval = 5 min.
+REST_MEL_MIL_RESYNC_EVERY_N_CYCLES = 60
 # Each settlement period's DB write (delete+insert, its own transaction) and
 # broadcast touch disjoint rows/messages, so periods can persist concurrently
 # instead of one full round-trip at a time -- bounded so a wide rolling
@@ -89,12 +103,23 @@ IRIS_DATASET_TO_BUFFER_KEY = {"BOALF": "boalf", "BOD": "bod", "PN": "pn", "MELS"
 
 
 class Runner:
-    def __init__(self, settings: Settings, pool, broadcaster: Broadcaster, process_pool=None) -> None:
+    def __init__(self, settings: Settings, pool, broadcaster: Broadcaster, process_pool=None, exploded_boalf_broadcaster=None) -> None:
         self.settings = settings
         self.pool = pool
         self.broadcaster = broadcaster
+        # Optional -- feeds the "All Plants Exploded BOALF" chart (see
+        # api/exploded_boalf_broadcast.py). None (e.g. existing tests that
+        # construct a Runner directly) just skips that broadcast.
+        self.exploded_boalf_broadcaster = exploded_boalf_broadcaster
         self.buffers = WindowBuffers()
         self.market_index_prices: dict[tuple, float] = {}
+        self.bm_unit_reference = pd.DataFrame()
+        self.fuel_ref = pd.DataFrame()
+        # In-memory-only rolling window (no DB table, by design -- see
+        # engine/stack.py's exploded_boalf_by_unit() docstring) read
+        # directly by GET /api/all-plants-boalf for a fresh page's first
+        # paint, before its own WebSocket delivers the first push.
+        self.latest_exploded_boalf = pd.DataFrame()
         # Optional -- when supplied (see api/app.py's lifespan), the
         # per-cycle compute_stack() call below runs in its own OS process
         # instead of inline on this event loop, so a heavy recompute can
@@ -105,17 +130,40 @@ class Runner:
         self._dirty = asyncio.Event()
         self._stop = asyncio.Event()
         self._http = httpx.AsyncClient()
+        # Last time an actual MELS/MILS message arrived over IRIS -- None
+        # means "never" (IRIS not configured, or not connected yet), which
+        # _iris_dataset_fresh() always treats as not-fresh, so REST covers
+        # it every cycle exactly like before IRIS existed.
+        self._last_iris_mel_at: datetime | None = None
+        self._last_iris_mil_at: datetime | None = None
+        self._rest_cycle_count = 0
+
+    def _iris_dataset_fresh(self, last_at: datetime | None, now: datetime) -> bool:
+        if not self.settings.iris_configured or last_at is None:
+            return False
+        return (now - last_at).total_seconds() < IRIS_FRESHNESS_SECONDS
 
     async def _rest_refresh_once(self) -> None:
         periods = rolling_window()
         now = datetime.now(timezone.utc)
         mel_mil_ranges = elexon_rest_generate_hour_pairs(now)
-        bundle = await elexon_rest.fetch_window(self._http, periods, mel_mil_ranges)
+        self._rest_cycle_count += 1
+        due_for_resync = self._rest_cycle_count % REST_MEL_MIL_RESYNC_EVERY_N_CYCLES == 0
+        # IRIS is doing the real-time work for MEL/MIL -- REST only needs to
+        # fetch it often enough to prune the buffer (see
+        # REST_MEL_MIL_RESYNC_EVERY_N_CYCLES), not every single cycle. The
+        # moment IRIS goes quiet for IRIS_FRESHNESS_SECONDS, this reverts to
+        # fetching every cycle on its own, no restart needed either way.
+        fetch_mel = due_for_resync or not self._iris_dataset_fresh(self._last_iris_mel_at, now)
+        fetch_mil = due_for_resync or not self._iris_dataset_fresh(self._last_iris_mil_at, now)
+        bundle = await elexon_rest.fetch_window(self._http, periods, mel_mil_ranges, fetch_mel=fetch_mel, fetch_mil=fetch_mil)
         self.buffers.replace("boalf", bundle.boalf)
         self.buffers.replace("bod", bundle.bod)
         self.buffers.replace("pn", bundle.pn)
-        self.buffers.replace("mel", bundle.mel)
-        self.buffers.replace("mil", bundle.mil)
+        if bundle.mel is not None:
+            self.buffers.replace("mel", bundle.mel)
+        if bundle.mil is not None:
+            self.buffers.replace("mil", bundle.mil)
         self.buffers.replace("disbsad", bundle.disbsad)
         await db.log_refresh(self.pool, "rest", "window", True, note=f"{len(periods)} periods")
         self._dirty.set()
@@ -183,6 +231,10 @@ class Runner:
         if key is None:
             return
         self.buffers.add(key, _records_from_payload(payload))
+        if dataset == "MELS":
+            self._last_iris_mel_at = datetime.now(timezone.utc)
+        elif dataset == "MILS":
+            self._last_iris_mil_at = datetime.now(timezone.utc)
         self._dirty.set()
 
     async def _recompute_loop(self) -> None:
@@ -208,6 +260,7 @@ class Runner:
                 stor_flag=bool(r["storFlag"]),
                 deemed_bo_flag=bool(r["deemedBoFlag"]),
                 so_flag=bool(r["soFlag"]),
+                cadl_flag=bool(r["cadlFlag"]),
                 acceptance_number=int(r["acceptanceNumber"]),
                 reversal=float(r["reversal"]),
                 ap_mult_vol=float(r["ap_mult_vol"]),
@@ -257,14 +310,26 @@ class Runner:
         compute = functools.partial(
             stack_engine.compute_stack, boalf, bod, pn, mel, disbsad,
             market_index_prices=self.market_index_prices, return_spot_niv=True,
+            return_exploded_boalf=True,
+            reversal_side_fix=self.settings.reversal_side_fix_enabled,
+            disaggregate_disbsad=self.settings.disbsad_disaggregation_enabled,
         )
         if self.process_pool is not None:
             loop = asyncio.get_running_loop()
-            result, spot_niv, unit_delta_5min = await loop.run_in_executor(self.process_pool, compute)
+            result, spot_niv, unit_delta_5min, exploded_boalf = await loop.run_in_executor(self.process_pool, compute)
         else:
-            result, spot_niv, unit_delta_5min = compute()
+            result, spot_niv, unit_delta_5min, exploded_boalf = compute()
         if result.empty:
             return
+
+        # Fuel-type join (fpn.py, not stack.py -- see that module's own
+        # docstring) + the in-memory rolling window + live broadcast for
+        # the "All Plants Exploded BOALF" chart. Small pandas merge, kept
+        # on this event loop rather than inside the process-pool `compute`
+        # above -- not worth a second executor round-trip for it.
+        if not exploded_boalf.empty and not self.fuel_ref.empty:
+            exploded_boalf = fpn_engine.exploded_boalf_with_fuel_type(exploded_boalf, self.fuel_ref)
+        self.latest_exploded_boalf = exploded_boalf
 
         # Each period's own persist+broadcast used to run one full round-trip
         # at a time (delete+insert, then wait for the next period); every
@@ -286,9 +351,51 @@ class Runner:
                 _bounded(self._persist_unit_delta_5min_period(sd, sp, group))
                 for (sd, sp), group in unit_delta_5min.groupby(["settlementDate", "settlementPeriod"])
             ]
+        if self.exploded_boalf_broadcaster is not None and not exploded_boalf.empty:
+            tasks += [
+                _bounded(self._broadcast_exploded_boalf_period(sd, sp, group))
+                for (sd, sp), group in exploded_boalf.groupby(["settlementDate", "settlementPeriod"])
+            ]
         await asyncio.gather(*tasks)
 
+    async def _broadcast_exploded_boalf_period(self, sd, sp, group: pd.DataFrame) -> None:
+        sd_date = sd.date() if hasattr(sd, "date") else sd
+        rows = [
+            {"bmUnit": r.bmUnit, "spot_time": r.spot_time.isoformat(), "delta": float(r.delta), "fuel_bucket": r.fuel_bucket}
+            for r in group.itertuples()
+        ]
+        # Live pointer included on every push (not just the initial REST
+        # snapshot) -- by request, the page only ever shows the live
+        # period, the one before it, and the two after it; as real time
+        # moves forward this pointer moves with it, so the client re-derives
+        # its own visible window from this rather than a fixed count of
+        # "most recently seen" periods.
+        cur = current_period()
+        await self.exploded_boalf_broadcaster.publish({
+            "settlement_date": sd_date.isoformat(), "settlement_period": int(sp), "rows": rows,
+            "live_settlement_date": cur.settlement_date.isoformat(), "live_settlement_period": cur.settlement_period,
+        })
+
+    async def _refresh_bm_unit_reference(self) -> None:
+        """Same reference source/join FpnRunner's own
+        `_refresh_bm_unit_reference()` uses -- fetched once here too
+        (rather than shared across runners, which would need reordering
+        app.py's own Runner-before-FpnRunner construction) since this is
+        just a small, infrequently-changing read-only reference table.
+        """
+        rows = await db.bm_unit_reference_all(self.pool)
+        self.bm_unit_reference = pd.DataFrame([dict(r) for r in rows])
+        # `other_fallback` must match engine/fpn.py's own compute() call --
+        # without it, a unit tagged BATTERIES/LOAD RESPONSE/GAS/DIESEL/SOLAR
+        # (e.g. T_COALB-1..4, genuinely battery storage despite the name)
+        # silently falls all the way through to exploded_boalf_with_fuel_type()'s
+        # 'NO_FUEL' bucket on the All Plants BOALF chart, instead of 'OTHER'
+        # like it correctly does on the FPN dashboard (confirmed live: this
+        # call site was the one place still missing the flag).
+        self.fuel_ref = fpn_engine.fuel_type_reference(self.bm_unit_reference, other_fallback=self.settings.fpn_other_fallback_enabled)
+
     async def run(self) -> None:
+        await self._refresh_bm_unit_reference()
         tasks = [asyncio.create_task(self._rest_poll_loop()), asyncio.create_task(self._recompute_loop())]
         if self.settings.iris_configured:
             logger.info("IRIS credentials found -- starting real-time push consumer")

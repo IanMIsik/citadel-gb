@@ -59,6 +59,31 @@ data, then starts ingesting the current rolling settlement-period window
 configured (see below) -- either way the live page updates over the
 WebSocket as soon as a recompute finishes.
 
+## Running dev alongside prod
+
+A second, complete instance -- same frontend, its own database and port --
+can run side by side with prod without touching prod's data or behaviour:
+
+```bash
+psql -U citadel -h localhost -c "CREATE DATABASE citadel_dev"
+cp .env.dev.template .env.dev   # DATABASE_URL already points at citadel_dev
+
+CITADEL_ENV_FILE=.env.dev citadel serve --port 8001 --reload
+```
+
+`CITADEL_ENV_FILE` (a real OS env var, set before the process starts) tells
+`citadel/config.py` which file to read instead of the default `.env` --
+prod keeps running unmodified, reading plain `.env`. Dev runs on REST
+polling only by default (see `.env.dev.template`), so it doesn't compete
+with prod for the same IRIS queue. Open `http://127.0.0.1:8001/` (pricing
+stack) or `/fpn` (FPN Analytics) directly -- it's the same app, same pages,
+just pointed at its own database.
+
+Risky, not-yet-validated engine changes go behind a feature toggle in
+`citadel/config.py` (defaulted off), turned on in `.env.dev` only, so they
+run in dev first and only become prod's default once validated against
+real settlement periods there.
+
 ## Enabling real-time push (IRIS)
 
 REST polling alone already beats the original notebook's 7-second loop

@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Citadel — Fundies Graphs</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <header>
+    <h1>Fundies Graphs</h1>
+    <span id="env-badge" class="env-badge hidden"></span>
+  </header>
+  <nav class="top-nav">
+    <!-- Named targets -- see fundies.html's own nav comment for why. -->
+    <a href="/fpn" target="citadel-fpn" rel="noopener">FPN Analytics</a>
+    <a href="/pricing-stack" target="citadel-pricing-stack" rel="noopener">Pricing Stack</a>
+    <a href="/fundies" target="citadel-fundies" rel="noopener">Fundies</a>
+    <a href="/fundies-graphs" class="active">Fundies Graphs</a>
+    <a href="/interconnectors" target="citadel-interconnectors" rel="noopener">Interconnector Graphs →</a>
+    <a href="/all-plants-boalf" target="citadel-all-plants-boalf" rel="noopener">All Plants BOALF</a>
+    <a href="/trips" target="citadel-trips" rel="noopener">Plant Trips</a>
+    <a href="/bm-stack" target="citadel-bm-stack" rel="noopener">BM Stack</a>
+  </nav>
+
+  <main id="fundies-graphs-page" class="fpn-columns">
+    <section class="fpn-col fpn-col-left">
+      <div class="graph-container big">
+        <p class="text-center">Demand -- forecast (latest, day-ahead) vs outturn (INDO)</p>
+        <canvas class="chartjs_canvas" id="demand-chart"></canvas>
+      </div>
+      <div class="graph-container big">
+        <p class="text-center">Wind -- forecast (latest, day-ahead) vs outturn</p>
+        <canvas class="chartjs_canvas" id="wind-chart"></canvas>
+      </div>
+      <div class="graph-container big">
+        <p class="text-center">Solar -- PV_Live outturn vs NESO embedded forecast</p>
+        <canvas class="chartjs_canvas" id="solar-chart"></canvas>
+      </div>
+    </section>
+  </main>
+
+  <script src="/static/fundies-graphs.js"></script>
+</body>
+</html>

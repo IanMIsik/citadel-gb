@@ -55,6 +55,39 @@ async def test_fetch_window_slices_results_correctly(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_fetch_window_skips_mel_mil_when_asked(monkeypatch):
+    """engine/runner.py's Runner passes fetch_mel=False/fetch_mil=False
+    when IRIS has delivered a fresh MELS/MILS message recently -- this
+    must skip the HTTP calls entirely (not just discard the result) and
+    return None, not [], so the caller can tell "didn't ask" apart from
+    "asked, got nothing" and avoid wiping out IRIS's own buffer.
+    """
+    periods = [(date(2026, 1, 1), 1)]
+    ranges = [("2026-01-01T00:00Z", "2026-01-01T01:00Z")]
+
+    async def ok(*args, **kwargs):
+        return [{"kind": "ok"}]
+
+    async def boom(*args, **kwargs):
+        raise AssertionError("should not be called when fetch_mel/fetch_mil is False")
+
+    monkeypatch.setattr(elexon_rest, "fetch_boalf", ok)
+    monkeypatch.setattr(elexon_rest, "fetch_bod", ok)
+    monkeypatch.setattr(elexon_rest, "fetch_pn", ok)
+    monkeypatch.setattr(elexon_rest, "fetch_disbsad", ok)
+    monkeypatch.setattr(elexon_rest, "fetch_mels", boom)
+    monkeypatch.setattr(elexon_rest, "fetch_mils", boom)
+
+    bundle = await elexon_rest.fetch_window(
+        client=None, periods=periods, mel_mil_ranges=ranges, fetch_mel=False, fetch_mil=False,
+    )
+
+    assert bundle.mel is None
+    assert bundle.mil is None
+    assert [r["kind"] for r in bundle.boalf] == ["ok"]
+
+
+@pytest.mark.asyncio
 async def test_fetch_window_tolerates_partial_failures(monkeypatch):
     periods = [(date(2026, 1, 1), 1)]
 

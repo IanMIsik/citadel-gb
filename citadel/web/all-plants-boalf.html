@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Citadel — All Plants Exploded BOALF</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+  <!-- The .bundle.min.js variant already includes date-fns itself -- a
+       separate date-fns <script> tag threw "require is not defined"
+       (its plain index.min.js build isn't a browser-global bundle). -->
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
+</head>
+<body>
+  <header>
+    <h1>All Plants Exploded BOALF</h1>
+    <span id="env-badge" class="env-badge hidden"></span>
+    <span id="connection-status" class="disconnected">connecting…</span>
+  </header>
+  <nav class="top-nav">
+    <a href="/fpn" target="citadel-fpn" rel="noopener">FPN Analytics</a>
+    <a href="/pricing-stack" target="citadel-pricing-stack" rel="noopener">Pricing Stack</a>
+    <a href="/fundies" target="citadel-fundies" rel="noopener">Fundies</a>
+    <a href="/fundies-graphs" target="citadel-fundies-graphs" rel="noopener">Fundies Graphs</a>
+    <a href="/all-plants-boalf" class="active">All Plants BOALF</a>
+    <a href="/trips" target="citadel-trips" rel="noopener">Plant Trips</a>
+    <a href="/bm-stack" target="citadel-bm-stack" rel="noopener">BM Stack</a>
+  </nav>
+
+  <!-- Ported structurally from Zapdos's own all-plants-exploded-boalf.html
+       (control-panel sidebar with a settlement-period toggle list and a
+       fuel-type legend, next to a single full-screen stacked-area chart)
+       -- see engine/stack.py's exploded_boalf_by_unit() for the data this
+       feeds from, and web/all-plants-boalf.js for the chart itself. -->
+  <main class="all-plants-boalf-layout">
+    <div class="graph-container full-screen">
+      <p class="text-center">All Plants Exploded Boalf</p>
+      <canvas id="all-plants-boalf-canvas" class="chartjs_canvas"></canvas>
+    </div>
+    <aside class="control-panel">
+      <p class="panel-heading">Settlement periods</p>
+      <div id="sp-selector"></div>
+      <p class="panel-heading">Fuel type</p>
+      <ul class="legend-list" id="fuel-legend"></ul>
+    </aside>
+  </main>
+
+  <script src="/static/all-plants-boalf.js"></script>
+</body>
+</html>

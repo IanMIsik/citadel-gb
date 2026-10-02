@@ -18,19 +18,53 @@ import httpx
 import pandas as pd
 
 from ..config import Settings
-from ..ingest import elexon_rest, neso
+from ..ingest import elexon_rest, neso, remit
 from ..settlement import current_period, rolling_window, sp_start_utc
 from ..storage import db
 from . import fpn as fpn_engine
 
 if TYPE_CHECKING:
     from ..api.fpn_broadcast import FpnBroadcaster
+    from ..api.trip_broadcast import TripBroadcaster
     from .runner import WindowBuffers
 
 logger = logging.getLogger("citadel.engine.fpn_runner")
 
 DEBOUNCE_SECONDS = 2.0
 GENERATION_BY_FUEL_RETENTION = timedelta(hours=6)
+# REMIT revisions/publishes arrive far less often than MEL/MIL, so this polls
+# on its own much slower cadence, independent of the FUELINST/demand loop.
+REMIT_POLL_INTERVAL_SECONDS = 60
+# A trip's matching REMIT eventStartTime is expected close to when it was
+# detected -- Elexon's own publish can lag a genuine trip by minutes, but a
+# candidate hours away in either direction is almost certainly a different,
+# unrelated outage for the same unit.
+REMIT_MATCH_WINDOW_HOURS = 6
+
+
+def _parse_iso(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def best_remit_match(candidates: list[dict], detected_at: datetime, window_hours: float = REMIT_MATCH_WINDOW_HOURS) -> str | None:
+    """`candidates` are full REMIT message details (assetId already
+    filtered server-side by the caller) -- picks the one whose
+    `eventStartTime` is closest to `detected_at`, only within
+    `window_hours` either side. A candidate with no eventStartTime, or one
+    outside the window, is never picked -- better to show "no REMIT match
+    yet" than a stale/unrelated outage for the same unit.
+    """
+    best_mrid, best_delta = None, None
+    for detail in candidates:
+        start = _parse_iso(detail.get("eventStartTime")) if detail else None
+        if start is None:
+            continue
+        delta = abs((start - detected_at).total_seconds())
+        if delta <= window_hours * 3600 and (best_delta is None or delta < best_delta):
+            best_mrid, best_delta = detail["mrid"], delta
+    return best_mrid
 # Same reasoning as engine/runner.py's own PERSIST_CONCURRENCY: this module
 # persists up to 3 tables x ~8 periods per cycle (up to 24 delete+insert
 # transactions), previously one full round-trip at a time. Each (table, sd,
@@ -82,10 +116,14 @@ def _rows_for(df: pd.DataFrame, rename: dict[str, str]) -> list[dict]:
 
 
 class FpnRunner:
-    def __init__(self, settings: Settings, pool, broadcaster: FpnBroadcaster, shared_buffers: WindowBuffers, process_pool) -> None:
+    def __init__(
+        self, settings: Settings, pool, broadcaster: FpnBroadcaster, shared_buffers: WindowBuffers, process_pool,
+        trip_broadcaster: TripBroadcaster | None = None,
+    ) -> None:
         self.settings = settings
         self.pool = pool
         self.broadcaster = broadcaster
+        self.trip_broadcaster = trip_broadcaster
         self.shared_buffers = shared_buffers
         self.process_pool = process_pool
         self.fpn_buffers = FpnBuffers()
@@ -94,6 +132,21 @@ class FpnRunner:
         self._dirty = asyncio.Event()
         self._stop = asyncio.Event()
         self._http = httpx.AsyncClient()
+        # The trip edge-detector's own memory (last-seen MIL/MEL drop per
+        # bmUnit) -- lives here, not in the DB, since it's purely about
+        # deciding whether the *next* cycle's value is a fresh crossing.
+        self._trip_state: dict[str, float] = {}
+        # BM Stack (engine/bm_stack.py) -- in-memory only, same by-design
+        # choice as Runner.latest_exploded_boalf: it's a rolling snapshot
+        # re-derived every cycle, read by GET /api/bm-stack.
+        # First cycle after a start only *records* which units are already
+        # tripped (no alerts), so a restart doesn't re-announce old trips.
+        self._trip_seeded = False
+        # Worst-behaviour graph data (engine/fpn.py's worst_behaviour_series).
+        self.latest_wb_series: list[dict] = []
+        self.wb_computed_at: datetime | None = None
+        self.latest_bm_stack: list[dict] = []
+        self.bm_stack_computed_at: datetime | None = None
 
     async def _refresh_bm_unit_reference(self) -> None:
         rows = await db.bm_unit_reference_all(self.pool)
@@ -115,8 +168,8 @@ class FpnRunner:
         try:
             trades = await neso.fetch_national_grid_trades(self._http, neso_from, neso_to)
         except Exception:
-            logger.warning("NESO national grid trades fetch failed", exc_info=True)
-            trades = []
+            logger.warning("NESO national grid trades fetch failed, keeping the last fetched trades", exc_info=True)
+            trades = self.fpn_buffers.neso_trades
 
         self.fpn_buffers.fuelinst = bundle.fuelinst
         self.fpn_buffers.ndf = bundle.ndf
@@ -210,12 +263,70 @@ class FpnRunner:
             self.fpn_buffers.indo, self.fpn_buffers.itsdo, self.fpn_buffers.da_ndf,
             self.fpn_buffers.neso_trades, self.bm_unit_reference, self._demand_window,
             pricing_stack_delta_rows, None, pricing_stack_niv_rows, pricing_stack_niv_spot_time_rows,
-            pricing_stack_unit_delta_5min_rows,
+            pricing_stack_unit_delta_5min_rows, self.settings.fpn_other_fallback_enabled,
+            self._trip_state,
+            # Only ship the BOD frame across to the worker when the BM Stack
+            # is actually on -- no pickling cost where it's disabled.
+            self.shared_buffers.frame("bod") if self.settings.bm_stack_enabled else None,
+            self.settings.bm_stack_enabled,
+            not self._trip_seeded,
         )
         if not results:
             return
         await self._persist(results)
+        self._trip_state = results.get("trip_state", self._trip_state)
+        bm_stack = results.get("bm_stack")
+        if self.settings.bm_stack_enabled and bm_stack is not None:
+            self.latest_bm_stack = bm_stack.to_dict("records")
+            self.bm_stack_computed_at = datetime.now(timezone.utc)
+        wb = results.get("wb_series")
+        if wb is not None:
+            self.latest_wb_series = wb.to_dict("records")
+            self.wb_computed_at = datetime.now(timezone.utc)
+        await self._handle_trips(results.get("trips") or [], results.get("trip_recoveries") or [])
+        self._trip_seeded = True
         await self.broadcaster.publish({"type": "fpn_update"})
+
+    async def _handle_trips(self, trips: list, recoveries: list) -> None:
+        # A unit that already has an open trip (recent enough to still be
+        # real) never gets a second row or pop-up for it -- belt and braces
+        # on top of detect_trips()'s own once-per-trip state.
+        open_cutoff = datetime.now(timezone.utc) - timedelta(hours=12)
+        open_trips = {t["bm_unit"]: t for t in await db.fetch_open_trips(self.pool) if t["detected_at"] >= open_cutoff}
+        trips = [t for t in trips if t.bm_unit not in open_trips]
+        if trips:
+            await db.insert_trip_events(self.pool, trips)
+        if not self.trip_broadcaster:
+            return
+        for t in trips:
+            await self.trip_broadcaster.publish({
+                "type": "trip",
+                "bm_unit": t.bm_unit,
+                "fuel_type": t.fuel_type,
+                "drop_mw": t.drop_mw,
+                "settlement_date": t.settlement_date,
+                "settlement_period": t.settlement_period,
+                "detected_at": t.detected_at,
+            })
+        for r in recoveries:
+            known = open_trips.get(r.bm_unit)
+            expected_back = None
+            if known and known["remit_mrid"]:
+                revs = await db.fetch_remit_revisions(self.pool, known["remit_mrid"])
+                expected_back = revs[-1]["event_end_time"] if revs else None
+            if r.kind == "full":
+                await db.resolve_open_trips_for_unit(self.pool, r.bm_unit, r.detected_at)
+            await self.trip_broadcaster.publish({
+                "type": "trip_recovery",
+                "kind": r.kind,
+                "bm_unit": r.bm_unit,
+                "fuel_type": r.fuel_type,
+                "peak_mw": r.peak_mw,
+                "drop_mw": r.drop_mw,
+                "settlement_date": r.settlement_date,
+                "settlement_period": r.settlement_period,
+                "expected_back": expected_back,
+            })
 
     async def _persist(self, results: dict[str, pd.DataFrame]) -> None:
         tables = (
@@ -253,8 +364,84 @@ class FpnRunner:
             await db.upsert_fpn_generation_by_fuel(self.pool, generation_rows)
             await db.prune_fpn_generation_by_fuel(self.pool, datetime.now(timezone.utc) - GENERATION_BY_FUEL_RETENTION)
 
+    def _remit_window(self, detected_at: datetime, now: datetime) -> tuple[str, str]:
+        # REMIT's own `from`/`to` window is capped at 7 days -- start a day
+        # before the trip (publish can lag) but never open a window wider
+        # than 6 days back from now, so this always stays valid even for a
+        # trip that's been open a long time.
+        from_dt = max(detected_at - timedelta(days=1), now - timedelta(days=6))
+        return from_dt.strftime("%Y-%m-%dT%H:%M:%SZ"), now.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    async def _poll_trip_remit(self, trip, now: datetime) -> None:
+        bm_unit = trip["bm_unit"]
+        detected_at = trip["detected_at"]
+        from_iso, to_iso = self._remit_window(detected_at, now)
+        mrid = trip["remit_mrid"]
+
+        if mrid is None:
+            candidates_idx = await remit.fetch_remit_by_event(self._http, from_iso, to_iso, latest_revision_only=True, asset_id=bm_unit)
+            details = [d for d in [await remit.fetch_remit_message(self._http, ev["id"]) for ev in candidates_idx] if d]
+            mrid = best_remit_match(details, detected_at)
+            if mrid is None:
+                return
+            await db.set_trip_remit_match(self.pool, trip["id"], mrid)
+            if self.trip_broadcaster:
+                await self.trip_broadcaster.publish({
+                    "type": "remit_match", "trip_id": trip["id"], "bm_unit": bm_unit,
+                    "fuel_type": trip["fuel_type"], "drop_mw": trip["drop_mw"], "mrid": mrid,
+                })
+
+        all_events = await remit.fetch_remit_by_event(self._http, from_iso, to_iso, latest_revision_only=False, asset_id=bm_unit)
+        same_outage = [e for e in all_events if e["mrid"] == mrid]
+        if not same_outage:
+            return
+        prior_revisions = {r["revision_number"] for r in await db.fetch_remit_revisions(self.pool, mrid)}
+        new_events = [e for e in same_outage if e["revisionNumber"] not in prior_revisions]
+        if not new_events:
+            return
+        details = [d for d in [await remit.fetch_remit_message(self._http, e["id"]) for e in new_events] if d]
+        if not details:
+            return
+        rows = [{
+            "mrid": d["mrid"], "revision_number": d["revisionNumber"], "message_id": d["id"],
+            "asset_id": d.get("assetId"), "fuel_type": d.get("fuelType"), "event_status": d.get("eventStatus"),
+            "event_start_time": _parse_iso(d.get("eventStartTime")), "event_end_time": _parse_iso(d.get("eventEndTime")),
+            "normal_capacity": d.get("normalCapacity"), "available_capacity": d.get("availableCapacity"),
+            "unavailable_capacity": d.get("unavailableCapacity"), "publish_time": _parse_iso(d.get("publishTime")),
+            "cause": d.get("cause"),
+        } for d in details]
+        await db.upsert_remit_revisions(self.pool, rows)
+
+        latest = max(details, key=lambda d: d["revisionNumber"])
+        if not self.trip_broadcaster:
+            return
+        if latest.get("eventStatus") == "Dismissed":
+            await db.resolve_trip(self.pool, trip["id"], now)
+            await self.trip_broadcaster.publish({"type": "resolved", "trip_id": trip["id"], "bm_unit": bm_unit, "mrid": mrid})
+        else:
+            await self.trip_broadcaster.publish({
+                "type": "remit_revision", "trip_id": trip["id"], "bm_unit": bm_unit, "mrid": mrid,
+                "event_end_time": latest.get("eventEndTime"), "unavailable_capacity": latest.get("unavailableCapacity"),
+            })
+
+    async def _remit_poll_loop(self) -> None:
+        while not self._stop.is_set():
+            try:
+                now = datetime.now(timezone.utc)
+                for trip in await db.fetch_open_trips(self.pool):
+                    try:
+                        await self._poll_trip_remit(trip, now)
+                    except Exception:
+                        logger.exception("REMIT poll failed for trip id=%s", trip["id"])
+            except Exception:
+                logger.exception("REMIT poll cycle failed")
+            try:
+                await asyncio.wait_for(self._stop.wait(), timeout=REMIT_POLL_INTERVAL_SECONDS)
+            except asyncio.TimeoutError:
+                pass
+
     async def run(self) -> None:
-        await asyncio.gather(self._rest_poll_loop(), self._recompute_loop())
+        await asyncio.gather(self._rest_poll_loop(), self._recompute_loop(), self._remit_poll_loop())
 
     async def stop(self) -> None:
         self._stop.set()

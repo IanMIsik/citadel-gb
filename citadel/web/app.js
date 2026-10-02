@@ -6,6 +6,11 @@ const ndPrice = document.getElementById("nd-price");
 
 // key "YYYY-MM-DD:SP" -> { view, collapsed: Set of "F"/"T" }
 const periods = new Map();
+// Reversal marks (see columnHtml() below) are a dev-only display aid, not
+// validated enough to show on prod -- defaults hidden until loadEnvBadge()'s
+// own health check confirms this isn't prod, matching that check's own
+// "safe until known" default.
+let isDev = false;
 // "count" sent to /api/stack/recent: current period + this many before it
 // (all completed/past). The server always adds 2 more beyond current too
 // -- periods that have passed Gate Closure but haven't started delivering
@@ -79,8 +84,10 @@ function columnHtml(k, flag, title, rows, collapsedSet) {
     // No separate Type column -- the unit name itself carries the
     // offer/bid colour now (see style.css's .offer-row/.bid-row rules).
     const dirCls = r.direction === "Offer" ? "offer-row" : "bid-row";
-    return `<tr class="ps-row ${dirCls}">` +
-      `<td class="pricing-stack-text">${r.bm_unit}</td>` +
+    const isReversal = isDev && r.reversal === -1;
+    const reversalMark = isReversal ? `<span class="reversal-mark" title="Flagged as a reversal of an earlier acceptance this period">&#8617;</span>` : "";
+    return `<tr class="ps-row ${dirCls}${isReversal ? " reversal-row" : ""}">` +
+      `<td class="pricing-stack-text">${reversalMark}${r.bm_unit}</td>` +
       `<td class="pricing-stack-text" data-sign="${r.delta_mwh}">${r.delta_mwh.toFixed(1)}</td>` +
       `<td class="pricing-stack-text" data-sign="${r.price_gbp_mwh}">£${r.price_gbp_mwh.toFixed(2)}</td>` +
       `<td class="pricing-stack-text">${r.cumulative_mwh.toFixed(1)}</td></tr>`;
@@ -204,6 +211,18 @@ function connectWebSocket() {
   setInterval(() => { if (ws.readyState === WebSocket.OPEN) ws.send("ping"); }, 30000);
 }
 
+function loadEnvBadge() {
+  fetch("/api/health").then(r => r.json()).then(data => {
+    isDev = data.environment_label !== "prod";
+    renderAll(); // redraw with reversal marks now that the environment is known
+    if (!isDev) return;
+    const badge = document.getElementById("env-badge");
+    badge.textContent = data.environment_label.toUpperCase();
+    badge.classList.remove("hidden");
+  });
+}
+
+loadEnvBadge();
 loadRecent();
 connectWebSocket();
 setInterval(loadRecent, 30000); // periodic resync -- picks up newly-completed periods rolling into the window

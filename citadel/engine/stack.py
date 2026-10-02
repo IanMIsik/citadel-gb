@@ -55,7 +55,7 @@ LONDON = ZoneInfo("Europe/London")
 
 STACK_COLUMNS = [
     "settlementDate", "settlementPeriod", "max_ta", "bmUnit", "storFlag", "deemedBoFlag",
-    "soFlag", "acceptanceNumber", "reversal", "ap_mult_vol", "delta", "vol_to_price",
+    "soFlag", "cadlFlag", "acceptanceNumber", "reversal", "ap_mult_vol", "delta", "vol_to_price",
     "disbsad_cost", "m_orig_price", "total_delta", "delta_sign", "action_sign",
     "vol_for_price", "misik_imb_price", "total_misik_price",
 ]
@@ -79,6 +79,12 @@ SPOT_NIV_COLUMNS = ["settlementDate", "settlementPeriod", "spot_time", "niv_spot
 # grid instead of summed system-wide across the whole minute -- see
 # spot_time_bm_unit_delta_5min()'s own docstring for what this feeds.
 UNIT_DELTA_5MIN_COLUMNS = ["settlementDate", "settlementPeriod", "bmUnit", "startTime", "delta"]
+
+# Raw, unbucketed per-minute counterpart of UNIT_DELTA_5MIN_COLUMNS -- feeds
+# the "All Plants Exploded BOALF" chart (engine/fpn.py's
+# exploded_boalf_with_fuel_type()), which needs the real per-minute
+# trajectory Zapdos's own reference chart plots, not a 5-minute average.
+EXPLODED_BOALF_COLUMNS = ["settlementDate", "settlementPeriod", "bmUnit", "spot_time", "delta"]
 
 
 def custom_round(x: float, base: int = 5) -> int:
@@ -290,12 +296,39 @@ def mil_exploder(mil_df: pd.DataFrame) -> pd.DataFrame:
 
 
 def fpn_exploder(pn_df: pd.DataFrame) -> pd.DataFrame:
+    """Unlike boalf_exploder() (latest-acceptanceTime-wins per minute) and
+    mel_exploder() (latest-notificationTime-wins per minute), this had NO
+    per-minute consolidation at all -- confirmed as the actual cause of a
+    real, live ~23 MWh SP24 NIV discrepancy (2026-09-29): engine/runner.py's
+    WindowBuffers.add() (the IRIS live-push path) only dedupes whole-record
+    duplicates, so a PN revision that re-declares an overlapping window
+    with DIFFERENT levels for the same bmUnit accumulates ALONGSIDE the
+    stale one rather than replacing it -- confirmed directly for
+    T_KEAD-2/acceptance 46124: the full pipeline (exploder through
+    build_price_stack), run in isolation against freshly-fetched real
+    PN/BOD/MEL with no duplicates, reproduces Elexon's own settled 81.08
+    MWh exactly, while the live system (whose PN buffer had accumulated
+    across multiple IRIS revisions) reported 190.00 for the same
+    acceptance/period -- a ~2.3x inflation consistent with
+    build_marginal_deltas()'s own `pd.merge(exploded_boalf_df,
+    exploded_pn_df, how="inner", on=["bmUnit","spot_time"])` fanning out
+    into one row per duplicate PN candidate for the same minute, each
+    carrying a different `fpn_spot_vol` baseline, instead of exactly one.
+
+    PN's raw feed carries no revision/publish timestamp (unlike BOALF's
+    acceptanceTime or MEL's notificationTime) to sort by -- arrival order
+    into WindowBuffers.add() is used as the practical "latest wins" proxy
+    instead (IRIS delivers messages in real chronological order, and
+    pandas preserves row order through vectorized_exploder's own
+    index.repeat()), via drop_duplicates(keep="last").
+    """
     if pn_df.empty:
         return pd.DataFrame()
     exploded = vectorized_exploder(pn_df)
     exploded = exploded.drop(columns=["timeFrom", "timeTo", "dataset", "levelFrom", "levelTo",
                                        "nationalGridBmUnit", "settlementDate", "settlementPeriod"], errors="ignore")
     exploded = exploded.rename(columns={"spot_level": "fpn_spot_vol"})
+    exploded = exploded.drop_duplicates(subset=["bmUnit", "spot_time"], keep="last")
     exploded["settlementPeriod"] = _settlement_period_col(exploded["spot_time"])
     return exploded
 
@@ -318,10 +351,13 @@ def _detect_acceptance_reversals(fpn_all_actions: pd.DataFrame) -> pd.DataFrame:
     then later reversed, partially or fully, by a subsequent acceptance."
 
     Returns one row per (bmUnit, settlementDate, settlementPeriod,
-    acceptanceNumber): `reversal` (+1/-1) and `origin_acceptance_number`
+    acceptanceNumber): `reversal` (+1/-1), `origin_acceptance_number`
     (the period's first acceptance -- whose SO/STOR/deemed-BO flags a
     reversal should be priced under instead of its own, per BSC
-    convention that the flag travels with the action being undone).
+    convention that the flag travels with the action being undone), and
+    `base_before` (the level in force right before this acceptance started
+    -- see build_marginal_deltas()'s `reversal_side_fix` param for what
+    this feeds).
     """
     period_cols = ["bmUnit", "settlementDate", "settlementPeriod"]
     acc_cols = [*period_cols, "acceptanceNumber"]
@@ -345,7 +381,7 @@ def _detect_acceptance_reversals(fpn_all_actions: pd.DataFrame) -> pd.DataFrame:
     acc = pd.merge(acc, first_acc, on=period_cols)
     acc["reversal"] = np.sign(acc["direction"] * acc["initial_direction"])
     acc.loc[acc["reversal"] == 0, "reversal"] = 1.0  # no net movement is not a reversal
-    return acc[[*acc_cols, "reversal", "origin_acceptance_number"]]
+    return acc[[*acc_cols, "reversal", "origin_acceptance_number", "base_before"]]
 
 
 def _reversal_tail_rows(
@@ -394,7 +430,19 @@ def _reversal_tail_rows(
     )
     full_fpn = pd.merge(full_fpn, governing, on=minute_cols, how="left")
 
-    anchor_cols = ["bmUnit", "acceptanceNumber"]
+    # Anchored PER SETTLEMENT PERIOD, not across the acceptance's whole
+    # declared window: BSC acceptance volumes are per period, and a window
+    # that spans a period boundary can legitimately flip sign there when
+    # the FPN baseline itself moves (confirmed 2026-10-02 SP21,
+    # T_WBURB-1/-3: acceptances 159190/163429 were raised against a 385 MW
+    # FPN in SP20 -- marginal negative -- then ran on into SP21 where the
+    # unit's FPN is 0 -- marginal positive. Anchored to SP20's negative
+    # sign, SP21's ordinary positive ramp-down looked like a "reversal"
+    # and was added on top of the governing acceptance, +23.2 MWh per
+    # unit, ~46 MWh of spurious NIV against Elexon's 100.35). Periods are
+    # 30-minute aligned in UTC too, so a UTC floor is a safe period key.
+    full_fpn["_sp_key"] = full_fpn["spot_time"].dt.floor("30min")
+    anchor_cols = ["bmUnit", "acceptanceNumber", "_sp_key"]
     # The FIRST NON-ZERO deviation, not literally the first minute: an
     # acceptance routinely starts with a run of minutes at exactly its FPN
     # baseline (e.g. held at 0 while FPN is also 0, before FPN starts
@@ -415,11 +463,12 @@ def _reversal_tail_rows(
     sign_differs = np.sign(marginal) != full_fpn["_initial_sign"]
     tail_mask = (~is_governing) & sign_differs & (marginal != 0)
 
-    return full_fpn[tail_mask].drop(columns=["_governing_acceptance", "_initial_sign", "_marginal"]).reset_index(drop=True)
+    return full_fpn[tail_mask].drop(columns=["_governing_acceptance", "_initial_sign", "_marginal", "_sp_key"]).reset_index(drop=True)
 
 
 def build_marginal_deltas(
-    boalf_df: pd.DataFrame, pn_df: pd.DataFrame, overlap_resolution: str = "reversal_aware"
+    boalf_df: pd.DataFrame, pn_df: pd.DataFrame, overlap_resolution: str = "reversal_aware",
+    reversal_side_fix: bool = False,
 ) -> pd.DataFrame:
     """Per-minute accepted volume vs. its own previous accepted level
     (`base_value`): how much *this* acceptance moved the unit by, and
@@ -455,6 +504,71 @@ def build_marginal_deltas(
     the extra rows' own sign is what routes them into the correct
     (usually opposite-direction) BOD band via allocate_volumes()'s
     existing case 1/2 logic, no reversal-specific case needed.
+
+    `reversal_side_fix` (accepted for backward compat with config.py's
+    `reversal_side_fix_enabled`, but currently a NO-OP -- see below):
+    original intent was to price a genuine reversal (per
+    `_detect_acceptance_reversals()`) against its own `base_before` (the
+    level in force right before it started) instead of FPN, since Elexon
+    prices T_FERRB-1 acceptance 14433 (SP14 2026-09-24) as a +2.87 MWh
+    offer @ GBP165.42 while this engine's FPN-relative model gives -0.58
+    MWh bid @ GBP135.42 -- a genuine wrong-side-of-stack miss, confirmed on
+    45/370 reversal-flagged acceptances sampled that day.
+
+    THREE ATTEMPTS AT A FIX, ALL CONFIRMED WORSE LIVE, root cause is NOT
+    where it first looked:
+    1. Override `base_value` to `base_before` only for reversal-flagged
+       rows: `allocate_volumes()`'s case_1/case_2 masks need `base_value`
+       FPN-relative (`lower_bound`/`higher_bound` are built from
+       `fpn_spot_vol`); overriding it breaks that for every flagged row,
+       most of which are ordinary continuing bids/offers, not genuine
+       cross-side cases -- their volume silently vanished instead of being
+       re-priced. NIV error got worse every period tested (SP14 4.6->148
+       MWh; SP15 1.2->22.7; SP16 4.3->6.6; SP17 0.3->20.3).
+    2. Re-anchor `lower_bound`/`higher_bound` to `base_value` too, so the
+       band geometry stays internally consistent with whichever baseline
+       priced the row: also confirmed worse (SP14 4.6->210; SP15 1.2->56;
+       SP18 0.08->28) -- the geometry was never the actual bug.
+    3. Price EVERY row (not just reversal-flagged ones) against its own
+       `base_before` instead of FPN, on the theory that "how much this
+       acceptance itself moved the unit" is more physically meaningful
+       than "how far the unit sits from FPN": far worse again, and this
+       time the period TOTAL flipped sign (SP15 actual +167.7 MWh vs
+       computed -97.7; SP16 +146.7 vs -122.6; SP17 +71.2 vs -120.5).
+       FPN-relative-per-governing-minute is the physically correct measure
+       of delivered-vs-planned volume for ordinary continuing revisions;
+       it's only wrong for the rare genuine cross-side case.
+
+    A pairId-availability theory was also chased and ruled out empirically,
+    not just assumed: BOD's own pairId=-1 row for T_FERRB-1 SP14 carries
+    BOTH prices (bid=135.42, offer=165.42) for the same band, and the real
+    ISPSTACK confirms acceptances 14433/14434 (the offers) reference that
+    SAME pairId=-1, not a different one -- so `allocate_volumes()`'s
+    existing `ap` formula (offer price if `sign(marginal_delta)>0`, bid
+    price otherwise) already resolves bid-vs-offer correctly for ANY row
+    that reaches the right pairId band; no per-acceptance pairId field is
+    needed for that part. The real puzzle is `volume` magnitude, not
+    pairId: hand-computing 14433's physical deviation from FPN over its
+    actual governing window (bmUnit level ramps 0->70 while FPN holds flat
+    at 70, from the real BOALF chain fetched live 2026-09-24) gives ~-0.58
+    MWh -- matching this engine's current (unfixed) output almost exactly,
+    i.e. our number IS a correct measure of *something real*, just not the
+    same quantity Elexon's ISPSTACK `volume` field reports (+2.87 MWh,
+    neither this number's negation nor a rescaling of it). That mismatch in
+    kind, not just sign, means Elexon's real per-acceptance settlement
+    volume follows an allocation rule (likely involving cross-period
+    continuation -- 14434's own declared window runs past this period's
+    boundary into SP15 -- or acceptance-sequencing detail not reflected in
+    a per-minute "latest wins across this period" model) that isn't
+    reverse-engineerable from BOALF/BOD/PN geometry alone, however it's
+    sliced. Fixing this for real needs either the actual documented BSC
+    settlement algorithm for acceptance volume allocation (not just the
+    Imbalance Pricing Guidance already implemented in imbalance_price.py,
+    which covers NIV/price, not per-acceptance volume attribution), or
+    ingesting Elexon's post-settlement ISPSTACK directly as a reconciliation
+    pass over completed periods (it carries the true per-acceptance
+    `volume` and `bidOfferPairId`, but only after a settlement delay, so it
+    can correct completed periods, not the live in-progress view).
     """
     exploded_boalf_df = boalf_exploder(boalf_df)
     if exploded_boalf_df.empty:
@@ -513,7 +627,8 @@ def build_marginal_deltas(
     df = pd.merge(df, reversal_info, on=["bmUnit", "settlementDate", "settlementPeriod", "acceptanceNumber"], how="left")
     df["reversal"] = df["reversal"].fillna(1.0)
     df["origin_acceptance_number"] = df["origin_acceptance_number"].fillna(df["acceptanceNumber"])
-    return df
+
+    return df.drop(columns=["base_before"], errors="ignore")
 
 
 def merge_mel_gate(fpn_boalf_df: pd.DataFrame, mel_df: pd.DataFrame, use_mel_gate: bool = True) -> pd.DataFrame:
@@ -546,14 +661,31 @@ def merge_mel_gate(fpn_boalf_df: pd.DataFrame, mel_df: pd.DataFrame, use_mel_gat
 
 
 def build_bod_ladder(bod_df: pd.DataFrame, unit_list) -> pd.DataFrame:
-    """Attaches each bid/offer pair's three neighbouring bands each side
-    (levelTo1/2/3) so the six-case allocation below can tell which price
+    """Attaches each bid/offer pair's FOUR neighbouring bands each side
+    (levelTo1/2/3/4) so the six-case allocation below can tell which price
     band(s) a marginal delta actually spans, not just its own band.
+
+    Four, not three: confirmed against the BSC's own documented limit (a
+    BM unit may submit at most 10 Bid-Offer Pairs total -- 5 per side,
+    pairId +-1 through +-5), so the 5th (outermost, and entirely ordinary
+    -- not a rare edge case) band on either side needs its FULL cumulative
+    lower/higher bound computed from all 4 bands before it. A previous
+    version of this function only went up to 3 (`range(1, 4)`), which is
+    enough for bands 1-4 but silently drops the nearest band's own level
+    for band 5 specifically -- confirmed live, T_LIONB-3/SP22 2026-09-30:
+    band -5's lower_bound computed as -25 (summing only bands -2/-3/-4)
+    instead of the correct -35 (summing -1/-2/-3/-4), making band -5's own
+    range overlap band -4's instead of starting where it ends, and
+    allocate_volumes() then attributed 5 MWh of real volume to band -5's
+    own price when Elexon's real settlement never allocates anything there
+    at all for that acceptance (confirmed against the real ISPSTACK: every
+    real row for this unit/period has parAdjustedVolume 0, and band -5
+    never appears in the accepted stack).
     """
     bod_df = bod_df[bod_df["bmUnit"].isin(unit_list)]
     bod_df = bod_df[["settlementDate", "settlementPeriod", "bmUnit", "bid", "offer", "levelTo", "pairId"]].copy()
 
-    for x in range(1, 4):
+    for x in range(1, 5):
         temp = bod_df[["settlementDate", "settlementPeriod", "bmUnit", "levelTo", "pairId"]].copy()
         temp["pairId"] = temp["pairId"] + np.sign(temp["pairId"]) * x
         temp = temp.rename(columns={"levelTo": f"levelTo{x}"})
@@ -604,7 +736,7 @@ def allocate_volumes(fpn_mel_boalf: pd.DataFrame, bod_df: pd.DataFrame, include_
     dp = dp.drop(columns=["bid", "offer"])
     dp["dir"] = np.sign(dp["marginal_delta"])
 
-    sum_of_prev_vb = dp["levelTo1"] + dp["levelTo2"] + dp["levelTo3"]
+    sum_of_prev_vb = dp["levelTo1"] + dp["levelTo2"] + dp["levelTo3"] + dp["levelTo4"]
     dp["lower_bound"] = sum_of_prev_vb + dp["fpn_spot_vol"]
     dp["higher_bound"] = dp["lower_bound"] + dp["levelTo"]
 
@@ -666,47 +798,80 @@ def allocate_volumes(fpn_mel_boalf: pd.DataFrame, bod_df: pd.DataFrame, include_
     return dp
 
 
-def blend_disbsad(fpn_mel_boalf_dp: pd.DataFrame, disbsad_df: pd.DataFrame, flags_df: pd.DataFrame) -> pd.DataFrame:
+def blend_disbsad(
+    fpn_mel_boalf_dp: pd.DataFrame, disbsad_df: pd.DataFrame, flags_df: pd.DataFrame,
+    disaggregate_disbsad: bool = False,
+) -> pd.DataFrame:
     """Adds non-BM balancing actions (DISBSAD -- includes STOR) as
     synthetic per-(settlement period, SO/STOR flag, rounded price) rows
     alongside the real per-unit acceptances, and re-attaches the acceptance-
     level flags (deemedBoFlag/soFlag/storFlag/rrFlag) that boalf_exploder
     dropped early on.
+
+    Volume recovery mechanism (unaffected by `disaggregate_disbsad` below):
+    each synthetic disbsad row is repeated once for every distinct
+    `spot_time` (minute) already present in `fpn_mel_boalf_dp` for that
+    (settlementDate, settlementPeriod, soFlag, storFlag) group, carrying a
+    flat per-minute MW-equivalent value (period volume x2, i.e. MWh/0.5h).
+    build_price_stack()'s own groupby then sums across those repeated
+    per-minute rows and divides by 60, exactly like a real per-minute MW
+    reading would be -- recovering the true period MWh total. This mirrors
+    real acceptances' own per-minute-then-/60 accounting, not a bug.
+
+    `disaggregate_disbsad` (opt-in, see config.py's
+    `disbsad_disaggregation_enabled`): by default every DISBSAD action
+    sharing a (soFlag, storFlag) is pre-summed into ONE blended row with
+    ONE volume-weighted average price, before PAR Tagging ever runs --
+    engine/imbalance_price.py's `_par_tag()` then only ever sees that single
+    blended price, even when PAR's 1 MWh boundary genuinely falls inside
+    the combined block. Confirmed live, SP39 2026-09-25: 34 separate
+    DISBSAD actions (all soFlag=False, storFlag=False) ranging GBP212.50-
+    235.00/MWh get collapsed into one row at their blended average,
+    discarding exactly the per-action price detail PAR Tagging needs to
+    price the genuinely marginal MWh correctly. When enabled, each DISBSAD
+    action keeps its own row (own price, own `id`-qualified synthetic
+    bmUnit) all the way through Classification/NIV/PAR Tagging -- the same
+    granularity real per-unit acceptances already get -- and only merges
+    same-priced rows for display afterward (engine/view.py's
+    `_merge_duplicates()`, already applied to every other row type).
     """
     df = fpn_mel_boalf_dp.copy()
     df["settlementDate"] = pd.to_numeric(df["settlementDate"])
 
+    empty_cols = ["spot_time", "settlementDate", "settlementPeriod", "delta", "disbsad_cost", "soFlag", "storFlag", "price", "rounded_price", "bmUnit"]
     if disbsad_df.empty:
-        # Explicit dtypes matter here: an empty frame built from a bare
-        # column list defaults every column to object dtype, which survives
-        # the left merge below and turns the price division into elementwise
-        # Python arithmetic (raising ZeroDivisionError on 0/0) instead of
-        # numpy's silently-nan/inf vectorized float division.
-        disbsad_agg = pd.DataFrame({
-            "settlementDate": pd.Series(dtype="int64"),
-            "settlementPeriod": pd.Series(dtype="int64"),
-            "soFlag": pd.Series(dtype="bool"),
-            "storFlag": pd.Series(dtype="bool"),
-            "volume": pd.Series(dtype="float64"),
-            "cost": pd.Series(dtype="float64"),
-        })
+        exploded_disbsad = pd.DataFrame(columns=empty_cols)
     else:
-        disbsad_agg = disbsad_df.groupby(["settlementDate", "settlementPeriod", "soFlag", "storFlag"])[["volume", "cost"]].sum().reset_index()
-        disbsad_agg["volume"] = disbsad_agg["volume"] * 2
-        disbsad_agg["cost"] = disbsad_agg["cost"] * 2
-        disbsad_agg["settlementDate"] = pd.to_numeric(pd.to_datetime(disbsad_agg["settlementDate"], utc=True))
+        # Distinct minutes already present in df -- df has no soFlag/storFlag
+        # of its own yet (those are only attached below, via the flags_df
+        # merge), so -- matching the original merge's actual join key --
+        # this crosses onto every disbsad action-row sharing the same
+        # (settlementDate, settlementPeriod) regardless of which unit
+        # governs that minute, made explicit here so the disaggregated
+        # branch below can do it without an accidental many-to-many fan-out
+        # (see `disaggregate_disbsad`'s own note).
+        spot_times = df[["settlementDate", "settlementPeriod", "spot_time"]].drop_duplicates()
 
-    merged = pd.merge(df, disbsad_agg, how="left")
-    merged["volume"] = merged["volume"].fillna(0)
+        if disaggregate_disbsad:
+            action_rows = disbsad_df[["settlementDate", "settlementPeriod", "soFlag", "storFlag", "volume", "cost", "id"]].copy()
+        else:
+            action_rows = disbsad_df.groupby(["settlementDate", "settlementPeriod", "soFlag", "storFlag"])[["volume", "cost"]].sum().reset_index()
+            action_rows["id"] = 0
 
-    exploded_disbsad = merged[["spot_time", "settlementDate", "settlementPeriod", "volume", "cost", "soFlag", "storFlag"]].copy()
-    exploded_disbsad = exploded_disbsad.drop_duplicates()
-    exploded_disbsad = exploded_disbsad.rename(columns={"volume": "delta", "cost": "disbsad_cost"})
-    exploded_disbsad["storFlag"] = exploded_disbsad["storFlag"].map({False: "F", True: "STOR"})
-    exploded_disbsad["price"] = (exploded_disbsad["disbsad_cost"] / exploded_disbsad["delta"]).fillna(0)
-    exploded_disbsad["rounded_price"] = exploded_disbsad["price"].apply(custom_round)
-    exploded_disbsad["storFlag"] = exploded_disbsad["storFlag"].fillna("empty")
-    exploded_disbsad["bmUnit"] = "disbsad_" + exploded_disbsad["storFlag"] + "_" + exploded_disbsad["rounded_price"].astype(str)
+        action_rows["volume"] = action_rows["volume"] * 2
+        action_rows["cost"] = action_rows["cost"] * 2
+        action_rows["settlementDate"] = pd.to_numeric(pd.to_datetime(action_rows["settlementDate"], utc=True))
+
+        exploded_disbsad = pd.merge(spot_times, action_rows, on=["settlementDate", "settlementPeriod"], how="inner")
+        exploded_disbsad = exploded_disbsad.rename(columns={"volume": "delta", "cost": "disbsad_cost"})
+        exploded_disbsad["storFlag"] = exploded_disbsad["storFlag"].map({False: "F", True: "STOR"})
+        exploded_disbsad["price"] = (exploded_disbsad["disbsad_cost"] / exploded_disbsad["delta"]).replace([np.inf, -np.inf], np.nan).fillna(0)
+        exploded_disbsad["rounded_price"] = exploded_disbsad["price"].apply(custom_round)
+        exploded_disbsad["storFlag"] = exploded_disbsad["storFlag"].fillna("empty")
+        exploded_disbsad["bmUnit"] = (
+            "disbsad_" + exploded_disbsad["storFlag"] + "_" + exploded_disbsad["rounded_price"].astype(str)
+            + "_" + exploded_disbsad["id"].astype(str)
+        )
 
     df["spot_time"] = pd.to_numeric(df["spot_time"])
     df["acceptanceTime"] = pd.to_numeric(df["acceptanceTime"])
@@ -739,6 +904,12 @@ def blend_disbsad(fpn_mel_boalf_dp: pd.DataFrame, disbsad_df: pd.DataFrame, flag
     combined["rrFlag"] = combined["rrFlag"].fillna(False).infer_objects()
     combined["reversal"] = combined["reversal"].fillna(1)
     combined["acceptanceNumber"] = combined["acceptanceNumber"].fillna(0)
+    # Synthetic DISBSAD rows never went through compute_stack()'s own
+    # firstStageFlag/cadlFlag computation (CADL doesn't apply to non-BM
+    # actions) -- their own soFlag is already the right classification
+    # input, and cadlFlag is simply False for them.
+    combined["firstStageFlag"] = combined["firstStageFlag"].fillna(combined["soFlag"])
+    combined["cadlFlag"] = combined["cadlFlag"].fillna(False)
     return combined
 
 
@@ -808,6 +979,26 @@ def spot_time_bm_unit_delta_5min(combined: pd.DataFrame) -> pd.DataFrame:
     return grouped
 
 
+def exploded_boalf_by_unit(combined: pd.DataFrame) -> pd.DataFrame:
+    """Per-(settlementDate, settlementPeriod, bmUnit, spot_time) sum of
+    `combined`'s own `delta` -- the raw, unbucketed per-minute trajectory
+    each BM unit's accepted volume actually took, INCLUDING synthetic
+    DISBSAD rows (bmUnit LIKE 'disbsad_%', unlike
+    spot_time_bm_unit_delta_5min()'s own exclusion of them above). Zapdos's
+    "All Plants Exploded Boalf" chart colour-codes those synthetic rows
+    under its own NATGRID fuel-type bucket rather than dropping them, and
+    this is the one view here that needs that inclusion. Feeds
+    engine/fpn.py's own exploded_boalf_with_fuel_type() for the bmUnit ->
+    fuel-type join, same split of responsibility every other cross-module
+    row type in this pipeline already has (this module has no notion of
+    fuel type -- see the module docstring above).
+    """
+    if combined.empty:
+        return pd.DataFrame(columns=EXPLODED_BOALF_COLUMNS)
+    grouped = combined.groupby(["settlementDate", "settlementPeriod", "bmUnit", "spot_time"])["delta"].sum().reset_index()
+    return grouped
+
+
 def build_price_stack(
     combined: pd.DataFrame,
     max_ta,
@@ -848,7 +1039,7 @@ def build_price_stack(
     df["max_ta"] = max_ta
 
     misik_stack = df.groupby(
-        ["settlementDate", "settlementPeriod", "max_ta", "bmUnit", "storFlag", "deemedBoFlag", "soFlag", "acceptanceNumber", "reversal"]
+        ["settlementDate", "settlementPeriod", "max_ta", "bmUnit", "storFlag", "deemedBoFlag", "soFlag", "cadlFlag", "firstStageFlag", "acceptanceNumber", "reversal"]
     )[["ap_mult_vol", "delta", "vol_to_price", "disbsad_cost"]].sum().reset_index()
 
     misik_stack["delta"] = misik_stack["delta"] / 60
@@ -982,7 +1173,11 @@ def _price_via_guide_methodology(misik_stack: pd.DataFrame, market_index_prices:
 
     for (sd, sp), group in misik_stack.groupby(["settlementDate", "settlementPeriod"]):
         rows = [
-            {"delta": r.delta, "m_orig_price": r.m_orig_price, "so_flag": bool(r.soFlag)}
+            # Classification eligibility uses `firstStageFlag` (raw soFlag
+            # OR CADL-flagged, see compute_stack()'s own comment) -- the
+            # *displayed* soFlag column stays raw BOALF and is never used
+            # for pricing decisions.
+            {"delta": r.delta, "m_orig_price": r.m_orig_price, "so_flag": bool(r.firstStageFlag)}
             for r in group.itertuples()
         ]
         sd_date = sd.date() if hasattr(sd, "date") else sd
@@ -1008,7 +1203,10 @@ def compute_stack(
     market_index_prices: dict[tuple, float] | None = None,
     overlap_resolution: str = "reversal_aware",
     return_spot_niv: bool = False,
-) -> pd.DataFrame | tuple[pd.DataFrame, pd.DataFrame]:
+    return_exploded_boalf: bool = False,
+    reversal_side_fix: bool = False,
+    disaggregate_disbsad: bool = False,
+) -> pd.DataFrame | tuple[pd.DataFrame, ...]:
     """End-to-end: raw per-dataset DataFrames in, the final price-stack
     DataFrame out (columns: STACK_COLUMNS). Empty at any stage short-
     circuits to an empty result rather than raising -- a quiet settlement
@@ -1029,13 +1227,36 @@ def compute_stack(
     this function already builds internally -- opt-in and defaulted off so
     every existing caller (tests included) sees the exact same single-
     DataFrame return as before.
+
+    `return_exploded_boalf`: additionally returns exploded_boalf_by_unit()'s
+    raw per-minute, per-bmUnit delta (columns: EXPLODED_BOALF_COLUMNS) as
+    one more value, appended after whatever `return_spot_niv` already
+    contributes -- feeds the "All Plants Exploded BOALF" chart. Also
+    computed from the same `combined` frame; opt-in and defaulted off for
+    the same backward-compatibility reason as `return_spot_niv`.
+
+    `reversal_side_fix`: see build_marginal_deltas()'s own docstring --
+    opt-in (config.py's `reversal_side_fix_enabled`, dev-only until
+    validated) fix for a genuine reversal landing on the wrong side of the
+    bid/offer stack.
+
+    `disaggregate_disbsad`: see blend_disbsad()'s own docstring -- opt-in
+    (config.py's `disbsad_disaggregation_enabled`, dev-only until
+    validated) fix so PAR Tagging sees each DISBSAD action's own price
+    instead of one blended average across every action sharing a
+    (soFlag, storFlag).
     """
     empty_stack = pd.DataFrame(columns=STACK_COLUMNS)
     empty_niv = pd.DataFrame(columns=SPOT_NIV_COLUMNS)
     empty_unit_delta = pd.DataFrame(columns=UNIT_DELTA_5MIN_COLUMNS)
+    empty_exploded = pd.DataFrame(columns=EXPLODED_BOALF_COLUMNS)
 
     def _empty():
-        return (empty_stack, empty_niv, empty_unit_delta) if return_spot_niv else empty_stack
+        if not return_spot_niv and not return_exploded_boalf:
+            return empty_stack
+        extras = (empty_niv, empty_unit_delta) if return_spot_niv else ()
+        extras += (empty_exploded,) if return_exploded_boalf else ()
+        return (empty_stack, *extras)
 
     if boalf_df.empty:
         return _empty()
@@ -1044,21 +1265,35 @@ def compute_stack(
     max_ta = pd.to_datetime(boalf_df["acceptanceTime"], utc=True).max()
     flags_df = boalf_df[["bmUnit", "deemedBoFlag", "soFlag", "storFlag", "rrFlag", "acceptanceNumber"]].drop_duplicates()
 
-    # Fold computed CADL flags into `soFlag` itself -- the guide treats
-    # SO-Flagged and CADL Flagged actions identically from here on
-    # (Classification, Replacement Price, display), so there's no reason
-    # to carry CADL as a separate field -- see compute_cadl_flags().
-    # Always computed against the "latest_wins" governance model (see that
-    # function's own docstring) regardless of `overlap_resolution` --
-    # CADL is about how long an acceptance actually governed in reality,
-    # a physical-dispatch question, not a pricing-attribution one.
+    # `soFlag` (the field that decides which side of the stack a row is
+    # DISPLAYED under -- so_flagged vs unflagged, see view.py's
+    # split_and_sort) is left exactly as the raw BOALF dataset carries it.
+    # A CADL-flagged action whose own raw soFlag is False belongs on the
+    # unflagged side of the displayed stack -- confirmed against Elexon's
+    # own real settlement stack, which likewise publishes soFlag and
+    # cadlFlag as two separate fields (SP19, 2026-09-30, T_MCMRO002
+    # acceptance 69649: `soFlag: False, cadlFlag: True`).
+    #
+    # Classification/PAR Tagging *eligibility* is a different question from
+    # display, though: the guide's "First Stage Flagged" = raw soFlag OR
+    # CADL-flagged, and build_price_stack() uses `firstStageFlag` (computed
+    # here, separately from the displayed `soFlag`) for that -- confirmed
+    # live this is what reproduces Elexon's own SP19 price (GBP176.35) via
+    # this session's own testing: folding CADL in for classification alone
+    # (leaving the *displayed* soFlag raw) gives the same GBP176.35 as
+    # folding it into soFlag everywhere used to, while ALSO putting a
+    # CADL-flagged-but-raw-unflagged action on the correct (unflagged) side
+    # of the displayed stack, which the fully-folded version did not.
+    #
+    # `cadlFlag` is kept as its own visible column throughout (see
+    # STACK_COLUMNS) so it's never just folded away and lost either way.
     cadl_flags = compute_cadl_flags(boalf_df)
     flags_df = pd.merge(flags_df, cadl_flags, on=["bmUnit", "acceptanceNumber"], how="left")
     flags_df["cadl_flag"] = flags_df["cadl_flag"].fillna(False)
-    flags_df["soFlag"] = flags_df["soFlag"] | flags_df["cadl_flag"]
-    flags_df = flags_df.drop(columns=["cadl_flag"])
+    flags_df["firstStageFlag"] = flags_df["soFlag"] | flags_df["cadl_flag"]
+    flags_df = flags_df.rename(columns={"cadl_flag": "cadlFlag"})
 
-    fpn_boalf = build_marginal_deltas(boalf_df, pn_df, overlap_resolution=overlap_resolution)
+    fpn_boalf = build_marginal_deltas(boalf_df, pn_df, overlap_resolution=overlap_resolution, reversal_side_fix=reversal_side_fix)
     if fpn_boalf.empty:
         return _empty()
 
@@ -1080,11 +1315,13 @@ def compute_stack(
     if fpn_mel_boalf_dp.empty:
         return _empty()
 
-    combined = blend_disbsad(fpn_mel_boalf_dp, disbsad_df, flags_df)
+    combined = blend_disbsad(fpn_mel_boalf_dp, disbsad_df, flags_df, disaggregate_disbsad=disaggregate_disbsad)
     stack_result = build_price_stack(
         combined, max_ta, pricing_method=pricing_method, par_band_method=par_band_method,
         market_index_prices=market_index_prices,
     )
-    if not return_spot_niv:
+    if not return_spot_niv and not return_exploded_boalf:
         return stack_result
-    return stack_result, spot_time_niv(combined), spot_time_bm_unit_delta_5min(combined)
+    extras = (spot_time_niv(combined), spot_time_bm_unit_delta_5min(combined)) if return_spot_niv else ()
+    extras += (exploded_boalf_by_unit(combined),) if return_exploded_boalf else ()
+    return (stack_result, *extras)

@@ -47,6 +47,17 @@ header h1 { font-size: 0.95rem; margin: 0; }
 #connection-status.connected { color: var(--bid); }
 #connection-status.disconnected { color: var(--offer); }
 
+.env-badge {
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  padding: 0.1rem 0.4rem;
+  border-radius: 3px;
+  border: 1px solid var(--sp-accent);
+  color: var(--sp-accent);
+}
+.env-badge.hidden { display: none; }
+
 /* Same max-width as .period-card below, so the banner reads as part of
    the same compact column of content rather than a full-width strip
    sitting above a much narrower table. Sticky so it stays in view while
@@ -216,6 +227,19 @@ th {
    direction either). */
 tr.offer-row td:first-child, tr.bid-row td:first-child { color: var(--text); }
 
+/* Cumulative MWh (the 4th/"Cum" column) is always a positive running
+   total regardless of direction -- unlike the MWh column, its own sign
+   can't tell a bid's row apart via the data-sign rule above, so bid rows
+   are coloured red directly off their existing .bid-row class instead, by
+   request, to keep it visually distinguishable from offers' cumulative
+   figures. */
+tr.bid-row td:nth-child(4) { color: var(--negative); }
+
+/* Marks a row whose acceptance _detect_acceptance_reversals() flagged as a
+   reversal (see engine/stack.py) -- informational only, doesn't change
+   pricing. */
+.reversal-mark { color: var(--sp-accent); margin-right: 0.15rem; font-size: 0.65rem; }
+
 /* --- Cell styling borrowed from the predecessor Zapdos app's pricing-
    stack table (reference/zapdos-pricing-stack/{styles,custom}.css): the
    compact centred cell text -- adapted from its light theme (black text
@@ -272,6 +296,18 @@ nav.top-nav a:hover:not(.active) { color: var(--text); }
 main#fpn-page {
   padding: 0.4rem 0.75rem 1.5rem;
   max-width: 1400px;
+}
+
+/* Trips page has no side-by-side columns (unlike #fpn-page's own
+   .fpn-columns) -- just two full-width `.fpn-card.wide` sections stacked
+   vertically, same padding/max-width convention as #fpn-page so it isn't
+   flush against the viewport edge. */
+main#trips-page {
+  padding: 0.4rem 0.75rem 1.5rem;
+  max-width: 1400px;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
 }
 
 .fpn-columns {
@@ -402,6 +438,23 @@ p.gen-title { text-align: left; }
   min-height: 0;
 }
 
+/* Interconnector Graphs page -- 3 charts per row (10 pairs is too many to
+   read one full-width chart at a time), each noticeably smaller than the
+   default 313px `.graph-container` since there's only ever 1-2 lines on
+   them, not a legend-heavy multi-series chart. */
+.interconnector-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.5rem;
+}
+.interconnector-grid .graph-container { min-height: 215px; max-height: 215px; margin-bottom: 0; }
+@media (max-width: 900px) {
+  .interconnector-grid { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 600px) {
+  .interconnector-grid { grid-template-columns: 1fr; }
+}
+
 .graph-container.big {
   width: calc(100vw - 2.5rem);
   /* Matches `.fpn-card.wide` below exactly -- the Real Time Generation
@@ -412,12 +465,42 @@ p.gen-title { text-align: left; }
   max-width: 780px;
 }
 
+/* Fundies Graphs page -- left-aligned (not centered, by request) with a
+   reasonable left margin and a bit of top margin, same left-edge
+   positioning convention as every other page's own main#...-page rule. */
+#fundies-graphs-page {
+  max-width: 820px;
+  margin: 1rem 0 0 0.75rem;
+}
+
 .graph-container.big.with-legend {
   max-width: 775px;
 }
 
 .graph-container.tall { height: 350px; max-height: 350px; }
 .graph-container.full-screen { width: auto; min-height: 983px; max-height: 983px; }
+
+/* All Plants Exploded BOALF page -- full-screen chart + right-hand
+   sidebar (settlement-period toggles + fuel-type legend), ported
+   structurally from Zapdos's own control-panel/legend-list/legend-item/
+   legend-box rules (custom.css), reskinned onto this project's own dark
+   theme tokens. */
+.all-plants-boalf-layout { display: flex; gap: 0.5rem; align-items: flex-start; padding: 0.4rem 0.75rem; }
+.all-plants-boalf-layout .graph-container.full-screen { flex: 1 1 auto; min-width: 0; }
+.control-panel {
+  width: 190px; flex: 0 0 190px;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
+  padding: 0.5rem;
+}
+.control-panel .panel-heading {
+  color: var(--sp-accent); font-weight: 700; text-transform: uppercase;
+  font-size: 0.62rem; margin: 0.5rem 0 0.3rem;
+}
+.control-panel .panel-heading:first-child { margin-top: 0; }
+.control-panel label { display: block; font-size: 0.7rem; color: var(--table-text); margin-bottom: 0.15rem; cursor: pointer; }
+.legend-list { list-style: none; margin: 0; padding: 0; }
+.legend-item { display: flex; align-items: center; gap: 0.35rem; font-size: 0.68rem; color: var(--table-text); margin-bottom: 0.25rem; text-transform: lowercase; }
+.legend-box { width: 0.8em; height: 0.8em; display: inline-block; border-radius: 2px; flex: 0 0 auto; }
 
 .graph-container h2,
 .graph-container p.text-center {
@@ -477,6 +560,17 @@ p.gen-title { text-align: left; }
 .decision-figure.headline .value { font-size: 1.3rem; color: var(--sp-accent); }
 .decision-figure.headline .value[data-sign^="-"] { color: var(--negative); }
 
+/* wind5/wind15/wind30 -- how much WIND_m has moved over the trailing
+   5/15/30 minutes (see fpn.js's renderRealTimeGenerationTable()), styled
+   after the real Zapdos app source's own #wind-diff-table (reference/
+   zapdos-pricing-stack/custom.css), but sitting outside the whole Real
+   Time Generation card, above the Average FPN stat row, per request. */
+#wind-diff-table { width: 90px; margin: 0.5rem 0 0.5rem auto; font-size: 0.7rem; }
+#wind-diff-table td { padding: 0.08rem 0.25rem; text-align: right; font-variant-numeric: tabular-nums; }
+#wind-diff-table td:first-child { text-align: left; color: var(--muted); }
+#wind-diff-table td[data-sign^="-"] { color: var(--negative); }
+#wind-diff-table td:last-child:not([data-sign^="-"]) { color: var(--text); }
+
 /* Rotated column headers -- for the wide by-fuel-type generation table,
    where many narrow fuel-type columns need to fit without wrapping. */
 th.rotate {
@@ -528,3 +622,328 @@ td[data-range="high"] { background-color: #66b966; color: #111; }
 td[data-range="low-negative"] { background-color: #ffdcb2; color: #111; }
 td[data-range="medium-negative"] { background-color: #ffc57f; color: #111; }
 td[data-range="high-negative"] { background-color: #ffae4c; color: #111; }
+
+/* Delta-band shading for "Mil Mel Drop by Fuel" -- the real Zapdos app
+   source's own SEPARATE blue/red "delta-positive/negative" data-range
+   names and colours (custom.css), distinct from the green/orange set
+   above. Which table originally used this scheme wasn't recoverable from
+   the reference set (only the CSS survived, not the page that assigns the
+   classes) -- applied here per direct user confirmation that this is the
+   scheme Mil Mel Drop used, not a citation like the block above. */
+td[data-range="delta-positive-low"] { background-color: #dcf0fc; color: #111; }
+td[data-range="delta-positive-medium"] { background-color: #a7daf9; color: #111; }
+td[data-range="delta-positive-high"] { background-color: #72c4f6; color: #111; }
+td[data-range="delta-negative-low"] { background-color: #ffcccc; color: #111; }
+td[data-range="delta-negative-medium"] { background-color: #ff9999; color: #111; }
+td[data-range="delta-negative-high"] { background-color: #ff6666; color: #111; }
+
+/* Generic hidden-until-known utility -- used by the env badge, only shown
+   once loadEnvBadge() confirms this isn't prod. */
+.hidden { display: none; }
+
+/* Decision table -- see fpn.js's renderDecisionColumn() for the formulas.
+   Row/column layout is copied directly from the real Zapdos app source's
+   own `.decision-table-container` markup (Old World/zapdos_extracted/
+   app_source/src/views/index.html): each scenario is an "Input" column
+   immediately followed by its own "Vs now" column, both plain `<td>`s in
+   the SAME `<tr>` -- not a flex hack inside one cell, and not a second row
+   underneath. Card is a plain `.fpn-card` (348px, no `.wide`), matching the
+   real source's own 348px `.card`, to line up with the Delta table above
+   it. Vs-now values pick up the app's existing global
+   `td[data-sign^="-"]` negative-red rule automatically since they're plain
+   `<td>`s again -- no separate colour rule needed here. */
+#decision-input-table th { font-size: 0.6rem; font-weight: 600; color: var(--muted); }
+#decision-input-table input.decision-input {
+  width: 100%;
+  min-width: 2.3rem;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0.15rem 0.2rem;
+  font-size: 0.65rem;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+#decision-input-table input.decision-input:focus {
+  outline: none;
+  border-color: var(--sp-accent);
+}
+/* Spinner arrows removed -- by request, a plain text-style number field. */
+#decision-input-table input.decision-input::-webkit-outer-spin-button,
+#decision-input-table input.decision-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+#decision-input-table input.decision-input {
+  -moz-appearance: textfield;
+}
+#decision-input-table td:first-child { color: var(--muted); white-space: nowrap; }
+#decision-input-table tr.headline-row td { color: var(--sp-accent); font-size: 0.85rem; }
+
+/* --- Fundies page: transposed metric-rows x settlement-period-columns
+   table, styled from the real Zapdos app's own fundies.html (Old World/
+   zapdos_extracted/app_source/src/views/windows/fundies.html) and its
+   shared custom.css. The "major subdivisions" (1A/1B/2A/2B...) header row
+   that source also has is deliberately dropped here -- its exact business
+   meaning wasn't recoverable from the reference set, and the half-hour
+   clock row plus the SP-number row below already carry everything a
+   trader needs to read a column's time unambiguously.
+
+   No fixed max-width here (a previous version had one, and the card also
+   carried `.fpn-card.wide` -- two classes together, `.fpn-card.wide`'s own
+   780px max-width won on specificity over this class's 1400px, capping
+   the table far narrower than intended). The card now claims the FULL
+   available width outright (not `max-content` + centered, which left the
+   table sitting compact with dead margin either side once its own
+   natural content-width no longer needed the whole screen) -- every one
+   of the 48 SP columns then stretches via `table-layout: fixed` below to
+   actually fill that width, rather than the table just being centered in
+   the leftover space. */
+/* Margin on both sides now (previously 0 -- the card sat flush against the
+   left edge of the viewport with all its "-1.5rem" slack landing on the
+   right only), so the card's own --panel background actually reads as a
+   distinct floating card against the darker page background, the same way
+   Pricing Stack's own .period-card does -- by request. Width trimmed to
+   match (2 x 1rem margin + this = 100vw, no horizontal scrollbar). */
+.fundies-card { width: calc(100vw - 2rem); margin: 0 1rem 3px; }
+/* Font-size/padding/line-height started as the real Zapdos app's own exact
+   values (custom.css's `#fundies-table { font-size: 8.5px; }` + its shared
+   `table td, .table th { padding: 0.2rem !important; }` + `.x-scrollable`'s
+   `line-height: 0.99`), then sized up from there by request -- readability
+   on a real screen wins over literal source parity here.
+   `table-layout: fixed` + `width: 100%`: every column stretches to fill
+   the card's own full width instead of sizing to its own content
+   (`table-layout: auto`'s default) -- confirmed live this is what
+   actually uses the screen rather than leaving it centred with margin
+   either side. The row-label column gets an explicit width; the 48 SP
+   columns then evenly split whatever's left (fixed layout's own default
+   for columns with no explicit width). */
+/* min-width stops table-layout:fixed's even 48-way split from shrinking
+   every SP column below a readable width on a narrower screen -- without
+   it, the table always fit its container exactly, and past a certain
+   point that meant cramming a 6-7 character figure ("-1090.1") into a
+   column just a few px wide, clipped by this table's own overflow:hidden
+   below. Past this min-width, .fpn-table-wrap's existing overflow-x:auto
+   (shared with every other table on this page) scrolls horizontally
+   instead -- the sticky .fundies-row-label column stays pinned on the
+   left while scrolling, so a row is still identifiable throughout. Still
+   `width: 100%` above that width, so a wide screen keeps the "fill the
+   whole card" behaviour from before, this only kicks in as a floor. */
+.fundies-table { width: 100%; min-width: calc(8.5rem + 48 * 2.6rem); table-layout: fixed; font-size: 10px; line-height: 1.15; }
+.fundies-table th, .fundies-table td {
+  padding: 0.3rem 0.15rem;
+  /* Centered rather than right-aligned -- by request. The row-label
+     column keeps its own left-alignment below via !important. */
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: clip;
+  /* Brighter than this table's inherited default (`table`'s own
+     `--table-text`, #b9bbb3) -- higher contrast against the dark
+     background, by request. */
+  color: var(--text);
+  /* Full grid (both directions), not just the generic `td`/`th` rule's own
+     border-bottom -- by request, so each SP column and each metric row
+     reads as its own clearly bounded cell instead of one continuous block
+     of colour, especially where several adjacent heat cells share a
+     similar hue. table's own border-collapse:collapse merges these into
+     single 1px lines rather than doubling them up. */
+  border: 1px solid var(--border);
+}
+.fundies-row-label {
+  position: sticky;
+  left: 0;
+  background: var(--panel);
+  color: var(--table-text);
+  text-align: left !important;
+  z-index: 1;
+  width: 8.5rem;
+}
+.fundies-table thead th { color: var(--sp-accent); font-weight: 600; }
+.fundies-table .sp-number { color: var(--table-text); font-weight: 700; }
+.fundies-table td[data-sign^="-"] { color: var(--negative); }
+/* The four £-prefixed price/spread rows: table-layout:auto already widens
+   a column to fit its own widest cell (confirmed live -- no min-width
+   needed at all, that only pushed every column far wider than the price
+   text itself needed, breaking "fits on one screen" for no real benefit). */
+#fundies-date-select {
+  background: var(--bg); color: var(--sp-accent); border: 1px solid var(--border);
+  border-radius: 3px; font-size: 0.62rem; font-weight: 600; padding: 0.05rem 0.2rem;
+}
+/* Alternating real-time/day-ahead-or-derived row banding -- the xlsx's own
+   light-grey fill on its real-time rows (fake_wind_ot, indo, latest_ndf,
+   latest_winfor, etc.), translated onto this page's dark theme as a subtle
+   lighter panel tint instead of literal light grey (which would clash).
+   `:not([data-heat])` -- a couple of rt rows (latest_ndf, latest_winfor)
+   also carry a heatmap formula; that formula's own background must win
+   there, not this flat banding tint. `:not(.fundies-row-label)` -- this
+   selector's specificity (tr.class > td:not([attr])) otherwise beats
+   .fundies-row-label's own `background: var(--panel)`, replacing its
+   opaque sticky background with this near-transparent tint on every rt
+   row, so scrolled value columns showed through instead of disappearing
+   under the sticky label the way they correctly do on non-rt (e.g.
+   interconnector) rows. */
+tr.fundies-rt-row > td:not([data-heat]):not(.fundies-row-label) {
+  background-color: rgba(255, 255, 255, 0.045);
+}
+
+/* Blank spacer row between metric groups (see fundies.js's `spacerBefore`) --
+   a gap with no border/background, distinct from an ordinary data row
+   rather than a margin hack (margins don't apply between table rows).
+   Taller than a first pass at this (0.5rem -> 1.1rem) -- by request, to
+   read as a clearly deliberate break between groups rather than a subtle
+   sliver easy to miss while scanning the table. */
+.fundies-spacer-row td {
+  height: 1.1rem;
+  padding: 0;
+  border: none;
+  background: transparent;
+}
+
+/* Percentile-heatmap colouring -- formulas ported verbatim from the real
+   Zapdos app's own custom.css (its [data-name=...] rules), consuming the
+   same --percentile/--value/--opacity custom properties fundies.js sets
+   per cell. Grouped here by the shared `data-heat` tag fundies.js assigns
+   (several of our own column names differ from the source's, e.g.
+   `latest_resid` for its `latest_resid`/`latestwindfor` for its
+   `latest_winfor`, but the underlying formula is the same one). Rows with
+   no real formula to port (everything new this port added -- pv_live,
+   market index, embedded forecasts, etc.) stay plain cells rather than
+   guessing one. */
+td[data-heat="ndf_resid"] {
+  background-color: hsla(calc(var(--percentile) * 1.42 + 53), 68%, calc(100% - (var(--percentile) * 0.5%)), var(--opacity, 0));
+  color: var(--heat-text, var(--table-text));
+}
+td[data-heat="winfor"] {
+  background-color: hsla(271, 100%, calc(100% - (var(--percentile) * 0.5%)), var(--opacity, 0));
+  color: var(--heat-text, var(--table-text));
+}
+/* Interconnector + all 3 delta rows -- NOT the real source's own formula
+   (which goes toward white/100% lightness at zero, reading as a wash of
+   white cells on this page's dark theme, since these rows sit near zero
+   most of the time). Redesigned as a translucent blue(import/positive)
+   or red(export/negative) overlay on the existing dark background instead
+   -- alpha (set by fundies.js's computeHeatStyle()) fades to fully
+   transparent at zero and only tints toward the accent colour as
+   magnitude grows, so the table stays dark by default. Text stays this
+   page's own bright default throughout (see .fundies-table td's own
+   color) -- the overlay is never opaque enough to need a dark-text swap. */
+td[data-heat="interconnector"],
+td[data-heat="interconnector_ng"],
+td[data-heat="indo_da_ndf_delta"],
+td[data-heat="fake_wind_ot_da_winfor_delta"],
+td[data-heat="domestic_tight_delta"],
+td[data-heat="spread"] {
+  background-color: hsla(var(--heat-hue, 0), 70%, 50%, var(--heat-alpha, 0));
+}
+/* Interconnector rows specifically: a darker lightness than the shared
+   formula above (50% -> 34%) -- by request. hsl(_, 70%, 50%) is a fairly
+   bright, light blue/red; at the higher alpha ceiling these two rows use
+   (see fundies.js's computeHeatStyle(), DIVERGING_ROW_RELATIVE) that read
+   as a pale, washed-out ("whitish") cell rather than a clear colour,
+   actually reducing contrast against the bright white text sitting on
+   top of it. A darker, more saturated-looking tone here stays legible
+   underneath the text at the same alpha instead of competing with it. */
+td[data-heat="interconnector"],
+td[data-heat="interconnector_ng"] {
+  background-color: hsla(var(--heat-hue, 0), 70%, 34%, var(--heat-alpha, 0));
+}
+/* Interconnector rows specifically read bolder than the plain diverging
+   overlay above (heavier text weight on top of their own higher alpha
+   ceiling, see fundies.js's computeHeatStyle) -- by request. */
+td[data-heat="interconnector"],
+td[data-heat="interconnector_ng"] {
+  font-weight: 700;
+}
+
+/* Plant trip toast (fpn.js's showTripToast/updateTripToast) -- fixed to the
+   viewport, not the page, so it stays visible regardless of scroll
+   position; stacked top-to-bottom via flex when more than one trip is
+   open at once. */
+#trip-toast-container {
+  position: fixed;
+  top: 4rem;
+  right: 1rem;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  width: 20rem;
+  max-width: calc(100vw - 2rem);
+}
+.trip-toast {
+  position: relative;
+  background: var(--panel);
+  border: 1px solid var(--negative);
+  border-left: 4px solid var(--negative);
+  border-radius: 4px;
+  padding: 0.6rem 1.6rem 0.6rem 0.8rem;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  animation: trip-toast-in 0.2s ease-out;
+}
+@keyframes trip-toast-in {
+  from { transform: translateX(1rem); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+.trip-toast-title { font-weight: 700; color: var(--negative); font-size: 0.85rem; }
+.trip-toast-body { font-size: 0.78rem; color: var(--text); margin-top: 0.15rem; }
+.trip-toast-status { font-size: 0.72rem; color: var(--muted); margin-top: 0.3rem; }
+.trip-toast-link { display: inline-block; margin-top: 0.35rem; font-size: 0.72rem; color: var(--sp-accent); }
+.trip-toast-close {
+  position: absolute;
+  top: 0.3rem;
+  right: 0.4rem;
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0.1rem 0.3rem;
+}
+.trip-toast-close:hover { color: var(--text); }
+
+/* Plant Trips page (trips.html/trips.js). */
+.trips-hint { color: var(--muted); font-size: 0.78rem; margin: 0.4rem 0; }
+#trips-table tr.trip-row { cursor: pointer; }
+#trips-table tr.trip-row:hover { background: rgba(255, 255, 255, 0.045); }
+#trips-table tr.trip-row.selected { background: rgba(114, 196, 246, 0.12); }
+#trip-revisions h3 { font-size: 0.85rem; margin: 0.8rem 0 0.3rem; }
+
+/* BM Stack page (bm-stack.html/bm-stack.js) -- Zapdos-style chart left,
+   SP / Vol Sign / FT control panel right (reuses .control-panel above). */
+.bm-stack-layout { display: flex; gap: 0.5rem; align-items: flex-start; padding: 0.4rem 0.75rem; }
+.bm-stack-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 0.5rem; }
+.graph-container.bm-chart { min-height: 640px; max-height: 640px; margin-bottom: 0; }
+/* Scrolls sideways so every price tick has room (the inner width is set in
+   bm-stack.js from the number of distinct prices). */
+.bm-chart-scroll { height: 605px; overflow-x: auto; overflow-y: hidden; }
+.bm-chart-inner { height: 585px; position: relative; }
+.bm-summary { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.bm-tile {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
+  padding: 0.35rem 0.7rem; display: flex; flex-direction: column; min-width: 8rem;
+}
+.bm-tile .label { color: var(--muted); font-size: 0.6rem; text-transform: uppercase; }
+.bm-tile .value { font-size: 1.05rem; font-weight: 700; color: var(--text); }
+.bm-fuel-card { width: auto; max-width: 780px; }
+.bm-fuel-card td, .bm-fuel-card th { text-align: right; }
+.bm-fuel-card td:first-child, .bm-fuel-card th:first-child { text-align: left; }
+@media (max-width: 900px) {
+  /* Stretch (not flex-start) so the chart's sideways-scrolling area is
+     bounded by the screen instead of growing to the chart's full width. */
+  .bm-stack-layout { flex-direction: column; align-items: stretch; }
+  .bm-stack-main { width: 100%; max-width: 100%; }
+  .control-panel { width: 100%; flex: 0 0 auto; }
+}
+
+
+/* Plant Trips: worst-behaviour graphs (Zapdos-style black canvas) and the
+   green "trip is going away" toast. */
+.wb-canvas-wrap { height: 380px; position: relative; background: #000; border-radius: 4px; padding: 6px; }
+#mel-plan-unit { margin-left: 0.6rem; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 3px; font-size: 0.7rem; padding: 0.1rem 0.3rem; }
+.trip-toast.recovery { border-color: #3dc77f; border-left-color: #3dc77f; }
+.trip-toast.recovery .trip-toast-title { color: #3dc77f; }
+.trip-toast-bar { height: 5px; background: var(--border); border-radius: 3px; margin-top: 0.4rem; overflow: hidden; }
+.trip-toast-bar > span { display: block; height: 100%; background: #3dc77f; }

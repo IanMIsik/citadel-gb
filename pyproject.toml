@@ -21,6 +21,12 @@ dependencies = [
     # confirmed live -- omitting this fails with "aiohttp package is not installed"
     # the moment the IRIS consumer tries to authenticate.
     "python-dateutil>=2.9",
+    "entsoe-py>=0.6",  # ENTSO-E Transparency Platform client -- interconnector scheduled
+    # flows for the Fundies dashboard (citadel/ingest/entsoe_flows.py). Wraps the real
+    # ENTSO-E XML API/EIC area codes for us; reimplementing that by hand is a real
+    # correctness risk we can't easily test without a live key.
+    "beautifulsoup4>=4.12",  # EPEX day-ahead auction page scrape (citadel/ingest/epex.py) --
+    # the page is HTML, not a JSON API.
 ]
 
 [project.optional-dependencies]

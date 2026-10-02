@@ -2,7 +2,14 @@
 __pycache__/
 *.pyc
 .env
+.env.dev
 .pytest_cache/
 *.egg-info/
 data/
 .DS_Store
+
+# local logs and scratch investigation dumps
+*.log
+*.err
+/*.json
+/*.csv

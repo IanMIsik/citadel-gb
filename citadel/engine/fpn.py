@@ -44,13 +44,15 @@ the same shape as the notebooks' own `bmu_fuel_types`/`int_bm_units` CSVs.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from dataclasses import dataclass
+from datetime import date, datetime, timezone
 
 import numpy as np
 import pandas as pd
 
 from . import stack as stack_engine
-from ..settlement import utc_to_settlement
+from .bm_stack import compute_bm_stack
+from ..settlement import current_period, utc_to_settlement, window_around
 
 # A unit's own "fuel type" in Elexon's reference data doubles as its
 # interconnector name for interconnectors (INTFR, INTNED, INTELEC, ...) --
@@ -87,15 +89,30 @@ SMOOTHED_FUEL_TYPES = ("CCGT", "COAL", "PS")
 # Reference data
 # ---------------------------------------------------------------------------
 
-def fuel_type_reference(bm_unit_reference: pd.DataFrame) -> pd.DataFrame:
+def fuel_type_reference(bm_unit_reference: pd.DataFrame, other_fallback: bool = False) -> pd.DataFrame:
     """`bm_unit_reference` rows (national_grid_bm_unit, elexon_bm_unit,
     fuel_type, ...) -> a (bmUnit, nationalGridBmUnit, FT) frame, dropping
     units missing either identifier or a fuel type, and units whose fuel
     type isn't one Elexon itself recognises (see `ELEXON_FUEL_TYPES`) --
     the direct analogue of the notebooks' own `bmu_fuel_types` CSV.
+
+    `other_fallback` (opt-in, see config.py's `fpn_other_fallback_enabled`):
+    instead of dropping a unit whose curated `fuel_type` isn't one of
+    `ELEXON_FUEL_TYPES` (BATTERIES, LOAD RESPONSE, GAS, DIESEL, SOLAR, the
+    generic INTERCONNECTOR label -- see that constant's own docstring),
+    remaps it to "OTHER" so it still shows up on the FPN dashboard instead
+    of contributing nothing at all. Checked live 2026-09-25: all 110 units
+    currently carrying one of those five labels are genuinely live BM units
+    per Elexon's own reference API, and neither Elexon's live data nor the
+    BMU fuel type spreadsheet suggests a better-fitting FUELINST category
+    for any of them -- OTHER is the correct fallback, not a guess. Doesn't
+    touch `bm_unit_reference.fuel_type` itself, so the granular label is
+    still there for anything else that reads it.
     """
     ref = bm_unit_reference.dropna(subset=["elexon_bm_unit", "national_grid_bm_unit", "fuel_type"]).copy()
     ref["fuel_type"] = ref["fuel_type"].str.upper()
+    if other_fallback:
+        ref.loc[~ref["fuel_type"].isin(ELEXON_FUEL_TYPES), "fuel_type"] = "OTHER"
     ref = ref[ref["fuel_type"].isin(ELEXON_FUEL_TYPES)]
     ref = ref.rename(columns={"elexon_bm_unit": "bmUnit", "national_grid_bm_unit": "nationalGridBmUnit", "fuel_type": "FT"})[
         ["bmUnit", "nationalGridBmUnit", "FT"]
@@ -309,8 +326,20 @@ def compute_worst_deviants(fpn_mel_boalf_by_unit: pd.DataFrame, now: datetime | 
     deviants = fpn_mel_boalf_by_unit[fpn_mel_boalf_by_unit["bmUnit"].isin(deviant_units)].copy()
     deviants["mel_mil_drop"] = (deviants["adjusted_fpn"] - deviants["fpn_spot_vol"]).abs() / 30
 
-    recent_from = pd.Timestamp(now) - pd.Timedelta(minutes=2)
-    recent_mask = (deviants["spot_time"] > recent_from) & (deviants["spot_time"] < pd.Timestamp(now))
+    # "Current" MEL/MIL means the latest minute we actually HAVE data for,
+    # not literally wall-clock `now` -- MEL/MIL publish with a real lag
+    # (confirmed live: ~10 minutes behind `now` is normal), so a strict
+    # "last 2 minutes before now" window was empty on every single cycle,
+    # silently producing zero worst deviants forever (root cause of the
+    # dashboard showing days-stale data: `_persist` only replaces rows for
+    # periods it has fresh data for, so an empty result here just leaves
+    # old rows sitting untouched instead of refreshing or clearing them).
+    # Capping at the data's own latest spot_time -- never later than real
+    # `now`, in case of clock skew -- fixes the lookback without touching
+    # the forward/past split below, which must stay on real wall-clock time.
+    data_now = min(pd.Timestamp(now), fpn_mel_boalf_by_unit["spot_time"].max())
+    recent_from = data_now - pd.Timedelta(minutes=2)
+    recent_mask = (deviants["spot_time"] > recent_from) & (deviants["spot_time"] <= data_now)
     recent = deviants[recent_mask]
     current_mel = recent.groupby("bmUnit")["mel_spot_vol"].mean().rename("current_mel")
     current_mil = recent.groupby("bmUnit")["mil_spot_vol"].mean().rename("current_mil")
@@ -325,6 +354,162 @@ def compute_worst_deviants(fpn_mel_boalf_by_unit: pd.DataFrame, now: datetime | 
     deviants["mil_upside"] = future_check * deviants["mil_upside"]
     deviants["mel_mil_downside"] = deviants["mel_downside"] + deviants["mil_upside"]
     return deviants
+
+
+# ---------------------------------------------------------------------------
+# Plant trip detection
+# ---------------------------------------------------------------------------
+
+TRIP_THRESHOLD_MW = 50.0
+# A unit must fall back below this before it can trip-alert again -- without
+# this gap, a unit sitting right at TRIP_THRESHOLD_MW would re-fire on every
+# single recompute cycle instead of once per genuine trip.
+TRIP_RESET_MW = 15.0
+
+
+@dataclass
+class TripEvent:
+    bm_unit: str
+    fuel_type: str | None
+    drop_mw: float
+    settlement_date: date
+    settlement_period: int
+    detected_at: datetime
+
+
+# A tripped unit that has clawed back this share of its peak drop is "coming
+# back" -- worth its own (green) notification before it's fully recovered.
+TRIP_PARTIAL_RECOVERY_SHARE = 0.5
+
+
+@dataclass
+class TripRecovery:
+    """A previously-announced trip going away: `partial` once the drop has
+    halved, `full` once it's back under TRIP_RESET_MW."""
+
+    bm_unit: str
+    fuel_type: str | None
+    kind: str  # "partial" | "full"
+    peak_mw: float
+    drop_mw: float
+    settlement_date: date
+    settlement_period: int
+    detected_at: datetime
+
+
+def detect_trips(
+    by_unit: pd.DataFrame,
+    prev_state: dict[str, dict],
+    threshold_mw: float = TRIP_THRESHOLD_MW,
+    reset_mw: float = TRIP_RESET_MW,
+    now: datetime | None = None,
+    seed_only: bool = False,
+) -> tuple[list[TripEvent], list[TripRecovery], dict[str, dict]]:
+    """Per BM unit, tracks its MIL/MEL drop (`abs(adjusted_fpn -
+    fpn_spot_vol)`, same figure compute_worst_deviants uses) *as of now*:
+
+    - `TripEvent`: fires once, when the drop first jumps from under
+      `reset_mw` to `threshold_mw` or more. The unit is then "tripped" and
+      stays silent -- however many settlement periods the trip lasts --
+      until it recovers.
+    - `TripRecovery`: `partial` when the drop has fallen to
+      TRIP_PARTIAL_RECOVERY_SHARE of its peak, `full` when it's back under
+      `reset_mw` (which also re-arms the unit for a future trip).
+
+    The reading is the unit's latest minute at or before `now` -- NOT the
+    last minute in the data, which is the far end of the forecast window
+    (PN/MEL run ~2 settlement periods ahead) and flips every time that
+    window rolls onto a new period (the cause of a trip re-alerting in
+    each subsequent SP). `seed_only` records state without emitting
+    anything: used on the first cycle after a restart so units that were
+    already tripped aren't announced as new.
+
+    `prev_state` ({unit: {"drop", "peak", "partial", "recovered_at"}}) is
+    carried across cycles by the caller.
+    """
+    if by_unit.empty:
+        return [], [], prev_state
+    now = now or datetime.now(timezone.utc)
+
+    current = by_unit[by_unit["spot_time"] <= pd.Timestamp(now)]
+    if current.empty:
+        return [], [], prev_state
+    latest = current.sort_values("spot_time").groupby("bmUnit").tail(1)
+    latest = latest.assign(mel_mil_drop=(latest["adjusted_fpn"] - latest["fpn_spot_vol"]).abs())
+
+    new_state = {u: dict(s) for u, s in prev_state.items()}
+    trips: list[TripEvent] = []
+    recoveries: list[TripRecovery] = []
+    for row in latest.itertuples(index=False):
+        unit = row.bmUnit
+        drop_mw = float(row.mel_mil_drop)
+        st = new_state.get(unit) or {"drop": 0.0, "peak": None, "partial": False, "recovered_at": None}
+        sd = row.settlementDate
+        where = dict(
+            bm_unit=unit, fuel_type=row.FT, settlement_date=sd.date() if hasattr(sd, "date") else sd,
+            settlement_period=int(row.settlementPeriod), detected_at=now,
+        )
+        if st["peak"] is None:
+            if drop_mw >= threshold_mw and (st["drop"] < reset_mw or seed_only):
+                st["peak"], st["partial"], st["recovered_at"] = drop_mw, False, None
+                if not seed_only:
+                    trips.append(TripEvent(drop_mw=drop_mw, **where))
+        else:
+            st["peak"] = max(st["peak"], drop_mw)
+            if drop_mw < reset_mw:
+                if not seed_only:
+                    recoveries.append(TripRecovery(kind="full", peak_mw=st["peak"], drop_mw=drop_mw, **where))
+                st["peak"], st["partial"], st["recovered_at"] = None, False, now.isoformat()
+            elif not st["partial"] and drop_mw <= st["peak"] * TRIP_PARTIAL_RECOVERY_SHARE:
+                st["partial"] = True
+                if not seed_only:
+                    recoveries.append(TripRecovery(kind="partial", peak_mw=st["peak"], drop_mw=drop_mw, **where))
+        st["drop"] = drop_mw
+        new_state[unit] = st
+    return trips, recoveries, new_state
+
+
+# How long after a trip fully recovers its unit stays on the worst-behaviour
+# graphs -- long enough to see the recovery, short enough not to pile up.
+WB_RECENT_RECOVERY_HOURS = 3
+
+
+def worst_behaviour_series(
+    by_unit: pd.DataFrame, trip_state: dict[str, dict], window_periods: list[tuple], now: datetime, minute_step: int = 5,
+) -> pd.DataFrame:
+    """Zapdos' "Worst Behaviour Plants" data: for every currently-tripped
+    unit (and any recovered within WB_RECENT_RECOVERY_HOURS), one point per
+    `minute_step` minutes across the window -- `vol` (adjusted_fpn: the MW it
+    can actually deliver once its MEL/MIL are applied -- which in the future
+    minutes *is* its published plan for coming back), plus `fpn` and `mel`.
+    """
+    cutoff = now - pd.Timedelta(hours=WB_RECENT_RECOVERY_HOURS)
+    units = [
+        u for u, s in trip_state.items()
+        if s.get("peak") is not None or (s.get("recovered_at") and pd.Timestamp(s["recovered_at"]) >= pd.Timestamp(cutoff))
+    ]
+    cols = ["bm_unit", "fuel_type", "status", "spot_time", "settlement_period", "fpn", "mel", "vol"]
+    if by_unit.empty or not units or not window_periods:
+        return pd.DataFrame(columns=cols)
+    periods = pd.DataFrame({
+        "settlementDate": pd.to_datetime([sd for sd, _ in window_periods]),
+        "settlementPeriod": [int(sp) for _, sp in window_periods],
+    })
+    bu = by_unit[by_unit["bmUnit"].isin(units)].copy()
+    bu["settlementDate"] = pd.to_datetime(bu["settlementDate"])
+    bu = bu.merge(periods, on=["settlementDate", "settlementPeriod"])
+    bu = bu[bu["spot_time"].dt.minute % minute_step == 0]
+    if bu.empty:
+        return pd.DataFrame(columns=cols)
+    bu["status"] = bu["bmUnit"].map(lambda u: "tripped" if trip_state[u].get("peak") is not None else "recovered")
+    bu["mel"] = bu["mel_spot_vol"].where(np.isfinite(bu["mel_spot_vol"]), None)
+    bu["spot_time"] = bu["spot_time"].dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+    out = bu.rename(columns={"bmUnit": "bm_unit", "FT": "fuel_type", "settlementPeriod": "settlement_period", "fpn_spot_vol": "fpn", "adjusted_fpn": "vol"})
+    out = out[cols].sort_values(["bm_unit", "spot_time"])
+    for c in ("fpn", "vol"):
+        out[c] = out[c].round(1)
+    out["mel"] = out["mel"].map(lambda v: None if v is None or pd.isna(v) else round(float(v), 1))
+    return out.reset_index(drop=True)
 
 
 # ---------------------------------------------------------------------------
@@ -483,6 +668,57 @@ def pricing_stack_niv_spot_time(pricing_stack_niv_spot_time_rows: list[dict]) ->
     df["settlementDate"] = pd.to_datetime(df["settlement_date"])
     df["spot_time"] = pd.to_datetime(df["spot_time"], utc=True)
     return df.rename(columns={"settlement_period": "settlementPeriod"})[columns]
+
+
+def exploded_boalf_with_fuel_type(exploded: pd.DataFrame, fuel_ref: pd.DataFrame) -> pd.DataFrame:
+    """engine/stack.py's exploded_boalf_by_unit() -> the same rows (minus
+    the pairId band split, re-summed away) plus a `fuel_bucket` column for
+    the chart's colour-coding. By request, this uses Elexon's own full
+    fuel-type set (ELEXON_FUEL_TYPES above -- whatever fuel_ref's own `FT`
+    already carries) rather than collapsing down onto Zapdos's narrower
+    8-bucket palette; the web page owns the colour-per-bucket mapping.
+
+    `exploded`'s own bmUnit still carries the "_<pairId>" suffix
+    build_price_stack() appends during its six-case BOD-band split
+    (stack.py's own `combined` is mutated in place before
+    exploded_boalf_by_unit() ever sees it) -- stripped here via
+    `_strip_pair_id_suffix()`, the same helper every other bmUnit -> FT
+    join in this module already needs for exactly this reason (e.g.
+    `pricing_stack_delta_by_fuel_5min()` below). A unit priced across
+    several bands in the same minute would otherwise fragment into one
+    chart dataset per band instead of the one real per-unit series
+    Zapdos's own chart groups by -- re-summed by (bmUnit, spot_time) here
+    to collapse those bands back together first.
+
+    Any unit whose fuel type is an interconnector code (INTERCONNECTOR_FUEL_PREFIX,
+    e.g. INTFR/INTNED/...) is dropped entirely, by request -- interconnectors
+    don't appear as real balancing actions on this chart in practice.
+
+    Synthetic DISBSAD rows (bmUnit LIKE 'disbsad_%', blend_disbsad()'s own
+    National-Grid-balancing-action rows -- the suffix-stripped prefix
+    survives regardless of what follows it) have no fuel_ref match at
+    all -- mapped to 'NATGRID' directly, same as Zapdos's own chart does
+    for them. Anything else fuel_ref has no row for (a real BM unit
+    outside `bm_unit_reference`, or one whose own fuel type isn't in
+    ELEXON_FUEL_TYPES at all) falls to 'NO_FUEL' -- distinct from the real
+    Elexon category 'OTHER', which is a genuine fuel_ref-backed match.
+    """
+    columns = ["settlementDate", "settlementPeriod", "bmUnit", "spot_time", "delta", "fuel_bucket"]
+    if exploded.empty:
+        return pd.DataFrame(columns=columns)
+    df = exploded.copy()
+    df["bmUnit"] = df["bmUnit"].map(_strip_pair_id_suffix)
+    df = df.groupby(["settlementDate", "settlementPeriod", "bmUnit", "spot_time"])["delta"].sum().reset_index()
+    df = pd.merge(df, fuel_ref[["bmUnit", "FT"]].drop_duplicates(), how="left", on="bmUnit")
+    # Interconnectors never appear as balancing actions in practice (they're
+    # not dispatchable BM units in the sense this chart cares about) -- by
+    # request, dropped from this chart entirely rather than given their own
+    # fuel_bucket colour.
+    df = df[~df["FT"].fillna("").str.startswith(INTERCONNECTOR_FUEL_PREFIX)]
+    is_disbsad = df["bmUnit"].str.startswith("disbsad_")
+    df["fuel_bucket"] = df["FT"].fillna("NO_FUEL")
+    df.loc[is_disbsad, "fuel_bucket"] = "NATGRID"
+    return df.drop(columns=["FT"])
 
 
 def pricing_stack_delta_by_fuel(pricing_stack_delta_rows: list[dict], fuel_ref: pd.DataFrame) -> pd.DataFrame:
@@ -916,7 +1152,12 @@ def compute(
     pricing_stack_niv_rows: list[dict] | None = None,
     pricing_stack_niv_spot_time_rows: list[dict] | None = None,
     pricing_stack_unit_delta_5min_rows: list[dict] | None = None,
-) -> dict[str, pd.DataFrame]:
+    other_fallback: bool = False,
+    trip_state: dict[str, float] | None = None,
+    bod_df: pd.DataFrame | None = None,
+    bm_stack_enabled: bool = False,
+    trip_seed_only: bool = False,
+) -> dict[str, object]:
     """Runs the whole pipeline for the current rolling window and returns
     the frames FpnRunner persists: `by_fuel`, `worst_deviants`,
     `aggregated` (per-minute, with the decision-table's `niv_estimate` and
@@ -924,8 +1165,13 @@ def compute(
     the SP-level table the notebook itself only computes once per period),
     and `generation_by_fuel`. Empty dict if there's no PN data to explode
     yet (e.g. a fresh startup).
+
+    `other_fallback`: see fuel_type_reference()'s own docstring -- opt-in
+    (config.py's `fpn_other_fallback_enabled`, dev-only until validated)
+    so units tagged BATTERIES/LOAD RESPONSE/GAS/DIESEL/SOLAR/INTERCONNECTOR
+    show up under OTHER instead of being silently excluded.
     """
-    fuel_ref = fuel_type_reference(bm_unit_reference)
+    fuel_ref = fuel_type_reference(bm_unit_reference, other_fallback=other_fallback)
     sets = unit_sets(fuel_ref)
 
     merged = explode_and_merge(pn_df, boalf_df, mel_df, mil_df, fuel_ref, sets)
@@ -934,6 +1180,21 @@ def compute(
 
     by_unit, by_fuel = aggregate_by_fuel(merged, fuel_ref)
     worst_deviants = compute_worst_deviants(by_unit, now=now)
+    trips, trip_recoveries, trip_state = detect_trips(by_unit, trip_state or {}, now=now, seed_only=trip_seed_only)
+    cur_period = current_period(now)
+    wb_series = worst_behaviour_series(
+        by_unit, trip_state, window_around(cur_period.settlement_date, cur_period.settlement_period),
+        now or datetime.now(timezone.utc),
+    )
+
+    bm_stack = pd.DataFrame()
+    if bm_stack_enabled:
+        cur = current_period(now)
+        bm_stack = compute_bm_stack(
+            by_unit, bod_df, fuel_ref, bm_unit_reference,
+            window_around(cur.settlement_date, cur.settlement_period),
+            exclude_fuel_prefix=INTERCONNECTOR_FUEL_PREFIX,
+        )
 
     spot_times = merged[["settlementDate", "settlementPeriod", "spot_time"]].drop_duplicates()
     interconnectors = interconnector_rows(pn_df, fuel_ref, sets, spot_times)
@@ -963,4 +1224,9 @@ def compute(
         "worst_deviants": worst_deviants,
         "aggregated": aggregated,
         "generation_by_fuel": generation_by_fuel,
+        "trips": trips,
+        "trip_recoveries": trip_recoveries,
+        "trip_state": trip_state,
+        "wb_series": wb_series,
+        "bm_stack": bm_stack,
     }
