@@ -1,6 +1,6 @@
 const statusEl = document.getElementById("connection-status");
 
-// "Generation Chart" -- named that on this page; the real Zapdos source
+// "Generation Chart" -- named that on this page; the real reference app source
 // calls it "Forecast Chart" (components/chartjs/forecast_chart.js). Only
 // 6 of that source's 7 lines are shown here, by request (cobble_ndf/
 // misco_ndf is the one left out), labelled with their own raw field names
@@ -24,7 +24,7 @@ const GENERATION_SERIES = [
 ];
 
 // "Delta_chart" -- a combo chart (a semi-transparent filled area alongside
-// plain lines) in the real Zapdos source (components/chartjs/delta_chart.js),
+// plain lines) in the real reference app source (components/chartjs/delta_chart.js),
 // labelled and colored the same way as GENERATION_SERIES above -- raw field
 // names, each one's exact color/fill/dash copied from that source's own
 // lineConfig object:
@@ -60,7 +60,7 @@ function td(value, digits = 0) {
   return `<td data-sign="${value == null ? "" : value}">${fmt(value, digits)}</td>`;
 }
 
-// Exact magnitude-band shading from the real Zapdos app source
+// Exact magnitude-band shading from the real reference app source
 // (components/tables/generate-fuel-type-table.js), applied there to this
 // same table (`market_gen_vs_adj_fpn_by_sp`) -- discrete bands, not a
 // continuous scale: |value| <= 50 stays plain, then low/medium/high (or
@@ -81,7 +81,7 @@ function tdShaded(value, digits = 0) {
   return `<td data-sign="${value}"${rangeAttr}>${fmt(value, digits)}</td>`;
 }
 
-// Same band thresholds as tdShaded() above, but the real Zapdos app source's
+// Same band thresholds as tdShaded() above, but the real reference app source's
 // own SEPARATE blue/red "delta-positive/negative" data-range names (see
 // custom.css) instead of its green/orange "low/medium/high" ones -- used
 // for a genuine delta/change metric like Mil Mel Drop, distinct from
@@ -191,13 +191,13 @@ function updateChart(chart, series, rows) {
   chart.update();
 }
 
-// Market_gen vs Adj_fpn -- port of Zapdos's max_gen_vs_adj_fpn_chart.js:
+// Market_gen vs Adj_fpn -- port of the reference app's max_gen_vs_adj_fpn_chart.js:
 // one line per fuel type of (market generation - adjusted FPN), so above
 // zero is over-performance and below zero under-performance. Same design as
 // that chart: its own per-fuel colour map (lowercase fuel names), 1.5px
 // lines without points, legend on the right whose click toggles a fuel and
 // rescales y to the fuels still visible, a name label (white, 11px) on
-// points with |value| >= 200 MW, and Zapdos's grey y ticks/gridlines.
+// points with |value| >= 200 MW, and the reference app's grey y ticks/gridlines.
 const MARKET_GEN_COLORS = {
   biomass: "#96031A", ccgt: "#D90368", coal: "#daaffd", intew: "#588B8B",
   intfr: "#FAA916", intirl: "#57B8FF", intned: "#cccccc", intnem: "#F2E86D",
@@ -208,7 +208,7 @@ const MARKET_GEN_LABEL_MW = 200;
 const MARKET_GEN_TICK = "rgb(185,185,185)";
 const MARKET_GEN_GRID = "rgba(155,155,155,0.2)";
 
-// Fuels Zapdos has no colour for (e.g. other interconnectors, NATGRID):
+// Fuels the reference app has no colour for (e.g. other interconnectors, NATGRID):
 // stable hash so a fuel keeps its colour between refreshes.
 function marketGenColor(fuelType) {
   const key = String(fuelType).toLowerCase();
@@ -314,7 +314,7 @@ function updateMarketGenChart(chart, rows, valueKey) {
   const boundaries = [];
   sps.forEach((p, i) => { if (p.mins % 30 === 0 && (i === 0 || sps[i - 1].mins !== p.mins)) boundaries.push(i); });
   const width = chart.width || chart.canvas.clientWidth || 300;
-  // Zapdos puts the legend on the right; on a narrow screen its 19 entries
+  // the reference app puts the legend on the right; on a narrow screen its 19 entries
   // would eat the plot, so it drops underneath there.
   chart.options.plugins.legend.position = width < 700 ? "bottom" : "right";
   const plotWidth = width < 700 ? width : width * 0.85;
@@ -454,7 +454,7 @@ async function loadDashboard() {
   renderFuelPivot("tbl-market-gen-vs-adj-fpn", excludeNatgrid(byFuelSp), "market_gen_vs_adj_fpn", 0, "magnitude");
 
   // Row order is the user's own preference (AUC, Delta, NIV error, Dmd
-  // risk, Dmd error, Unexp), not the real Zapdos "Delta table" (components/
+  // risk, Dmd error, Unexp), not the real reference app "Delta table" (components/
   // tables/delta-table.js)'s own order. `delta` here is this engine's own
   // raw system-wide NIV figure (see engine/fpn.py's build_aggregated,
   // niv_sp_max * 2) -- confirmed against the FPN notebook's actual formula
@@ -513,7 +513,7 @@ async function loadWorstDeviants() {
   setFigure("stat-sum-mel-mil-downside", rows.length ? downsideSum : null);
 }
 
-// Suffix rule per fuel type started from the real Zapdos app source's own
+// Suffix rule per fuel type started from the real reference app source's own
 // three-way split (components/tables/generate-real-time-generation-table-html.js),
 // then trimmed further by request: OTHER keeps just `_m`/`_d` (no `_r`),
 // NPSHYD/OCGT drop `_r` (keep `_m`/`_d` only), PS switched from `_r`-only
@@ -569,7 +569,7 @@ function renderRealTimeGenerationTable(tableId, rows, maxRows = 24) {
   }
 
   // wind5/wind15/wind30 -- how much WIND_m has moved over the trailing
-  // 5/15/30 minutes, at the bottom-right of this table (also on Zapdos'
+  // 5/15/30 minutes, at the bottom-right of this table (also on the reference app'
   // own FPN accuracy page). Rows sit on FUELINST's 5-minute grid (see
   // `timestamps` above), so 5/15/30 minutes back is simply 1/3/6 rows back
   // from the latest (index 0, since `timestamps` sorts newest-first).
@@ -603,7 +603,7 @@ async function loadGenerationByFuel() {
 }
 
 // ---------------------------------------------------------------------------
-// Decision table -- ported from the real Zapdos app source
+// Decision table -- ported from the real reference app source
 // (components/tables/decision-table/{index,data-utils}.js, found in the
 // Old World install; only CSS fragments of this page survived in this
 // project's own reference/ folder). Three independent "what if" scenario

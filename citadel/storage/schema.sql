@@ -51,7 +51,7 @@ CREATE INDEX IF NOT EXISTS idx_pricing_stack_sd_sp ON pricing_stack_rows(settlem
 -- pricing_stack_rows.total_delta above (one MWh figure per whole period):
 -- this is the real-time build-up of NIV minute by minute as bids/offers are
 -- actually accepted, feeding engine/fpn.py's Delta Chart `delta` line
--- (`niv_spot_time_max` in the original notebook/Zapdos naming).
+-- (`niv_spot_time_max` in the original notebook/the reference app naming).
 CREATE TABLE IF NOT EXISTS pricing_stack_niv_spot_time (
     settlement_date     DATE NOT NULL,
     settlement_period   INTEGER NOT NULL,
@@ -216,7 +216,7 @@ CREATE INDEX IF NOT EXISTS idx_fpn_aggregated_sd_sp ON fpn_aggregated(settlement
 -- Added after the table's first release -- ALTER for databases that
 -- already have the old column set (CREATE TABLE IF NOT EXISTS above is a
 -- no-op against them). spot_indo/spot_latest_ndf: the raw (uncobbled)
--- INDO/NDF lines the real Zapdos "Forecast Chart" plots alongside the
+-- INDO/NDF lines the real reference app "Forecast Chart" plots alongside the
 -- misco_* smoothed ones. niv_sp_max: the pricing stack's own real,
 -- already-settled NIV for the period (`total_delta` in pricing_stack_rows)
 -- -- the notebook's own live NIV pickle, read in-process instead.
@@ -313,9 +313,9 @@ CREATE TABLE IF NOT EXISTS fundies_day_ahead (
     embedded_solar_forecast       DOUBLE PRECISION,
     da_price                      DOUBLE PRECISION,
     da_volume                     DOUBLE PRECISION,
-    -- Zapdos-style derived rows (see engine/fundies.py:build_derived_rows) --
+    -- reference-app-style derived rows (see engine/fundies.py:build_derived_rows) --
     -- ride along on this table since they need both real-time and
-    -- day-ahead inputs together, same as the real Zapdos table renders
+    -- day-ahead inputs together, same as the real reference app table renders
     -- them as rows alongside everything else.
     indo_da_ndf_delta             DOUBLE PRECISION,
     fake_wind_ot_da_winfor_delta  DOUBLE PRECISION,

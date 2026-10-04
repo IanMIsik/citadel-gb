@@ -67,7 +67,7 @@ function newestFirstKeys(keys) {
   });
 }
 
-// Cell/row styling below borrows directly from the predecessor Zapdos
+// Cell/row styling below borrows directly from the predecessor the reference app
 // app's pricing stack view (reference/pricing-stack-reference/): the compact
 // centred `.pricing-stack-text` cells and the bold total-volume figure.
 // Unflagged and flagged are laid out as two side-by-side sub-columns per

@@ -2,7 +2,7 @@
 
 Small, hand-derived synthetic frames -- confirms the SP-broadcast helper,
 the wind-curtailment estimate (with and without a working bid stack), the
-SEMO IDA2-over-IDA1 priority merge, and the Zapdos-style derived-row
+SEMO IDA2-over-IDA1 priority merge, and the reference app-style derived-row
 formulas (ported from the real Electron app's DeltaRowData/
 MultipleSubtractionRowData -- see engine/fundies.py's own docstring)
 against known arithmetic.
@@ -131,7 +131,7 @@ def test_semo_net_flows_ida1_fills_gaps_ida2_doesnt_cover():
     assert out.iloc[0]["intmoyle_net"] == 8
 
 
-def test_build_derived_rows_matches_zapdos_formulas():
+def test_build_derived_rows_matches_reference_formulas():
     sd = pd.Timestamp("2026-09-28").date()
     real_time = pd.DataFrame([{
         "settlementDate": sd, "settlementPeriod": 10,

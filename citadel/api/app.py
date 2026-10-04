@@ -389,7 +389,7 @@ async def trip_revisions(trip_id: int):
 
 @app.get("/api/trips/worst-behaviour")
 async def trips_worst_behaviour_graph():
-    """Zapdos-style "Worst Behaviour Plants" data: for each tripped (or
+    """reference-app-style "Worst Behaviour Plants" data: for each tripped (or
     just-recovered) unit, its effective MW (`vol`), FPN and MEL across the
     last-3 .. next-2 settlement periods -- the future part of `vol` is the
     plant's published plan for coming back. Built by engine/fpn.py's

@@ -1,9 +1,9 @@
 """Fundies -- fundamentals monitor (demand forecast/outturn, wind
 forecast/outturn, solar, interconnector flows, nuclear day-ahead output),
 ported from Fundies.ipynb (the user's own working data pipeline, which
-already replaced the old Zapdos Electron app's dead paid feeds -- RNP,
+already replaced the old the reference app Electron app's dead paid feeds -- RNP,
 SEMO-via-old-host, EuroWind -- with public/personal-API-key sources) onto
-this project's own engine/storage. The Zapdos app's `fundies.html` is the
+this project's own engine/storage. The reference app's `fundies.html` is the
 *visual* reference (see web/fundies.html/fundies.js for the transposed
 48-settlement-period table + percentile-heatmap CSS); this module is the
 *data* reference, following the notebook's own column provenance exactly
@@ -14,10 +14,10 @@ no substitute here, per explicit user decision).
 Two output frames, one row per settlement period, matching the notebook's
 own two Google Sheet tabs:
   - `build_real_time(...)` -> `fundies_rt_df`'s column set.
-  - `build_day_ahead(...)` -> `da_df`'s column set, PLUS the Zapdos-style
+  - `build_day_ahead(...)` -> `da_df`'s column set, PLUS the reference app-style
     derived rows (`indo_da_ndf_delta`, `latest_resid`, etc.) appended on --
     those genuinely need both real-time and day-ahead inputs together (the
-    real Zapdos table renders them as rows in the SAME table as everything
+    real the reference app table renders them as rows in the SAME table as everything
     else), so rather than a third small table, they ride along on the
     day-ahead frame (see build_derived_rows()'s own docstring).
 """
@@ -446,12 +446,12 @@ def build_day_ahead(
 
 
 # ---------------------------------------------------------------------------
-# Zapdos-style derived rows -- ported from the real Electron app's
+# reference-app-style derived rows -- ported from the real Electron app's
 # DeltaRowData/SummationRowData/MultipleSubtractionRowData (see
-# Old World/zapdos_extracted/.../common-scripts/data-utils/data-types.js),
+# Old World/reference_app_extracted/.../common-scripts/data-utils/data-types.js),
 # computed here against our own real-time/day-ahead frames instead of that
 # app's dead RNP-fed rows. These need BOTH frames together (the real
-# Zapdos table renders them as rows in the same table as everything else),
+# the reference app table renders them as rows in the same table as everything else),
 # so they're returned as their own small frame the caller appends onto the
 # day-ahead output rather than a third persisted table.
 # ---------------------------------------------------------------------------

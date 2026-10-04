@@ -477,7 +477,7 @@ WB_RECENT_RECOVERY_HOURS = 3
 def worst_behaviour_series(
     by_unit: pd.DataFrame, trip_state: dict[str, dict], window_periods: list[tuple], now: datetime, minute_step: int = 5,
 ) -> pd.DataFrame:
-    """Zapdos' "Worst Behaviour Plants" data: for every currently-tripped
+    """the reference app' "Worst Behaviour Plants" data: for every currently-tripped
     unit (and any recovered within WB_RECENT_RECOVERY_HOURS), one point per
     `minute_step` minutes across the window -- `vol` (adjusted_fpn: the MW it
     can actually deliver once its MEL/MIL are applied -- which in the future
@@ -637,7 +637,7 @@ def pricing_stack_niv_by_period(pricing_stack_niv_rows: list[dict]) -> pd.DataFr
     """`pricing_stack_niv_rows` (from db.pricing_stack_niv_by_period) --
     the pricing stack's own real, already-settled NIV per (settlementDate,
     settlementPeriod), for the "Delta table"'s `niv_sp_max` row (see the
-    real Zapdos delta-table.js, which reads this from a `spot_niv.pkl`
+    real the reference app delta-table.js, which reads this from a `spot_niv.pkl`
     handoff from the sibling notebook -- here it's the same in-process read
     already established for `market_gen`, via a different pricing-stack
     column).
@@ -675,7 +675,7 @@ def exploded_boalf_with_fuel_type(exploded: pd.DataFrame, fuel_ref: pd.DataFrame
     the pairId band split, re-summed away) plus a `fuel_bucket` column for
     the chart's colour-coding. By request, this uses Elexon's own full
     fuel-type set (ELEXON_FUEL_TYPES above -- whatever fuel_ref's own `FT`
-    already carries) rather than collapsing down onto Zapdos's narrower
+    already carries) rather than collapsing down onto the reference app's narrower
     8-bucket palette; the web page owns the colour-per-bucket mapping.
 
     `exploded`'s own bmUnit still carries the "_<pairId>" suffix
@@ -687,7 +687,7 @@ def exploded_boalf_with_fuel_type(exploded: pd.DataFrame, fuel_ref: pd.DataFrame
     `pricing_stack_delta_by_fuel_5min()` below). A unit priced across
     several bands in the same minute would otherwise fragment into one
     chart dataset per band instead of the one real per-unit series
-    Zapdos's own chart groups by -- re-summed by (bmUnit, spot_time) here
+    the reference app's own chart groups by -- re-summed by (bmUnit, spot_time) here
     to collapse those bands back together first.
 
     Any unit whose fuel type is an interconnector code (INTERCONNECTOR_FUEL_PREFIX,
@@ -697,7 +697,7 @@ def exploded_boalf_with_fuel_type(exploded: pd.DataFrame, fuel_ref: pd.DataFrame
     Synthetic DISBSAD rows (bmUnit LIKE 'disbsad_%', blend_disbsad()'s own
     National-Grid-balancing-action rows -- the suffix-stripped prefix
     survives regardless of what follows it) have no fuel_ref match at
-    all -- mapped to 'NATGRID' directly, same as Zapdos's own chart does
+    all -- mapped to 'NATGRID' directly, same as the reference app's own chart does
     for them. Anything else fuel_ref has no row for (a real BM unit
     outside `bm_unit_reference`, or one whose own fuel type isn't in
     ELEXON_FUEL_TYPES at all) falls to 'NO_FUEL' -- distinct from the real

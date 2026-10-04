@@ -355,7 +355,7 @@ async def fpn_decision_drivers_sp(pool: asyncpg.Pool, sd: date, periods: list[in
 
 async def fpn_aggregated_for_periods(pool: asyncpg.Pool, sd: date, periods: list[int]) -> list[asyncpg.Record]:
     """Per-minute rows across the whole rolling window (not just the
-    current settlement period) -- backs the real Zapdos "Forecast Chart",
+    current settlement period) -- backs the real reference app "Forecast Chart",
     which plots every SP in the window as one continuous multi-line series,
     not just the ~30 minutes of whichever period is current.
     """
@@ -370,7 +370,7 @@ async def pricing_stack_niv_by_period(pool: asyncpg.Pool, sd: date, periods: lis
     (`total_delta` -- see engine/imbalance_price.py's docstring; it's the
     same value repeated on every row of a period's `pricing_stack_rows`,
     so MAX picks it out without needing a DISTINCT ON). This is the real
-    Zapdos "Delta table"'s own `niv_sp_max` row -- in the original tools it
+    the reference app "Delta table"'s own `niv_sp_max` row -- in the original tools it
     arrived via a `spot_niv.pkl` handoff from the sibling notebook; here
     it's the same in-process read already established for `market_gen`.
     """
@@ -469,7 +469,7 @@ async def pricing_stack_unit_delta_5min_by_period(pool: asyncpg.Pool, sd: date, 
 
 async def fpn_market_gen_vs_adj_fpn_series(pool: asyncpg.Pool, sd: date, periods: list[int]) -> list[asyncpg.Record]:
     """Per-minute, per-fuel-type `market_gen_vs_adj_fpn` across the window
-    -- backs the real "Market_gen vs Adj_fpn" chart on the Zapdos home page
+    -- backs the real "Market_gen vs Adj_fpn" chart on the reference app home page
     (per-fuel-type toggleable lines, not one aggregate line).
     """
     return await pool.fetch(

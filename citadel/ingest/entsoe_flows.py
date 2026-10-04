@@ -1,5 +1,5 @@
 """ENTSO-E Transparency Platform -- interconnector scheduled cross-border
-flows, replacing the old Zapdos app's paid RNP feed (see Fundies.ipynb,
+flows, replacing the old reference app's paid RNP feed (see Fundies.ipynb,
 this dashboard's real, working reference pipeline). Needs a personal API
 key (settings.entsoe_key) -- register free at
 https://transparency.entsoe.eu/.

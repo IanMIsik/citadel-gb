@@ -1,6 +1,6 @@
-# Reference: Zapdos pricing stack (predecessor Electron app)
+# Reference: the reference app pricing stack (predecessor Electron app)
 
-Extracted from `Zapdos-production-1.0.1.zip` (an NSIS-installer-wrapped
+Extracted from `reference-app-production-1.0.1.zip` (an NSIS-installer-wrapped
 Electron app, 2020) for reference while building Citadel's own pricing
 stack page. Not part of the Citadel build — kept here purely as design
 reference, so the .exe/.zip doesn't need re-extracting.

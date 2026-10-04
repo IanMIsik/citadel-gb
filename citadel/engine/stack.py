@@ -83,7 +83,7 @@ UNIT_DELTA_5MIN_COLUMNS = ["settlementDate", "settlementPeriod", "bmUnit", "star
 # Raw, unbucketed per-minute counterpart of UNIT_DELTA_5MIN_COLUMNS -- feeds
 # the "All Plants Exploded BOALF" chart (engine/fpn.py's
 # exploded_boalf_with_fuel_type()), which needs the real per-minute
-# trajectory Zapdos's own reference chart plots, not a 5-minute average.
+# trajectory the reference app's own reference chart plots, not a 5-minute average.
 EXPLODED_BOALF_COLUMNS = ["settlementDate", "settlementPeriod", "bmUnit", "spot_time", "delta"]
 
 
@@ -984,7 +984,7 @@ def exploded_boalf_by_unit(combined: pd.DataFrame) -> pd.DataFrame:
     `combined`'s own `delta` -- the raw, unbucketed per-minute trajectory
     each BM unit's accepted volume actually took, INCLUDING synthetic
     DISBSAD rows (bmUnit LIKE 'disbsad_%', unlike
-    spot_time_bm_unit_delta_5min()'s own exclusion of them above). Zapdos's
+    spot_time_bm_unit_delta_5min()'s own exclusion of them above). the reference app's
     "All Plants Exploded Boalf" chart colour-codes those synthetic rows
     under its own NATGRID fuel-type bucket rather than dropping them, and
     this is the one view here that needs that inclusion. Feeds

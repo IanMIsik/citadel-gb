@@ -60,9 +60,9 @@
         </div>
 
         <!-- Decision table: validated on dev, now live on prod too -- ported
-             from the real Zapdos app source. The row/column structure below
+             from the real reference app source. The row/column structure below
              is copied directly from the real markup found in
-             `Old World/zapdos_extracted/app_source/src/views/index.html`'s
+             `Old World/reference_app_extracted/app_source/src/views/index.html`'s
              `.decision-table-container`: one row per driver, each scenario
              contributing an "Input" column immediately followed by its own
              "Vs now" column in that SAME row (not a separate row underneath),
@@ -189,7 +189,7 @@
         </div>
       </section>
 
-      <!-- Right column ("charts-container" in the real Zapdos home page):
+      <!-- Right column ("charts-container" in the real reference app home page):
            the same three charts in the same order (Generation Chart,
            Delta Chart, Market_gen vs Adj_fpn -- the last still hidden),
            all `.graph-container.big` (the real page's own size class for
@@ -197,7 +197,7 @@
            single-chart window), then its summary stat cards and the Real
            Time Generation table. -->
       <section class="fpn-col fpn-col-right">
-        <!-- Generation Chart -- the real Zapdos "Forecast Chart" (see
+        <!-- Generation Chart -- the real reference app "Forecast Chart" (see
              fpn.js's GENERATION_SERIES), renamed per the user's own
              preference, showing every SP in the rolling window, not just
              the current one. Placed first, matching the real page's own
@@ -209,7 +209,7 @@
           <canvas class="chartjs_canvas" id="generation-chart"></canvas>
         </div>
 
-        <!-- Delta Chart -- the real Zapdos "Delta_chart" (see fpn.js's
+        <!-- Delta Chart -- the real reference app "Delta_chart" (see fpn.js's
              DELTA_SERIES), brought in right below the Generation Chart,
              labelled/titled the same way and sharing its own SP-boundary
              x-axis logic (see updateChart). -->
@@ -218,7 +218,7 @@
           <canvas class="chartjs_canvas" id="delta-chart"></canvas>
         </div>
 
-        <!-- Market_gen vs Adj_fpn -- the real Zapdos chart of the same name
+        <!-- Market_gen vs Adj_fpn -- the real reference app chart of the same name
              (components/chartjs/max_gen_vs_adj_fpn_chart.js), directly below
              the Delta Chart as in its own #charts-container: one line per
              fuel type of (market generation - adjusted FPN), so above zero is

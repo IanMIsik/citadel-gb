@@ -1,16 +1,16 @@
 // BM Stack -- the bids and offers still available (untouched) for National
 // Grid to call, per settlement period (data: GET /api/bm-stack, built by
-// engine/bm_stack.py). Chart design follows Zapdos's own BM Stack window
+// engine/bm_stack.py). Chart design follows the reference app's own BM Stack window
 // (views/windows/bm-stack): one stacked bar chart per side, x = distinct
 // prices, a bar segment per unit coloured by fuel type, and a thin running-
 // sum line (GW) on a right-hand axis; SP / Vol Sign / FT controls on the
-// right. Differences from Zapdos: Chart.js 4, no 16-units-per-price cap (the
+// right. Differences from the reference app: Chart.js 4, no 16-units-per-price cap (the
 // number of stack "levels" is computed from the data), a by-fuel table and
 // summary tiles, and a 30s poll instead of a socket push.
 
 if (window.ChartDataLabels) Chart.register(window.ChartDataLabels);
 
-// Same fuel -> colour map as all-plants-boalf.js (itself Zapdos's palette
+// Same fuel -> colour map as all-plants-boalf.js (itself the reference app's palette
 // extended to Elexon's full fuel set) -- the `backgroundColor` values.
 const FUEL_COLORS = {
   CCGT: "#2c7a65", OCGT: "#5a7d1f", OIL: "#5c3a1e", COAL: "#7c9333", NUCLEAR: "#8a6d00",
@@ -18,7 +18,7 @@ const FUEL_COLORS = {
   NATGRID: "rgb(83, 0, 171)", NO_FUEL: "#ae672c",
 };
 const FUEL_ORDER = ["BIOMASS", "CCGT", "PS", "COAL", "WIND", "NUCLEAR", "OTHER", "NPSHYD", "OCGT", "OIL", "NATGRID", "NO_FUEL"];
-// Zapdos labelled every segment >= 50 MW, which piles names on top of each
+// the reference app labelled every segment >= 50 MW, which piles names on top of each
 // other where bars are thin. A name is now drawn (vertically, inside its own
 // segment) only when the segment is tall enough to hold it; every unit is
 // still in the tooltip.
@@ -107,7 +107,7 @@ function renderControls() {
 
 function buildChartData(rows) {
   // Offers run cheapest-first (ascending); bids descending (highest price =
-  // cheapest for the system), as in Zapdos.
+  // cheapest for the system), as in the reference app.
   const prices = [...new Set(rows.map((r) => r.price))].sort((a, b) => (state.side === "offer" ? a - b : b - a));
   const idx = new Map(prices.map((p, i) => [p, i]));
 

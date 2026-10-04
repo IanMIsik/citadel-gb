@@ -2,7 +2,7 @@
 // SCHEDULED commercial flow (ENTSO-E's 7 pairs + SEMO's 3, dotted) against
 // the REAL metered flow (FUELHH, solid) for the same pair -- fed by
 // /api/fundies/interconnectors (see ingest/entsoe_flows.py / ingest/semo.py
-// / engine/fundies.py's interconnector_real_flows()). No direct Zapdos
+// / engine/fundies.py's interconnector_real_flows()). No direct the reference app
 // precedent (the real app never built this as its own page); reuses this
 // project's own established Chart.js `.graph-container` pattern.
 

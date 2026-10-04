@@ -1,18 +1,18 @@
-// All Plants Exploded BOALF -- ported from Zapdos's own
+// All Plants Exploded BOALF -- ported from the reference app's own
 // all-plants-exploded-boalf-scripts/ (config.js/renderers.js/data-utils.js):
 // one stacked-area line per BM unit (Chart.js `fill: true` + `stacked:
 // true`), coloured by fuel type, a settlement-period sidebar toggle list,
 // and a custom fuel-type legend (the built-in Chart.js legend stays off,
-// same as Zapdos's own `showLegend: false`). Fed by /api/all-plants-boalf
+// same as the reference app's own `showLegend: false`). Fed by /api/all-plants-boalf
 // (initial paint) + /ws/all-plants-boalf (live pushes) -- see
 // engine/stack.py's exploded_boalf_by_unit() and engine/fpn.py's
 // exploded_boalf_with_fuel_type() for where the data comes from.
 
 // By request, coloured by Elexon's own full fuel-type set (engine/fpn.py's
 // ELEXON_FUEL_TYPES -- whatever fuel_ref's own FT carries) rather than
-// Zapdos's narrower 8-bucket palette. The 6 types Zapdos's own config.js
+// the reference app's narrower 8-bucket palette. The 6 types the reference app's own config.js
 // already had a colour for keep those exact hues; everything else here is
-// a new colour chosen to stay distinguishable against them, not a Zapdos
+// a new colour chosen to stay distinguishable against them, not a the reference app
 // citation. Interconnector fuel types are excluded entirely server-side
 // (exploded_boalf_with_fuel_type() -- they aren't real balancing actions),
 // so no INT* entry is needed here. NATGRID (synthetic DISBSAD rows) and
@@ -33,7 +33,7 @@ const FUEL_COLORS = {
   NO_FUEL: { color: "#d6b395", backgroundColor: "#ae672c" },
 };
 // Z-stack order for the stacked area -- generation types first (large,
-// roughly Zapdos's own relative ordering), then the two synthetic buckets
+// roughly the reference app's own relative ordering), then the two synthetic buckets
 // last (smallest/rarest, by observation).
 const FUEL_ORDER = [
   "PS", "NUCLEAR", "COAL", "OCGT", "OIL", "NPSHYD", "WIND", "CCGT", "BIOMASS", "OTHER",
@@ -157,7 +157,7 @@ const chart = new Chart(ctx, {
           for (let t = start; t <= axis.max; t += stepMs) ticks.push({ value: t });
           axis.ticks = ticks;
         },
-        // Labelled with the SP number itself (ported from Zapdos's own
+        // Labelled with the SP number itself (ported from the reference app's own
         // tick callback), not the raw clock time -- these double as
         // visible settlement-period separators rather than plain time
         // gridlines.
@@ -206,7 +206,7 @@ const chart = new Chart(ctx, {
 function renderChart() {
   // One dataset per (bmUnit, sign) pair -- a unit whose volume crosses
   // zero across the window gets a "_"-suffixed twin dataset, exactly
-  // Zapdos's own renderers.js trick, so a stacked area never has to
+  // the reference app's own renderers.js trick, so a stacked area never has to
   // represent one line swinging from positive to negative.
   const series = new Map(); // key -> {fuel_bucket, points: Map(iso -> delta)}
   for (const key of visibleKeys) {

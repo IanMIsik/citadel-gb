@@ -1,9 +1,9 @@
 // Fundies dashboard -- see fundies.html's own comment for the design
-// split (your Fundies.xlsx for row order/arrangement, Zapdos's real
+// split (your Fundies.xlsx for row order/arrangement, the reference app's real
 // fundies.html for column/heatmap mechanics, Fundies.ipynb's own working
 // pipeline for the data). SP = settlement period, 1-48 across a day (the
 // rare 46/50-period DST-transition days are rendered the same simplified
-// way the real Zapdos table always did -- SP 1-48 fixed).
+// way the real reference app table always did -- SP 1-48 fixed).
 
 const SETTLEMENT_PERIODS = Array.from({ length: 48 }, (_, i) => i + 1);
 
@@ -91,11 +91,11 @@ function fmtCell(value, native, digits, prefix) {
 
 // Percentile-heatmap CSS custom properties (--percentile/--value/--opacity),
 // consumed by style.css's `td[data-heat=...]` rules -- formulas ported
-// verbatim from the real Zapdos app's custom.css. Tagged here by a shared
+// verbatim from the real reference app's custom.css. Tagged here by a shared
 // `heat` concept (several of our columns map to one formula the source
 // only ever named once, e.g. every interconnector-net column reuses its
 // own `[data-name='fr'|'nl'|'be'|'irl']` formula under one `interconnector`
-// tag) rather than guessing a formula for a row Zapdos never had.
+// tag) rather than guessing a formula for a row the reference app never had.
 // The real source's own updateRow() caps the raw (already kilo-scaled)
 // value fed into a `--value`-based hsla formula before using it, per row
 // -- otherwise a big settlement period's flow pushes the hue calc outside
@@ -104,7 +104,7 @@ function fmtCell(value, native, digits, prefix) {
 // Only the 3 delta rows use a fixed cap now -- interconnector rows moved
 // to a row-relative scale instead (see DIVERGING_ROW_RELATIVE below):
 // individual pairs routinely sit in the 0.1-0.7 GW range, nowhere near
-// Zapdos's own [-18,40] cap (tuned for its own 4 cables' typical
+// the reference app's own [-18,40] cap (tuned for its own 4 cables' typical
 // magnitude), so alpha was always ~0 and the colouring read as basically
 // switched off. A row-relative scale (each row's own observed min/max
 // that day) gives every pair a meaningful, visible spread regardless of
@@ -118,7 +118,7 @@ const HEAT_VALUE_CAPS = {
 // The interconnector/delta rows spend most of their time near zero, and
 // the real source's own lightness-based formula for them goes toward
 // WHITE at zero (100% lightness, only darkening as |value| grows) -- fine
-// against Zapdos's own light-mode table, but on this page's dark theme it
+// against the reference app's own light-mode table, but on this page's dark theme it
 // meant most of these rows read as a wash of white cells. Redesigned as a
 // translucent blue(positive)/red(negative) overlay instead: alpha scales
 // with magnitude (0 at zero, fading the dark background through), hue is

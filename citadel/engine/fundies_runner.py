@@ -6,7 +6,7 @@ based on their set intervals"), **every dataset gets its own independent
 asyncio loop at its own interval** (FUNDIES_REFRESH_INTERVALS below)
 instead of one shared poll cycle -- closer to what "their set intervals"
 (plural) actually means than either reference implementation manages in
-practice (the real Zapdos app's own per-row `refreshInterval` config field
+practice (the real reference app's own per-row `refreshInterval` config field
 is real, but every row happens to be set to the same 60s; the notebook is
 a single `while True: ... sleep(60)` loop for everything).
 

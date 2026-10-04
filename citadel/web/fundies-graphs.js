@@ -1,5 +1,5 @@
 // Fundies Graphs -- demand/wind/solar forecast-vs-outturn charts. No
-// direct Zapdos precedent was found for this specific page (the real app
+// direct the reference app precedent was found for this specific page (the real app
 // only had the fundies TABLE); built in this project's own established
 // Chart.js `.graph-container` style instead (see fpn.js's makeChart()).
 

@@ -1,6 +1,6 @@
 /* Colour choices from here down (--bg, table text tone, negative-value red,
    SP accent blue) are borrowed from the predecessor Electron app's own
-   custom.css (Zapdos, reference/pricing-stack-reference/custom.css) -- its
+   custom.css (the reference app, reference/pricing-stack-reference/custom.css) -- its
    actual bespoke dark theme, not the generic third-party admin template it
    also loaded, which we deliberately didn't touch. */
 :root {
@@ -240,7 +240,7 @@ tr.bid-row td:nth-child(4) { color: var(--negative); }
    pricing. */
 .reversal-mark { color: var(--sp-accent); margin-right: 0.15rem; font-size: 0.65rem; }
 
-/* --- Cell styling borrowed from the predecessor Zapdos app's pricing-
+/* --- Cell styling borrowed from the predecessor reference app's pricing-
    stack table (reference/pricing-stack-reference/{styles,custom}.css): the
    compact centred cell text -- adapted from its light theme (black text
    on cyan) to ours (dark bg, accent-tinted highlight). The two-column
@@ -286,7 +286,7 @@ nav.top-nav a.active { color: var(--sp-accent); background: rgba(114, 196, 246, 
 nav.top-nav a:hover:not(.active) { color: var(--text); }
 
 /* --- FPN Analytics page: charts + heatmap tables, styled from the
-   original Zapdos app's own "fpn accuracy" page (its shared custom.css,
+   original reference app's own "fpn accuracy" page (its shared custom.css,
    reference/pricing-stack-reference/custom.css) rather than from the
    simplified card layout above -- the user specifically asked for this
    page to follow that page's own look. Class/id names below (.graph-
@@ -346,7 +346,7 @@ main#trips-page {
    `.period-card` (var(--panel) background, var(--border) border), no
    fixed height (a fixed chart-sized max-height here is what was clipping
    tall tables and making their content spill over the next card). Sized
-   to match the real Zapdos "FPN Accuracy" page's own `.card`/`.card-body`
+   to match the real reference app "FPN Accuracy" page's own `.card`/`.card-body`
    rule (custom.css: `width: 348px; padding: 0 !important;`) instead of
    shrinking/stretching to content -- a fixed, narrow footprint with any
    overflow handled by .fpn-table-wrap's own horizontal scroll, exactly
@@ -385,7 +385,7 @@ p.gen-title {
 .text-center { text-align: center; }
 p.gen-title { text-align: left; }
 
-/* Departs from the real Zapdos "FPN Accuracy" home page's own
+/* Departs from the real reference app "FPN Accuracy" home page's own
    `.graph-container` sizing (280-310px tall, 62vw/750px wide) at the
    user's request: height matches `.fpn-card`'s own "Fpn by Fuel" rendered
    height (~313px). The two-line SP/time x-axis label used to get clipped
@@ -482,7 +482,7 @@ p.gen-title { text-align: left; }
 
 /* All Plants Exploded BOALF page -- full-screen chart + right-hand
    sidebar (settlement-period toggles + fuel-type legend), ported
-   structurally from Zapdos's own control-panel/legend-list/legend-item/
+   structurally from the reference app's own control-panel/legend-list/legend-item/
    legend-box rules (custom.css), reskinned onto this project's own dark
    theme tokens. */
 .all-plants-boalf-layout { display: flex; gap: 0.5rem; align-items: flex-start; padding: 0.4rem 0.75rem; }
@@ -562,7 +562,7 @@ p.gen-title { text-align: left; }
 
 /* wind5/wind15/wind30 -- how much WIND_m has moved over the trailing
    5/15/30 minutes (see fpn.js's renderRealTimeGenerationTable()), styled
-   after the real Zapdos app source's own #wind-diff-table (reference/
+   after the real reference app source's own #wind-diff-table (reference/
    pricing-stack-reference/custom.css), but sitting outside the whole Real
    Time Generation card, above the Average FPN stat row, per request. */
 #wind-diff-table { width: 90px; margin: 0.5rem 0 0.5rem auto; font-size: 0.7rem; }
@@ -585,7 +585,7 @@ th.rotate > div {
   padding: 2px 3px;
 }
 
-/* Compact footprint matching the real Zapdos "FPN Accuracy" tables --
+/* Compact footprint matching the real reference app "FPN Accuracy" tables --
    shrinking the table's overall size (tight cell padding, minimal row
    height, narrow columns), NOT the text: font-size here stays at the same
    readable size as the rest of the app (inherited from the base `table`
@@ -594,7 +594,7 @@ th.rotate > div {
    own `table td, .table th`, `.table:not(.table-bordered) td`, and
    `.table` rules, not hand-tuned guesses. */
 .fpn-table-wrap { overflow-x: auto; }
-/* `.fpn-card` is now a fixed Zapdos-sized box (348px/800px, not a
+/* `.fpn-card` is now a fixed reference-app-sized box (348px/800px, not a
    shrink-to-content one), so the table should fill it the same way a
    plain Bootstrap `.table` fills its `.card-body` by default -- `width:
    max-content` here left content-narrower tables (e.g. "Fpn by Fuel")
@@ -609,7 +609,7 @@ th.rotate > div {
 .total-row td { font-weight: 700; border-top: 1px solid var(--border); }
 
 /* Magnitude-band shading for "Market Gen vs Adjusted Fpn" -- the exact
-   `data-range` names and colours from the real Zapdos app source
+   `data-range` names and colours from the real reference app source
    (components/tables/generate-fuel-type-table.js sets these bands for
    this exact table, `market_gen_vs_adj_fpn_by_sp`; assets/css/custom.css
    is where these colours come from, ported verbatim, not a percentile
@@ -623,7 +623,7 @@ td[data-range="low-negative"] { background-color: #ffdcb2; color: #111; }
 td[data-range="medium-negative"] { background-color: #ffc57f; color: #111; }
 td[data-range="high-negative"] { background-color: #ffae4c; color: #111; }
 
-/* Delta-band shading for "Mil Mel Drop by Fuel" -- the real Zapdos app
+/* Delta-band shading for "Mil Mel Drop by Fuel" -- the real reference app
    source's own SEPARATE blue/red "delta-positive/negative" data-range
    names and colours (custom.css), distinct from the green/orange set
    above. Which table originally used this scheme wasn't recoverable from
@@ -642,8 +642,8 @@ td[data-range="delta-negative-high"] { background-color: #ff6666; color: #111; }
 .hidden { display: none; }
 
 /* Decision table -- see fpn.js's renderDecisionColumn() for the formulas.
-   Row/column layout is copied directly from the real Zapdos app source's
-   own `.decision-table-container` markup (Old World/zapdos_extracted/
+   Row/column layout is copied directly from the real reference app source's
+   own `.decision-table-container` markup (Old World/reference_app_extracted/
    app_source/src/views/index.html): each scenario is an "Input" column
    immediately followed by its own "Vs now" column, both plain `<td>`s in
    the SAME `<tr>` -- not a flex hack inside one cell, and not a second row
@@ -682,8 +682,8 @@ td[data-range="delta-negative-high"] { background-color: #ff6666; color: #111; }
 #decision-input-table tr.headline-row td { color: var(--sp-accent); font-size: 0.85rem; }
 
 /* --- Fundies page: transposed metric-rows x settlement-period-columns
-   table, styled from the real Zapdos app's own fundies.html (Old World/
-   zapdos_extracted/app_source/src/views/windows/fundies.html) and its
+   table, styled from the real reference app's own fundies.html (Old World/
+   reference_app_extracted/app_source/src/views/windows/fundies.html) and its
    shared custom.css. The "major subdivisions" (1A/1B/2A/2B...) header row
    that source also has is deliberately dropped here -- its exact business
    meaning wasn't recoverable from the reference set, and the half-hour
@@ -707,7 +707,7 @@ td[data-range="delta-negative-high"] { background-color: #ff6666; color: #111; }
    Pricing Stack's own .period-card does -- by request. Width trimmed to
    match (2 x 1rem margin + this = 100vw, no horizontal scrollbar). */
 .fundies-card { width: calc(100vw - 2rem); margin: 0 1rem 3px; }
-/* Font-size/padding/line-height started as the real Zapdos app's own exact
+/* Font-size/padding/line-height started as the real reference app's own exact
    values (custom.css's `#fundies-table { font-size: 8.5px; }` + its shared
    `table td, .table th { padding: 0.2rem !important; }` + `.x-scrollable`'s
    `line-height: 0.99`), then sized up from there by request -- readability
@@ -802,7 +802,7 @@ tr.fundies-rt-row > td:not([data-heat]):not(.fundies-row-label) {
 }
 
 /* Percentile-heatmap colouring -- formulas ported verbatim from the real
-   Zapdos app's own custom.css (its [data-name=...] rules), consuming the
+   reference app's own custom.css (its [data-name=...] rules), consuming the
    same --percentile/--value/--opacity custom properties fundies.js sets
    per cell. Grouped here by the shared `data-heat` tag fundies.js assigns
    (several of our own column names differ from the source's, e.g.
@@ -911,7 +911,7 @@ td[data-heat="interconnector_ng"] {
 #trips-table tr.trip-row.selected { background: rgba(114, 196, 246, 0.12); }
 #trip-revisions h3 { font-size: 0.85rem; margin: 0.8rem 0 0.3rem; }
 
-/* BM Stack page (bm-stack.html/bm-stack.js) -- Zapdos-style chart left,
+/* BM Stack page (bm-stack.html/bm-stack.js) -- reference-app-style chart left,
    SP / Vol Sign / FT control panel right (reuses .control-panel above). */
 .bm-stack-layout { display: flex; gap: 0.5rem; align-items: flex-start; padding: 0.4rem 0.75rem; }
 .bm-stack-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 0.5rem; }
@@ -939,7 +939,7 @@ td[data-heat="interconnector_ng"] {
 }
 
 
-/* Plant Trips: worst-behaviour graphs (Zapdos-style black canvas) and the
+/* Plant Trips: worst-behaviour graphs (reference-app-style black canvas) and the
    green "trip is going away" toast. */
 .wb-canvas-wrap { height: 380px; position: relative; background: #000; border-radius: 4px; padding: 6px; }
 #mel-plan-unit { margin-left: 0.6rem; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 3px; font-size: 0.7rem; padding: 0.1rem 0.3rem; }

@@ -125,7 +125,7 @@ async function loadWorstBehavior() {
 
 
 // ---- worst-behaviour graphs -----------------------------------------------
-// Style follows Zapdos' "Worst Behaviour Plants" window: black canvas, one
+// Style follows the reference app' "Worst Behaviour Plants" window: black canvas, one
 // line per plant from its 15-colour palette, 30-minute x ticks labelled with
 // three lines (SP / date / time).
 
