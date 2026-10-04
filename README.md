@@ -46,6 +46,19 @@ docker compose up -d          # starts local Postgres
 cp .env.template .env         # DATABASE_URL already points at the compose Postgres
 ```
 
+### Run everything in Docker (no Python install needed)
+
+```bash
+cp .env.template .env         # optional: add ENTSOE_KEY / IRIS_* secrets
+docker compose --profile app up -d --build
+```
+
+Open http://localhost:8000. This starts Postgres and the app together;
+tables are created on first start. Set `HOST_PORT` to use a different host
+port and `PROCESS_POOL_WORKERS` (default 2, ~130 MB each) to trade speed for
+memory. Plain `docker compose up -d` still starts Postgres only, for local
+development. Budget about 2 GiB of RAM for the full stack.
+
 Run the server:
 
 ```bash

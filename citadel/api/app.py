@@ -141,7 +141,7 @@ async def lifespan(app: FastAPI):
     # input, no shared mutable state) and already triggered concurrently,
     # so running them in separate OS processes is genuine parallel CPU
     # work, not a cosmetic addition.
-    process_pool = ProcessPoolExecutor()
+    process_pool = ProcessPoolExecutor(max_workers=settings.process_pool_workers or None)
     app.state.process_pool = process_pool
 
     broadcaster = Broadcaster()

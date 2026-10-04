@@ -32,6 +32,11 @@ class Settings(BaseSettings):
 
     rest_poll_interval_seconds: int = 5
 
+    # Size of the shared recompute process pool (see api/app.py). 0 means
+    # "one worker per CPU" (ProcessPoolExecutor's own default); set a small
+    # number on a memory-constrained host -- each worker is ~130 MB.
+    process_pool_workers: int = 0
+
     # ENTSO-E Transparency Platform key -- register free at
     # https://transparency.entsoe.eu/. Needed only for the Fundies
     # dashboard's interconnector-flow rows/graphs (ingest/entsoe_flows.py);

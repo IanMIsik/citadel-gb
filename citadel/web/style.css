@@ -1,6 +1,6 @@
 /* Colour choices from here down (--bg, table text tone, negative-value red,
    SP accent blue) are borrowed from the predecessor Electron app's own
-   custom.css (Zapdos, reference/zapdos-pricing-stack/custom.css) -- its
+   custom.css (Zapdos, reference/pricing-stack-reference/custom.css) -- its
    actual bespoke dark theme, not the generic third-party admin template it
    also loaded, which we deliberately didn't touch. */
 :root {
@@ -241,7 +241,7 @@ tr.bid-row td:nth-child(4) { color: var(--negative); }
 .reversal-mark { color: var(--sp-accent); margin-right: 0.15rem; font-size: 0.65rem; }
 
 /* --- Cell styling borrowed from the predecessor Zapdos app's pricing-
-   stack table (reference/zapdos-pricing-stack/{styles,custom}.css): the
+   stack table (reference/pricing-stack-reference/{styles,custom}.css): the
    compact centred cell text -- adapted from its light theme (black text
    on cyan) to ours (dark bg, accent-tinted highlight). The two-column
    layout and its .ps-col-header/.ps-columns rules are defined further up,
@@ -287,7 +287,7 @@ nav.top-nav a:hover:not(.active) { color: var(--text); }
 
 /* --- FPN Analytics page: charts + heatmap tables, styled from the
    original Zapdos app's own "fpn accuracy" page (its shared custom.css,
-   reference/zapdos-pricing-stack/custom.css) rather than from the
+   reference/pricing-stack-reference/custom.css) rather than from the
    simplified card layout above -- the user specifically asked for this
    page to follow that page's own look. Class/id names below (.graph-
    container, .chart-legend, th.rotate) are kept the same as that source
@@ -563,7 +563,7 @@ p.gen-title { text-align: left; }
 /* wind5/wind15/wind30 -- how much WIND_m has moved over the trailing
    5/15/30 minutes (see fpn.js's renderRealTimeGenerationTable()), styled
    after the real Zapdos app source's own #wind-diff-table (reference/
-   zapdos-pricing-stack/custom.css), but sitting outside the whole Real
+   pricing-stack-reference/custom.css), but sitting outside the whole Real
    Time Generation card, above the Average FPN stat row, per request. */
 #wind-diff-table { width: 90px; margin: 0.5rem 0 0.5rem auto; font-size: 0.7rem; }
 #wind-diff-table td { padding: 0.08rem 0.25rem; text-align: right; font-variant-numeric: tabular-nums; }

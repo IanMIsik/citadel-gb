@@ -68,7 +68,7 @@ function newestFirstKeys(keys) {
 }
 
 // Cell/row styling below borrows directly from the predecessor Zapdos
-// app's pricing stack view (reference/zapdos-pricing-stack/): the compact
+// app's pricing stack view (reference/pricing-stack-reference/): the compact
 // centred `.pricing-stack-text` cells and the bold total-volume figure.
 // Unflagged and flagged are laid out as two side-by-side sub-columns per
 // period (see style.css's .ps-columns) rather than stacked sections in one

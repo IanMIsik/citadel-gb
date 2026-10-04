@@ -5,7 +5,7 @@ __pycache__/
 .env.dev
 .pytest_cache/
 *.egg-info/
-data/
+/data/
 .DS_Store
 
 # local logs and scratch investigation dumps

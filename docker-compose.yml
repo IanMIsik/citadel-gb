@@ -1,3 +1,10 @@
+# Postgres only (what local development uses):
+#     docker compose up -d
+# Full stack -- Postgres + the Citadel app, one command:
+#     docker compose --profile app up -d --build
+# then open http://localhost:8000  (set HOST_PORT to change the host port).
+# Secrets (ENTSOE_KEY, IRIS_*) go in a .env file next to this one; it is
+# optional -- without it the app runs on REST polling alone.
 services:
   postgres:
     image: postgres:16-alpine
@@ -10,6 +17,30 @@ services:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U citadel -d citadel"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  citadel:
+    profiles: ["app"]
+    build: .
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      # Overrides any DATABASE_URL in .env: inside the compose network the
+      # database is the `postgres` service, not localhost.
+      DATABASE_URL: postgresql://citadel:citadel@postgres:5432/citadel
+      # Each recompute worker is ~130 MB; cap it on small hosts.
+      PROCESS_POOL_WORKERS: ${PROCESS_POOL_WORKERS:-2}
+    ports:
+      - "${HOST_PORT:-8000}:8000"
 
 volumes:
   pgdata:
