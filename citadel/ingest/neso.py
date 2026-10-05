@@ -16,6 +16,8 @@ from datetime import datetime, timedelta, timezone
 import httpx
 
 from ..settlement import utc_to_settlement
+from ..storage import db
+from .natgrid_store import normalise_block
 
 logger = logging.getLogger(__name__)
 
@@ -44,10 +46,9 @@ NATIONAL_GRID_TRADES_DATASET_ID = "0b7e84ec-eded-4458-b111-d29ba4508e85"
 EMBEDDED_FORECAST_PACKAGE_ID = "91c0c70e-0ef5-4116-b6fa-7ad084b5e0e8"
 
 
-async def fetch_national_grid_trades(client: httpx.AsyncClient, date_from_iso: str, date_to_iso: str) -> list[dict]:
-    """Rows with `Date` in [date_from_iso, date_to_iso) -- pass plain
-    'YYYY-MM-DDTHH:MM:SS' bounds, same as the notebook's own query.
-    """
+async def fetch_upcoming_trades(client: httpx.AsyncClient, date_from_iso: str, date_to_iso: str) -> list[dict]:
+    """NESO's "Upcoming Trades" list: rows with `Date` in [date_from_iso, date_to_iso) --
+    plain 'YYYY-MM-DDTHH:MM:SS' bounds, same as the notebook's own query."""
     dataset = NATIONAL_GRID_TRADES_DATASET_ID
     sql = (
         f'SELECT * FROM "{dataset}" '
@@ -56,16 +57,51 @@ async def fetch_national_grid_trades(client: httpx.AsyncClient, date_from_iso: s
     )
     resp = await client.get(BASE, params={"sql": sql}, timeout=20)
     resp.raise_for_status()
-    upcoming = resp.json()["result"]["records"]
-    # The GTMA history is best-effort on top of the upcoming list: if it
-    # fails (or NESO renames it) the caller still gets whatever upcoming has.
+    return resp.json()["result"]["records"]
+
+
+def combine_trades(historic: list[dict], upcoming: list[dict]) -> list[dict]:
+    """GTMA rows win; upcoming-list rows only fill (date, SP)s the GTMA rows do not cover."""
+    covered = {(r["Date"][:10], int(r["SP"])) for r in historic}
+    return historic + [r for r in upcoming if (str(r.get("Date"))[:10], int(r.get("SP", 0))) not in covered]
+
+
+async def fetch_national_grid_trades(client: httpx.AsyncClient, date_from_iso: str, date_to_iso: str) -> list[dict]:
+    """Per-SP trade rows straight from NESO (nothing stored). The GTMA history is
+    best-effort on top of the upcoming list: if it fails (or NESO renames it)
+    the caller still gets whatever upcoming has."""
+    upcoming = await fetch_upcoming_trades(client, date_from_iso, date_to_iso)
     try:
         historic = await fetch_gtma_trades(client, date_from_iso, date_to_iso)
     except Exception:
         logger.warning("NESO historic GTMA trades fetch failed, using upcoming trades only", exc_info=True)
         historic = []
-    covered = {(r["Date"][:10], int(r["SP"])) for r in historic}
-    return historic + [r for r in upcoming if (str(r.get("Date"))[:10], int(r.get("SP", 0))) not in covered]
+    return combine_trades(historic, upcoming)
+
+
+async def national_grid_trades_cached(pool, client: httpx.AsyncClient, date_from_iso: str, date_to_iso: str,
+                                      store: bool = True) -> list[dict]:
+    """Per-SP trade rows for the window, read from the local database. With
+    `store`, a fresh NESO fetch is saved first (new trades added, revised ones
+    versioned in natgrid_trade_history); if the fetch fails the stored copy is
+    used as it stands, so a NESO outage or a restart never blanks the trades."""
+    if store:
+        try:
+            rows = [r for r in map(normalise_block, await fetch_gtma_blocks(client, date_from_iso, date_to_iso)) if r]
+            new, revised = await db.upsert_natgrid_trades(pool, rows)
+            if new or revised:
+                logger.info("NESO trades stored: %d new, %d revised", new, revised)
+        except Exception:
+            logger.warning("NESO GTMA trades fetch failed, using the stored trades", exc_info=True)
+    start = datetime.fromisoformat(date_from_iso).replace(tzinfo=timezone.utc) - timedelta(days=1)
+    end = datetime.fromisoformat(date_to_iso).replace(tzinfo=timezone.utc)
+    historic = gtma_blocks_to_sp_rows(await db.natgrid_blocks_between(pool, start, end))
+    try:
+        upcoming = await fetch_upcoming_trades(client, date_from_iso, date_to_iso)
+    except Exception:
+        logger.warning("NESO upcoming trades fetch failed, using stored GTMA trades only", exc_info=True)
+        upcoming = []
+    return combine_trades(historic, upcoming)
 
 
 def gtma_blocks_to_sp_rows(blocks: list[dict]) -> list[dict]:
@@ -86,13 +122,23 @@ def gtma_blocks_to_sp_rows(blocks: list[dict]) -> list[dict]:
         t = start
         while t < end:
             sd, sp = utc_to_settlement(t)
-            rows.append({"Date": sd.isoformat(), "SP": sp, "Volume": mw / 2})
+            # Volume stays MWh per SP (what ng_vol consumers expect); the
+            # per-trade detail (MW, price, flag, reason, id) rides along for
+            # the Natgrid ladder (engine/natgrid.py).
+            rows.append({
+                "Date": sd.isoformat(), "SP": sp, "Volume": mw / 2, "MW": mw, "Price": b.get("Price"),
+                "SO_Flag": b.get("SO_Flag"), "Reason": b.get("Reason"), "ID": b.get("ID"), "Source": "GTMA",
+            })
             t += timedelta(minutes=30)
     return rows
 
 
 async def fetch_gtma_trades(client: httpx.AsyncClient, date_from_iso: str, date_to_iso: str) -> list[dict]:
-    """Per-SP trade rows from the current and previous financial-year GTMA
+    return gtma_blocks_to_sp_rows(await fetch_gtma_blocks(client, date_from_iso, date_to_iso))
+
+
+async def fetch_gtma_blocks(client: httpx.AsyncClient, date_from_iso: str, date_to_iso: str) -> list[dict]:
+    """Raw trade blocks from the current and previous financial-year GTMA
     resources (the last two listed -- a fresh April resource can be empty at
     first). The query window starts a day early because a settlement day's
     first SPs sit in the previous UTC day during BST.
@@ -104,13 +150,18 @@ async def fetch_gtma_trades(client: httpx.AsyncClient, date_from_iso: str, date_
     blocks: list[dict] = []
     for rid in resource_ids:
         sql = (
-            f'SELECT "StartTime", "EndTime", "Volume" FROM "{rid}" '
+            f'SELECT "ID", "StartTime", "EndTime", "Volume", "Price", "Cost", "SO_Flag", "Reason", "Last_Updated" FROM "{rid}" '
             f'WHERE "EndTime" > \'{frm}\' AND "StartTime" < \'{date_to_iso}\''
         )
-        resp = await client.get(BASE, params={"sql": sql}, timeout=20)
-        resp.raise_for_status()
-        blocks += resp.json()["result"]["records"]
-    return gtma_blocks_to_sp_rows(blocks)
+        try:
+            resp = await client.get(BASE, params={"sql": sql}, timeout=20)
+            resp.raise_for_status()
+            blocks += resp.json()["result"]["records"]
+        except Exception:
+            # One resource (a brand-new financial year, or one with a different
+            # column set) failing must not lose the other's trades.
+            logger.warning("NESO GTMA resource %s query failed, skipping it", rid, exc_info=True)
+    return blocks
 
 
 async def fetch_embedded_forecast(client: httpx.AsyncClient) -> list[dict]:

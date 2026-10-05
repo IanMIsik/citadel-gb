@@ -683,6 +683,17 @@ async def resolve_open_trips_for_unit(pool: asyncpg.Pool, bm_unit: str, resolved
     )
 
 
+async def close_trip_rows(pool: asyncpg.Pool, trip_ids: list[int]) -> None:
+    """Close trip rows that are leftovers (the plant is no longer tripped, or a newer row for
+    the same trip exists). Their resolve time is their own detection time, so a leftover is
+    never mistaken for something that just resolved."""
+    if trip_ids:
+        await pool.execute(
+            "UPDATE trip_events SET status = 'resolved', resolved_at = detected_at WHERE id = ANY($1::bigint[]) AND status != 'resolved'",
+            trip_ids,
+        )
+
+
 async def upsert_remit_revisions(pool: asyncpg.Pool, revisions: list[dict]) -> int:
     """One row per revision, `ON CONFLICT DO UPDATE` only to make repeated
     polls idempotent (a revision's own fields never actually change once
@@ -748,3 +759,117 @@ async def fetch_worst_behavior_profile(pool: asyncpg.Pool) -> list[asyncpg.Recor
         ORDER BY avg_slippage_hours DESC NULLS LAST
         """
     )
+
+
+# ---------------------------------------------------------------------------
+# National Grid trades: NESO trade blocks and Elexon DISBSAD, stored locally
+# (see ingest/natgrid_store.py for the row shapes)
+# ---------------------------------------------------------------------------
+
+_NATGRID_COLS = ["id", "start_time", "end_time", "volume_mw", "price", "cost", "so_flag", "reason", "source_updated"]
+_DISBSAD_COLS = ["settlement_date", "settlement_period", "action_id", "volume", "cost", "price", "so_flag",
+                 "stor_flag", "party_id", "asset_id", "service", "is_tendered"]
+
+
+async def upsert_natgrid_trades(pool: asyncpg.Pool, rows: list[dict]) -> tuple[int, int]:
+    """Store normalised NESO trade blocks. Returns (new, revised). When a trade
+    already stored has changed, its previous version goes to
+    natgrid_trade_history before the row is updated."""
+    from ..ingest.natgrid_store import block_changed
+
+    if not rows:
+        return 0, 0
+    now = datetime.now(timezone.utc)
+    existing = {r["id"]: dict(r) for r in await pool.fetch(
+        "SELECT * FROM natgrid_trades WHERE id = ANY($1::text[])", [r["id"] for r in rows])}
+    history = [(o["id"], now, o["start_time"], o["end_time"], o["volume_mw"], o["price"], o["so_flag"], o["reason"])
+               for r in rows if (o := existing.get(r["id"])) and block_changed(o, r)]
+    new = sum(1 for r in rows if r["id"] not in existing)
+    async with pool.acquire() as conn, conn.transaction():
+        if history:
+            await conn.executemany(
+                "INSERT INTO natgrid_trade_history (id, changed_at, start_time, end_time, volume_mw, price, so_flag, reason) "
+                "VALUES ($1, $2, $3, $4, $5, $6, $7, $8)", history)
+        sets = ", ".join(f"{c} = excluded.{c}" for c in _NATGRID_COLS[1:]) + ", last_seen_at = excluded.last_seen_at"
+        await conn.executemany(
+            f"INSERT INTO natgrid_trades ({', '.join(_NATGRID_COLS)}, first_seen_at, last_seen_at) "  # noqa: S608 -- internal names
+            f"VALUES ({', '.join(f'${i + 1}' for i in range(len(_NATGRID_COLS)))}, ${len(_NATGRID_COLS) + 1}, ${len(_NATGRID_COLS) + 1}) "
+            f"ON CONFLICT (id) DO UPDATE SET {sets}",
+            [tuple(r.get(c) for c in _NATGRID_COLS) + (now,) for r in rows])
+    return new, len(history)
+
+
+async def natgrid_blocks_between(pool: asyncpg.Pool, start: datetime, end: datetime) -> list[dict]:
+    """Stored NESO trade blocks overlapping [start, end), as the raw-record
+    shape neso.gtma_blocks_to_sp_rows expects."""
+    recs = await pool.fetch(
+        "SELECT * FROM natgrid_trades WHERE end_time > $1 AND start_time < $2 ORDER BY start_time, id", start, end)
+    return [{"ID": r["id"], "StartTime": r["start_time"].astimezone(timezone.utc).replace(tzinfo=None).isoformat(),
+             "EndTime": r["end_time"].astimezone(timezone.utc).replace(tzinfo=None).isoformat(),
+             "Volume": r["volume_mw"], "Price": r["price"], "SO_Flag": r["so_flag"], "Reason": r["reason"]} for r in recs]
+
+
+async def upsert_disbsad(pool: asyncpg.Pool, rows: list[dict]) -> int:
+    if not rows:
+        return 0
+    now = datetime.now(timezone.utc)
+    sets = ", ".join(f"{c} = excluded.{c}" for c in _DISBSAD_COLS[3:]) + ", last_seen_at = excluded.last_seen_at"
+    n = len(_DISBSAD_COLS)
+    await pool.executemany(
+        f"INSERT INTO disbsad_actions ({', '.join(_DISBSAD_COLS)}, first_seen_at, last_seen_at) "  # noqa: S608 -- internal names
+        f"VALUES ({', '.join(f'${i + 1}' for i in range(n))}, ${n + 1}, ${n + 1}) "
+        f"ON CONFLICT (settlement_date, settlement_period, action_id) DO UPDATE SET {sets}",
+        [tuple(r.get(c) for c in _DISBSAD_COLS) + (now,) for r in rows])
+    return len(rows)
+
+
+async def disbsad_between(pool: asyncpg.Pool, first: date, last: date) -> list[dict]:
+    """Stored DISBSAD actions for settlement dates first..last, in Elexon's own
+    field names (what engine/natgrid.py and engine/fundies.py read)."""
+    recs = await pool.fetch(
+        "SELECT * FROM disbsad_actions WHERE settlement_date BETWEEN $1 AND $2 ORDER BY settlement_date, settlement_period, action_id",
+        first, last)
+    return [{"settlementDate": r["settlement_date"].isoformat(), "settlementPeriod": r["settlement_period"], "id": r["action_id"],
+             "volume": r["volume"], "cost": r["cost"], "soFlag": r["so_flag"], "storFlag": r["stor_flag"],
+             "partyId": r["party_id"], "assetId": r["asset_id"], "service": r["service"]} for r in recs]
+
+
+# ---------------------------------------------------------------------------
+# Trip telemetry (chart data behind the Plant Trips page)
+# ---------------------------------------------------------------------------
+
+async def upsert_trip_telemetry(pool: asyncpg.Pool, rows: list[dict]) -> int:
+    """rows: bm_unit, fuel_type, spot_time (ISO string or datetime), fpn, mel, vol (adjusted FPN)."""
+    if not rows:
+        return 0
+    now = datetime.now(timezone.utc)
+
+    def _ts(v):
+        return v if isinstance(v, datetime) else datetime.fromisoformat(str(v).replace("Z", "+00:00"))
+
+    await pool.executemany(
+        """
+        INSERT INTO trip_telemetry (bm_unit, spot_time, fuel_type, fpn, mel, adjusted_fpn, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        ON CONFLICT (bm_unit, spot_time) DO UPDATE SET
+            fuel_type = excluded.fuel_type, fpn = excluded.fpn, mel = excluded.mel,
+            adjusted_fpn = excluded.adjusted_fpn, updated_at = excluded.updated_at
+        """,
+        [(r["bm_unit"], _ts(r["spot_time"]), r.get("fuel_type"), r.get("fpn"), r.get("mel"), r.get("vol"), now) for r in rows],
+    )
+    return len(rows)
+
+
+async def trip_telemetry_between(pool: asyncpg.Pool, bm_unit: str, start: datetime, end: datetime) -> list[asyncpg.Record]:
+    return await pool.fetch(
+        "SELECT spot_time, fpn, mel, adjusted_fpn FROM trip_telemetry WHERE bm_unit = $1 AND spot_time >= $2 AND spot_time <= $3 ORDER BY spot_time",
+        bm_unit, start, end)
+
+
+async def trip_telemetry_for_units(pool: asyncpg.Pool, units: list[str], start: datetime, end: datetime) -> list[asyncpg.Record]:
+    if not units:
+        return []
+    return await pool.fetch(
+        "SELECT bm_unit, spot_time, fpn, mel, adjusted_fpn FROM trip_telemetry "
+        "WHERE bm_unit = ANY($1::text[]) AND spot_time >= $2 AND spot_time <= $3 ORDER BY bm_unit, spot_time",
+        units, start, end)

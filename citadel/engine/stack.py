@@ -46,6 +46,7 @@ applied. Worth investigating as an accuracy lever; not changed here.
 
 from __future__ import annotations
 
+import time
 from zoneinfo import ZoneInfo
 
 import numpy as np
@@ -1287,17 +1288,30 @@ def compute_stack(
     #
     # `cadlFlag` is kept as its own visible column throughout (see
     # STACK_COLUMNS) so it's never just folded away and lost either way.
+    # Step timings (seconds) ride on the returned frame's .attrs so the runner can log
+    # which step a slow cycle spent its time in.
+    timings: dict[str, float] = {}
+    _last = [time.perf_counter()]
+
+    def _lap(name: str) -> None:
+        now_ = time.perf_counter()
+        timings[name] = round(now_ - _last[0], 2)
+        _last[0] = now_
+
     cadl_flags = compute_cadl_flags(boalf_df)
+    _lap("cadl_flags")
     flags_df = pd.merge(flags_df, cadl_flags, on=["bmUnit", "acceptanceNumber"], how="left")
     flags_df["cadl_flag"] = flags_df["cadl_flag"].fillna(False)
     flags_df["firstStageFlag"] = flags_df["soFlag"] | flags_df["cadl_flag"]
     flags_df = flags_df.rename(columns={"cadl_flag": "cadlFlag"})
 
     fpn_boalf = build_marginal_deltas(boalf_df, pn_df, overlap_resolution=overlap_resolution, reversal_side_fix=reversal_side_fix)
+    _lap("marginal_deltas")
     if fpn_boalf.empty:
         return _empty()
 
     fpn_mel_boalf = merge_mel_gate(fpn_boalf, mel_df, use_mel_gate=use_mel_gate)
+    _lap("mel_gate")
     if fpn_mel_boalf.empty:
         return _empty()
     # allocate_volumes() converts settlementDate to datetime on its own
@@ -1308,6 +1322,7 @@ def compute_stack(
     fpn_mel_boalf["settlementDate"] = pd.to_datetime(fpn_mel_boalf["settlementDate"], utc=True)
 
     dp = allocate_volumes(fpn_mel_boalf, bod_df, include_case_6=include_case_6)
+    _lap("allocate_volumes")
     if dp.empty:
         return _empty()
 
@@ -1316,12 +1331,16 @@ def compute_stack(
         return _empty()
 
     combined = blend_disbsad(fpn_mel_boalf_dp, disbsad_df, flags_df, disaggregate_disbsad=disaggregate_disbsad)
+    _lap("blend_disbsad")
     stack_result = build_price_stack(
         combined, max_ta, pricing_method=pricing_method, par_band_method=par_band_method,
         market_index_prices=market_index_prices,
     )
+    _lap("price_stack")
     if not return_spot_niv and not return_exploded_boalf:
         return stack_result
     extras = (spot_time_niv(combined), spot_time_bm_unit_delta_5min(combined)) if return_spot_niv else ()
     extras += (exploded_boalf_by_unit(combined),) if return_exploded_boalf else ()
+    _lap("extras")
+    stack_result.attrs["timings"] = timings
     return (stack_result, *extras)

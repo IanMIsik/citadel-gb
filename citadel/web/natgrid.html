@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Citadel — Natgrid Trades</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
+</head>
+<body>
+  <header>
+    <h1>Natgrid Trades</h1>
+    <span id="env-badge" class="env-badge hidden"></span>
+    <span id="connection-status" class="disconnected">connecting…</span>
+  </header>
+  <nav class="top-nav">
+    <a href="/fpn" target="citadel-fpn" rel="noopener">FPN Analytics</a>
+    <a href="/pricing-stack" target="citadel-pricing-stack" rel="noopener">Pricing Stack</a>
+    <a href="/fundies" target="citadel-fundies" rel="noopener">Fundies</a>
+    <a href="/fundies-graphs" target="citadel-fundies-graphs" rel="noopener">Fundies Graphs</a>
+    <a href="/all-plants-boalf" target="citadel-all-plants-boalf" rel="noopener">All Plants BOALF</a>
+    <a href="/trips" target="citadel-trips" rel="noopener">Plant Trips</a>
+    <a href="/bm-stack" target="citadel-bm-stack" rel="noopener">BM Stack</a>
+    <a href="/natgrid" class="active">Natgrid Trades</a>
+  </nav>
+
+  <!-- National Grid's own balancing trades, period by period: one stacked bar
+       per settlement period, one segment per trade (height = MW, label and
+       colour = price, cheapest at the bottom). Trades come from NESO's trade
+       feed with DISBSAD filling gaps -- see engine/natgrid.py, which follows
+       the FPN notebook's national-grid-trades block. -->
+  <main class="natgrid-layout">
+    <aside class="natgrid-panel">
+      <h6 class="panel-heading">History</h6>
+      <select id="ng-days">
+        <option value="2" selected>Last 2 days</option>
+        <option value="7">Last 7 days</option>
+        <option value="14">Last 14 days</option>
+        <option value="30">Last 30 days</option>
+      </select>
+      <h6 class="panel-heading">Settlement date</h6>
+      <div id="ng-dates"></div>
+      <h6 class="panel-heading">Sps</h6>
+      <div class="natgrid-sp-range">
+        <label>From <input type="number" id="ng-sp-min" min="1" max="50" value="1" /></label>
+        <label>To <input type="number" id="ng-sp-max" min="1" max="50" value="50" /></label>
+      </div>
+      <h6 class="panel-heading">Price colour</h6>
+      <div class="natgrid-ramp"></div>
+      <div class="natgrid-ramp-labels"><span id="ng-pmin">--</span><span id="ng-pmax">--</span></div>
+    </aside>
+    <section class="natgrid-main">
+      <div id="ng-summary" class="natgrid-summary"></div>
+      <div id="ng-check" class="natgrid-check"></div>
+      <p class="natgrid-rule">Which source a period uses: periods that have <strong>ended</strong> come from Elexon DISBSAD (the settled record, including small actions NESO leaves out). <strong>Current and future</strong> periods come from NESO's trades, which keep evolving, plus any DISBSAD actions NESO does not already have (an action both know about is counted once). Hover a segment to see its source.</p>
+      <div id="ng-empty" class="natgrid-empty hidden">No National Grid trades for this date and period range.</div>
+      <div class="graph-container natgrid-chart">
+        <p class="text-center" id="ng-title">National Grid trades</p>
+        <div class="natgrid-canvas-wrap"><canvas id="ng-chart"></canvas></div>
+      </div>
+    </section>
+  </main>
+  <script src="/static/natgrid.js"></script>
+</body>
+</html>

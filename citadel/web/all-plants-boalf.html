@@ -26,6 +26,7 @@
     <a href="/all-plants-boalf" class="active">All Plants BOALF</a>
     <a href="/trips" target="citadel-trips" rel="noopener">Plant Trips</a>
     <a href="/bm-stack" target="citadel-bm-stack" rel="noopener">BM Stack</a>
+    <a href="/natgrid" target="citadel-natgrid" rel="noopener">Natgrid Trades</a>
   </nav>
 
   <!-- Ported structurally from the reference app's own all-plants-exploded-boalf.html
@@ -40,6 +41,11 @@
     </div>
     <aside class="control-panel">
       <p class="panel-heading">Settlement periods</p>
+      <div class="sp-actions">
+        <button type="button" id="sp-show-all">All SPs</button>
+        <button type="button" id="sp-follow-live" title="Show only the live settlement period and keep following it">Follow live</button>
+      </div>
+      <p class="sp-hint">Tick periods to show or hide them, or press "only" to focus on one. Your choice stays put as live updates arrive.</p>
       <div id="sp-selector"></div>
       <p class="panel-heading">Fuel type</p>
       <ul class="legend-list" id="fuel-legend"></ul>

@@ -136,3 +136,122 @@ def test_fpn_runner_keeps_every_method_the_recompute_loop_calls():
     from citadel.engine.fpn_runner import FpnRunner
     for name in ("_recompute_and_persist", "_persist", "_handle_trips", "_remit_poll_loop", "_poll_trip_remit"):
         assert callable(getattr(FpnRunner, name, None)), name
+
+
+def test_trip_chart_loss_follows_gridtrip_definition_and_flags_mel_restriction():
+    from datetime import datetime, timedelta, timezone
+
+    from citadel.engine.trip_chart import build_trip_chart
+
+    sp = datetime(2026, 10, 4, 12, 0, tzinfo=timezone.utc)
+    # Trip SP: plan 200 MW all period, plant only delivers 120 for half of it (MEL cut to 120).
+    pts = [{"spot_time": sp + timedelta(minutes=5 * i), "fpn": 200.0, "mel": 200.0 if i < 3 else 120.0,
+            "adjusted_fpn": 200.0 if i < 3 else 120.0} for i in range(6)]
+    pts.append({"spot_time": sp - timedelta(minutes=30), "fpn": 200.0, "mel": 200.0, "adjusted_fpn": 200.0})  # before the trip
+    out = build_trip_chart(pts, sp, now=sp + timedelta(minutes=20))
+    s = out["stats"]
+    assert s["mean_fpn"] == 200.0 and s["mean_adj"] == 160.0
+    assert s["loss_mw"] == 40.0 and s["impact_pct"] == 20.0 and s["peak_shortfall_mw"] == 80.0
+    assert s["mel_limited_share"] == 0.5
+    assert out["points"][-1]["future"] is False and out["points"][5]["future"] is True  # after 'now' = published plan
+
+
+def test_trip_chart_survives_missing_values():
+    from datetime import datetime, timezone
+
+    from citadel.engine.trip_chart import build_trip_chart
+
+    sp = datetime(2026, 10, 4, 12, 0, tzinfo=timezone.utc)
+    out = build_trip_chart([{"spot_time": sp, "fpn": 100.0, "mel": None, "adjusted_fpn": float("nan")}], sp, now=sp)
+    assert out["stats"]["loss_mw"] is None and out["points"][0]["shortfall"] is None
+    assert build_trip_chart([], sp)["stats"]["loss_mw"] is None
+
+
+def test_stack_runner_notifies_the_fpn_runner_so_the_decision_table_follows_the_stack():
+    import asyncio
+
+    from citadel.engine.fpn_runner import FpnRunner
+    from citadel.engine.runner import Runner
+
+    fpn = FpnRunner.__new__(FpnRunner)
+    fpn._dirty = asyncio.Event()
+    stack = Runner.__new__(Runner)
+    stack._stack_persisted_listeners = []
+    stack.add_stack_persisted_listener(fpn.on_stack_persisted)
+
+    assert not fpn._dirty.is_set()
+    for callback in stack._stack_persisted_listeners:
+        callback()
+    assert fpn._dirty.is_set()
+
+
+def test_finite_helper_turns_nan_and_infinity_into_gaps():
+    from citadel.api.app import _finite
+
+    assert _finite(float("nan")) is None and _finite(float("inf")) is None and _finite(float("-inf")) is None
+    assert _finite(12.5) == 12.5 and _finite(None) is None and _finite(0.0) == 0.0
+
+
+def test_mel_evidence_flags_an_unpublished_outage_and_reads_the_return_from_the_published_mel():
+    from datetime import datetime, timedelta, timezone
+
+    from citadel.engine.trip_chart import mel_evidence
+
+    now = datetime(2026, 10, 5, 12, 0, tzinfo=timezone.utc)
+
+    def pts(cut_from, back_at):
+        out = []
+        for i in range(-24, 13):                       # two hours back, one hour of published plan forward
+            t = now + timedelta(minutes=5 * i)
+            cut = t >= cut_from and t < back_at
+            out.append({"spot_time": t, "fpn": 300.0, "mel": 0.0 if cut else 300.0})
+        return out
+
+    ev = mel_evidence(pts(now - timedelta(minutes=50), now + timedelta(minutes=30)), now)
+    assert ev["verdict"] == "mel_cut" and ev["unavailable_mw"] == 300.0
+    assert ev["since"] == "2026-10-05T11:10:00Z" and ev["back_at"] == "2026-10-05T12:30:00Z"
+
+    never = mel_evidence(pts(now - timedelta(minutes=50), now + timedelta(days=1)), now)
+    assert never["verdict"] == "mel_cut" and never["back_at"] is None      # MEL never returns inside the window
+
+    assert mel_evidence(pts(now + timedelta(days=1), now + timedelta(days=2)), now)["verdict"] == "no_cut"
+    assert mel_evidence([], now)["verdict"] == "no_data"
+    # a small dip below plan is noise, not an outage
+    small = [{"spot_time": now - timedelta(minutes=5 * i), "fpn": 300.0, "mel": 295.0} for i in range(6)]
+    assert mel_evidence(small, now)["verdict"] == "no_cut"
+
+
+# The real shapes seen for T_HEYM11 on 2026-10-05: a full 610 MW outage that began on 25 Aug (revision 116, published
+# today) running alongside several long-lived 112 MW partial derates.
+_FULL_OUTAGE = {"mrid": "48X000000000022A-ELXP-RMT-00148107", "revisionNumber": 116, "eventStatus": "Active",
+                "eventStartTime": "2026-08-25T23:00:00Z", "eventEndTime": "2026-10-21T07:00:00Z",
+                "normalCapacity": 610.0, "availableCapacity": 0.0, "unavailableCapacity": 610.0, "publishTime": "2026-10-05T10:43:09Z"}
+_PARTIAL_DERATE = {"mrid": "48X000000000022A-ELXP-RMT-00148227", "revisionNumber": 3, "eventStatus": "Active",
+                   "eventStartTime": "2026-10-02T22:00:00Z", "eventEndTime": "2027-01-07T08:30:00Z",
+                   "normalCapacity": 610.0, "availableCapacity": 498.0, "unavailableCapacity": 112.0, "publishTime": "2026-09-21T13:49:58Z"}
+
+
+def test_remit_match_finds_a_long_running_notice_that_started_long_before_detection():
+    detected_at = datetime(2026, 10, 5, 9, 39, tzinfo=timezone.utc)          # we only saw the plant today
+    # With no information about the plant it still refuses (a stale notice is worse than none)...
+    assert best_remit_match([_FULL_OUTAGE, _PARTIAL_DERATE], detected_at) is None
+    # ...but with the plant's own MEL (0 MW: nothing available) the full outage is the one that fits, not the 112 MW derate.
+    assert best_remit_match([_PARTIAL_DERATE, _FULL_OUTAGE], detected_at, mel_now=0.0) == _FULL_OUTAGE["mrid"]
+    # a plant still exporting most of its capacity is explained by the partial derate, not the full outage
+    assert best_remit_match([_FULL_OUTAGE, _PARTIAL_DERATE], detected_at, mel_now=498.0) == _PARTIAL_DERATE["mrid"]
+
+
+def test_remit_match_falls_back_to_the_trip_size_and_rejects_notices_that_do_not_cover_it():
+    detected_at = datetime(2026, 10, 5, 9, 39, tzinfo=timezone.utc)
+    assert best_remit_match([_FULL_OUTAGE, _PARTIAL_DERATE], detected_at, drop_mw=600.0) == _FULL_OUTAGE["mrid"]
+    ended = {**_FULL_OUTAGE, "eventEndTime": "2026-10-01T00:00:00Z"}            # over before we detected anything
+    not_started = {**_FULL_OUTAGE, "eventStartTime": "2026-10-06T00:00:00Z"}    # starts tomorrow
+    inactive = {**_FULL_OUTAGE, "eventStatus": "Dismissed"}
+    assert best_remit_match([ended, not_started, inactive], detected_at, mel_now=0.0) is None
+    assert best_remit_match([_PARTIAL_DERATE], detected_at, mel_now=0.0) is None     # 498 MW still available: does not explain MEL 0
+
+
+def test_remit_match_still_prefers_a_notice_that_starts_at_detection():
+    detected_at = datetime(2026, 10, 5, 9, 39, tzinfo=timezone.utc)
+    fresh = {**_PARTIAL_DERATE, "mrid": "FRESH", "eventStartTime": "2026-10-05T09:00:00Z"}
+    assert best_remit_match([_FULL_OUTAGE, fresh], detected_at, mel_now=0.0) == "FRESH"

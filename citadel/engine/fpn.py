@@ -44,6 +44,7 @@ the same shape as the notebooks' own `bmu_fuel_types`/`int_bm_units` CSVs.
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 
@@ -51,7 +52,8 @@ import numpy as np
 import pandas as pd
 
 from . import stack as stack_engine
-from .bm_stack import compute_bm_stack
+from .bm_stack import compute_bm_stack
+from .natgrid import total_mw_by_period
 from ..settlement import current_period, utc_to_settlement, window_around
 
 # A unit's own "fuel type" in Elexon's reference data doubles as its
@@ -178,6 +180,41 @@ def filter_to_generating_units(pn_df: pd.DataFrame, mel_df: pd.DataFrame, mil_df
 # `settlementDate`, which this module's joins need.
 # ---------------------------------------------------------------------------
 
+# Exploding PN / MEL / MIL into one row per unit per minute costs 1-2.5 s EACH on
+# every FPN cycle, yet those three inputs rarely change between cycles (the REST
+# refresh re-reads the same records; only an occasional revision or notification
+# differs). The exploded frames are therefore kept in this process, keyed by a
+# hash of the exact input records, and reused while the input is identical --
+# which only works because FpnRunner runs compute() in ONE long-lived worker (a
+# fresh process each time would have an empty cache). Any change to the input,
+# however small, changes the hash and forces a normal re-explode.
+_EXPLODE_CACHE: dict[str, tuple[int, pd.DataFrame]] = {}
+
+
+def _frame_fingerprint(df: pd.DataFrame) -> int | None:
+    """Content hash of a frame, or None if it cannot be hashed (then nothing is cached)."""
+    if df.empty:
+        return 0
+    try:
+        return (int(pd.util.hash_pandas_object(df, index=False).sum()) % (2**63)) ^ len(df)
+    except TypeError:
+        return None
+
+
+def _cached_explode(name: str, df: pd.DataFrame, explode) -> tuple[pd.DataFrame, bool]:
+    """`explode(df)`, reused from the previous cycle if `df` is unchanged. Returns (frame, was_cached);
+    the frame is always a private copy, so callers may mutate it freely."""
+    key = _frame_fingerprint(df)
+    hit = _EXPLODE_CACHE.get(name)
+    if key is not None and hit is not None and hit[0] == key:
+        return hit[1].copy(), True
+    out = explode(df)
+    if key is not None:
+        _EXPLODE_CACHE[name] = (key, out)
+        return out.copy(), False
+    return out, False
+
+
 def _fpn_exploder(usable_pn: pd.DataFrame) -> pd.DataFrame:
     if usable_pn.empty:
         return pd.DataFrame()
@@ -238,22 +275,37 @@ def explode_and_merge(pn_df: pd.DataFrame, boalf_df: pd.DataFrame, mel_df: pd.Da
     # (interconnector_rows/natgrid_trade_rows), which convert their own
     # settlementDate to datetime64 -- normalising it here once avoids a
     # dtype-mismatch merge failure between the two.
+    sub: dict[str, float] = {}
+    _t = [time.perf_counter()]
+
+    def _lap(name: str) -> None:
+        now_ = time.perf_counter()
+        sub[name] = round(now_ - _t[0], 2)
+        _t[0] = now_
+
     pn_df, mel_df, mil_df, boalf_df = pn_df.copy(), mel_df.copy(), mil_df.copy(), boalf_df.copy()
     for df in (pn_df, mel_df, mil_df, boalf_df):
         if not df.empty:
             df["settlementDate"] = pd.to_datetime(df["settlementDate"])
+    _lap("copy_dates")
 
     usable_pn, mel_filtered, mil_filtered = filter_to_generating_units(pn_df, mel_df, mil_df, fuel_ref, sets)
+    _lap("filter_units")
 
-    exploded_fpn = _fpn_exploder(usable_pn)
+    exploded_fpn, pn_hit = _cached_explode("pn", usable_pn, _fpn_exploder)
+    _lap("explode_pn" + ("_cached" if pn_hit else ""))
     exploded_boalf = stack_engine.boalf_exploder(boalf_df)
-    exploded_mel = _mel_mil_exploder(mel_filtered, "mel_spot_vol")
-    exploded_mil = _mel_mil_exploder(mil_filtered, "mil_spot_vol")
+    _lap("explode_boalf")
+    exploded_mel, mel_hit = _cached_explode("mel", mel_filtered, lambda d: _mel_mil_exploder(d, "mel_spot_vol"))
+    _lap("explode_mel" + ("_cached" if mel_hit else ""))
+    exploded_mil, mil_hit = _cached_explode("mil", mil_filtered, lambda d: _mel_mil_exploder(d, "mil_spot_vol"))
+    _lap("explode_mil" + ("_cached" if mil_hit else ""))
 
     if exploded_fpn.empty:
         return pd.DataFrame()
 
     exploded_fpn = apply_wind_period_average(exploded_fpn, sets["wind_units"])
+    _lap("wind_average")
 
     join_cols = ["nationalGridBmUnit", "bmUnit", "spot_time", "settlementDate", "settlementPeriod"]
 
@@ -267,6 +319,7 @@ def explode_and_merge(pn_df: pd.DataFrame, boalf_df: pd.DataFrame, mel_df: pd.Da
     result = _left_join(exploded_fpn, exploded_boalf, "boalf_spot_vol")
     result = _left_join(result, exploded_mel, "mel_spot_vol")
     result = _left_join(result, exploded_mil, "mil_spot_vol")
+    _lap("joins")
 
     # `delta` must come from the *raw* (still-NaN-where-unmatched)
     # boalf_spot_vol, exactly as the notebook does it (`result['delta'] =
@@ -299,6 +352,8 @@ def explode_and_merge(pn_df: pd.DataFrame, boalf_df: pd.DataFrame, mel_df: pd.Da
     result["adjusted_fpn"] = (
         np.maximum(fpn_sign, 0) * result["mel_reduced_fpn"] + np.minimum(fpn_sign, 0) * result["mil_increased_fpn"] * -1
     )
+    _lap("columns")
+    result.attrs["timings"] = sub
     return result
 
 
@@ -550,27 +605,17 @@ def interconnector_rows(pn_df: pd.DataFrame, fuel_ref: pd.DataFrame, sets: dict[
 def natgrid_trade_rows(neso_trades: list[dict], disbsad_df: pd.DataFrame, spot_times: pd.DataFrame) -> pd.DataFrame:
     """National Grid's own BM-adjacent trades, as a synthetic "NATGRID"
     fuel-type row -- ported from the notebook's own `natgrid_trades` block,
-    combining the NESO feed with a DISBSAD-derived fallback for any
-    (settlementDate, settlementPeriod) the NESO feed doesn't cover.
+    resolving the NESO feed and Elexon DISBSAD period by period (see engine/natgrid.py).
     """
-    ng_df = pd.DataFrame(neso_trades)
-    if not ng_df.empty and {"SP", "Date", "Volume"}.issubset(ng_df.columns):
-        ng_df = ng_df.rename(columns={"SP": "settlementPeriod", "Date": "settlementDate"})
-        ng_df["settlementDate"] = pd.to_datetime(ng_df["settlementDate"]).dt.strftime("%Y-%m-%d")
-        ng_df = ng_df.groupby(["settlementPeriod", "settlementDate"])["Volume"].sum().reset_index()
-        ng_df = ng_df.rename(columns={"Volume": "ng_vol"})
-    else:
-        ng_df = pd.DataFrame(columns=["settlementPeriod", "settlementDate", "ng_vol"])
-
-    disbsad_fallback = pd.DataFrame(columns=["settlementPeriod", "settlementDate", "ng_vol"])
-    if not disbsad_df.empty and "volume" in disbsad_df.columns:
-        disbsad_fallback = disbsad_df.groupby(["settlementPeriod", "settlementDate"])["volume"].sum().reset_index()
-        disbsad_fallback = disbsad_fallback.rename(columns={"volume": "ng_vol"})
-
-    if not ng_df.empty:
-        covered = set(ng_df[["settlementDate", "settlementPeriod"]].itertuples(index=False, name=None))
-        disbsad_fallback = disbsad_fallback[~disbsad_fallback[["settlementDate", "settlementPeriod"]].apply(tuple, axis=1).isin(covered)]
-    combined = pd.concat([ng_df, disbsad_fallback], ignore_index=True)
+    # The two sources are resolved as engine/natgrid.py describes (DISBSAD for periods that have
+    # ended, NESO for current/future, DISBSAD extras merged in). `ng_vol` stays MWh per
+    # settlement period (MW / 2), which the `* -2` below turns back into MW.
+    disbsad_records = disbsad_df.to_dict("records") if not disbsad_df.empty else []
+    totals = total_mw_by_period(neso_trades, disbsad_records)
+    combined = pd.DataFrame(
+        [{"settlementPeriod": sp, "settlementDate": d, "ng_vol": mw / 2} for (d, sp), mw in sorted(totals.items())],
+        columns=["settlementPeriod", "settlementDate", "ng_vol"],
+    )
     if combined.empty:
         return pd.DataFrame()
     combined["settlementDate"] = pd.to_datetime(combined["settlementDate"])
@@ -1143,6 +1188,49 @@ def compute_generation_by_fuel(fuelinst_records: list[dict], pricing_stack_unit_
 # Top-level entry point
 # ---------------------------------------------------------------------------
 
+def compute_tail(
+    state: dict, pricing_stack_delta_rows: list[dict], pricing_stack_niv_rows: list[dict],
+    pricing_stack_niv_spot_time_rows: list[dict], pricing_stack_unit_delta_5min_rows: list[dict],
+) -> dict:
+    """The stack-dependent end of compute(): blend the pricing stack's accepted
+    volumes into the per-fuel table, rebuild the aggregated table and the decision
+    table (`niv_estimate`), and the generation-by-fuel series. `state` is the
+    `tail_state` a full compute() returned; nothing in it is modified, so the same
+    state can be reused every time the stack saves new rows."""
+    timings: dict[str, float] = {}
+    last = time.perf_counter()
+
+    def lap(name: str) -> None:
+        nonlocal last
+        now_ = time.perf_counter()
+        timings[name] = round(now_ - last, 2)
+        last = now_
+
+    fuel_ref = state["fuel_ref"]
+    pricing_stack_delta_df = pricing_stack_delta_by_fuel(pricing_stack_delta_rows or [], fuel_ref)
+    by_fuel = blend_generation_and_smooth(
+        state["by_fuel"].copy(), state["fuelinst_df"].copy(), state["interconnectors"].copy(), state["natgrid"].copy(),
+        pricing_stack_delta_df,
+    )
+    lap("blend_smooth")
+
+    niv_by_period = pricing_stack_niv_by_period(pricing_stack_niv_rows or [])
+    niv_spot_time = pricing_stack_niv_spot_time(pricing_stack_niv_spot_time_rows or [])
+    aggregated = build_aggregated(by_fuel, state["demand"], niv_by_period, niv_spot_time)
+    lap("aggregated")
+    decision = build_decision_table(by_fuel, aggregated)
+    lap("decision_table")
+
+    group_cols = ["settlementDate", "settlementPeriod"]
+    aggregated = pd.merge(
+        aggregated, decision[group_cols + ["wind_deviation", "other_gen_deviation", "niv_estimate"]], on=group_cols, how="left"
+    )
+
+    generation_by_fuel = compute_generation_by_fuel(state["fuelinst_records"], pricing_stack_unit_delta_5min_rows, fuel_ref)
+    lap("generation_by_fuel")
+    return {"by_fuel": by_fuel, "aggregated": aggregated, "generation_by_fuel": generation_by_fuel, "timings": timings}
+
+
 def compute(
     pn_df: pd.DataFrame, boalf_df: pd.DataFrame, mel_df: pd.DataFrame, mil_df: pd.DataFrame, disbsad_df: pd.DataFrame,
     fuelinst_records: list[dict], ndf: list[dict], tsdf: list[dict], indo: list[dict], itsdo: list[dict], da_ndf: list[dict],
@@ -1171,21 +1259,37 @@ def compute(
     so units tagged BATTERIES/LOAD RESPONSE/GAS/DIESEL/SOLAR/INTERCONNECTOR
     show up under OTHER instead of being silently excluded.
     """
+    # Step timings (seconds), returned under "timings" and logged by the runner so a
+    # slow cycle shows which step it was.
+    timings: dict[str, float] = {}
+    _last = [time.perf_counter()]
+
+    def _lap(name: str) -> None:
+        now_ = time.perf_counter()
+        timings[name] = round(now_ - _last[0], 2)
+        _last[0] = now_
+
     fuel_ref = fuel_type_reference(bm_unit_reference, other_fallback=other_fallback)
     sets = unit_sets(fuel_ref)
 
     merged = explode_and_merge(pn_df, boalf_df, mel_df, mil_df, fuel_ref, sets)
+    _lap("explode_merge")
+    timings["explode_merge_detail"] = dict(getattr(merged, "attrs", {}).get("timings", {}))
     if merged.empty:
         return {}
 
     by_unit, by_fuel = aggregate_by_fuel(merged, fuel_ref)
+    _lap("aggregate_by_fuel")
     worst_deviants = compute_worst_deviants(by_unit, now=now)
+    _lap("worst_deviants")
     trips, trip_recoveries, trip_state = detect_trips(by_unit, trip_state or {}, now=now, seed_only=trip_seed_only)
+    _lap("detect_trips")
     cur_period = current_period(now)
     wb_series = worst_behaviour_series(
         by_unit, trip_state, window_around(cur_period.settlement_date, cur_period.settlement_period),
         now or datetime.now(timezone.utc),
     )
+    _lap("wb_series")
 
     bm_stack = pd.DataFrame()
     if bm_stack_enabled:
@@ -1195,31 +1299,36 @@ def compute(
             window_around(cur.settlement_date, cur.settlement_period),
             exclude_fuel_prefix=INTERCONNECTOR_FUEL_PREFIX,
         )
+    _lap("bm_stack")
 
     spot_times = merged[["settlementDate", "settlementPeriod", "spot_time"]].drop_duplicates()
     interconnectors = interconnector_rows(pn_df, fuel_ref, sets, spot_times)
     natgrid = natgrid_trade_rows(neso_trades, disbsad_df, spot_times)
+    _lap("interconnectors_natgrid")
 
     fuelinst_df = pd.DataFrame(fuelinst_records)
-    pricing_stack_delta_df = pricing_stack_delta_by_fuel(pricing_stack_delta_rows or [], fuel_ref)
-    by_fuel = blend_generation_and_smooth(by_fuel, fuelinst_df, interconnectors, natgrid, pricing_stack_delta_df)
-
     start, end = demand_window
     demand = build_demand_frame(ndf, tsdf, indo, itsdo, da_ndf, start, end)
+    _lap("demand")
 
-    niv_by_period = pricing_stack_niv_by_period(pricing_stack_niv_rows or [])
-    niv_spot_time = pricing_stack_niv_spot_time(pricing_stack_niv_spot_time_rows or [])
-    aggregated = build_aggregated(by_fuel, demand, niv_by_period, niv_spot_time)
-    decision = build_decision_table(by_fuel, aggregated)
-
-    group_cols = ["settlementDate", "settlementPeriod"]
-    aggregated = pd.merge(
-        aggregated, decision[group_cols + ["wind_deviation", "other_gen_deviation", "niv_estimate"]], on=group_cols, how="left"
+    # Everything above is the heavy per-unit work. What follows depends on the pricing
+    # stack's saved rows, which change far more often -- so it is a separate function
+    # (compute_tail) that FpnRunner can re-run on its own, from this saved state, the
+    # moment the stack saves, instead of redoing the per-unit work.
+    tail_state = {
+        "by_fuel": by_fuel, "fuelinst_df": fuelinst_df, "interconnectors": interconnectors, "natgrid": natgrid,
+        "demand": demand, "fuel_ref": fuel_ref, "fuelinst_records": fuelinst_records,
+    }
+    tail = compute_tail(
+        tail_state, pricing_stack_delta_rows, pricing_stack_niv_rows, pricing_stack_niv_spot_time_rows,
+        pricing_stack_unit_delta_5min_rows,
     )
-
-    generation_by_fuel = compute_generation_by_fuel(fuelinst_records, pricing_stack_unit_delta_5min_rows, fuel_ref)
+    by_fuel, aggregated, generation_by_fuel = tail["by_fuel"], tail["aggregated"], tail["generation_by_fuel"]
+    timings["tail"] = tail["timings"]
 
     return {
+        "timings": timings,
+        "tail_state": tail_state,
         "by_fuel": by_fuel,
         "worst_deviants": worst_deviants,
         "aggregated": aggregated,

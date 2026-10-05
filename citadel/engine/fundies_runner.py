@@ -36,6 +36,7 @@ import pandas as pd
 
 from ..config import Settings
 from ..ingest import elexon_rest, entsoe_flows, epex, neso, pvlive, semo
+from ..ingest.natgrid_store import normalise_disbsad
 from ..settlement import current_period, rolling_window
 from ..storage import db
 from . import fundies as fundies_engine
@@ -106,6 +107,7 @@ class FundiesRunner:
             "neso_trades": [], "disbsad": [],
         }
         self.nuclear_output_usable: float | None = None
+        self._natgrid_backfilled = False
 
     # -- per-dataset refresh methods -------------------------------------
 
@@ -222,22 +224,54 @@ class FundiesRunner:
         self._dirty.set()
 
     async def _refresh_natgrid(self) -> None:
+        # National Grid trades come from two sources that should agree -- NESO's
+        # trade list and Elexon's DISBSAD. Both are stored in the local
+        # database as fetched (see ingest/natgrid_store.py), so a failed fetch
+        # or a restart falls back to the stored copy instead of blanking the
+        # natgrid row, and the Natgrid page can compare them.
         cur = current_period()
         today_midnight = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        if not self._natgrid_backfilled:
+            self._natgrid_backfilled = True
+            await self._backfill_natgrid(today_midnight, cur.settlement_date)
         try:
-            trades = await neso.fetch_national_grid_trades(
-                self._http, today_midnight.strftime("%Y-%m-%dT%H:%M:%S"), (today_midnight + timedelta(days=2)).strftime("%Y-%m-%dT%H:%M:%S")
-            )
-            self.buffers["neso_trades"] = trades
+            self.buffers["neso_trades"] = await neso.national_grid_trades_cached(
+                self.pool, self._http, (today_midnight - timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%S"),
+                (today_midnight + timedelta(days=2)).strftime("%Y-%m-%dT%H:%M:%S"))
         except Exception:
-            # Keep the previous good trades rather than blanking the natgrid
-            # row for the whole day over one failed fetch.
-            logger.warning("NESO national grid trades fetch failed, keeping the last fetched trades", exc_info=True)
+            logger.warning("National grid trades read failed, keeping the previous trades", exc_info=True)
+        yesterday = cur.settlement_date - timedelta(days=1)
+        for sd in (yesterday, cur.settlement_date):
+            try:
+                await db.upsert_disbsad(self.pool, [r for r in map(normalise_disbsad, await elexon_rest.fetch_disbsad_day(self._http, sd)) if r])
+            except Exception:
+                logger.warning("DISBSAD fetch for %s failed, using the stored actions", sd, exc_info=True)
         try:
-            self.buffers["disbsad"] = await elexon_rest.fetch_disbsad(self._http, cur.settlement_date, cur.settlement_period)
+            self.buffers["disbsad"] = await db.disbsad_between(self.pool, yesterday, cur.settlement_date)
         except Exception:
-            logger.warning("DISBSAD fetch failed, keeping the last fetched volumes", exc_info=True)
+            logger.warning("DISBSAD read from the database failed, keeping the previous actions", exc_info=True)
         self._dirty.set()
+
+    async def _backfill_natgrid(self, today_midnight: datetime, today) -> None:
+        """Once per start: pull the last `natgrid_backfill_days` of both sources into the
+        local database so the Natgrid page has history straight away."""
+        days = self.settings.natgrid_backfill_days
+        if days <= 0:
+            return
+        try:
+            await neso.national_grid_trades_cached(
+                self.pool, self._http, (today_midnight - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%S"),
+                (today_midnight + timedelta(days=2)).strftime("%Y-%m-%dT%H:%M:%S"))
+        except Exception:
+            logger.warning("NESO trades backfill failed", exc_info=True)
+        # DISBSAD one settlement day at a time (the endpoint takes at most a day), oldest first.
+        for offset in range(days, -1, -1):
+            sd = today - timedelta(days=offset)
+            try:
+                await db.upsert_disbsad(self.pool, [r for r in map(normalise_disbsad, await elexon_rest.fetch_disbsad_day(self._http, sd)) if r])
+            except Exception:
+                logger.warning("DISBSAD backfill for %s failed", sd, exc_info=True)
+        logger.info("natgrid backfill of %d days done", days)
 
     async def _refresh_imbalngc(self) -> None:
         now = datetime.now(timezone.utc)

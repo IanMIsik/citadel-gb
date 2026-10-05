@@ -22,6 +22,7 @@
     <a href="/all-plants-boalf" target="citadel-all-plants-boalf" rel="noopener">All Plants BOALF</a>
     <a href="/trips" class="active">Plant Trips</a>
     <a href="/bm-stack" target="citadel-bm-stack" rel="noopener">BM Stack</a>
+    <a href="/natgrid" target="citadel-natgrid" rel="noopener">Natgrid Trades</a>
   </nav>
 
   <!-- Detects a plant trip the moment a single BM unit's MIL/MEL constraint
@@ -35,7 +36,7 @@
        than first promised. -->
   <main id="trips-page">
     <div class="fpn-card wide">
-      <h2>Open &amp; recent trips</h2>
+      <h2>Ongoing trips &amp; resolved in the last 2 days</h2>
       <div class="fpn-table-wrap">
         <table id="trips-table">
           <thead>
@@ -49,6 +50,19 @@
       </div>
       <p class="trips-hint">Click a row to see its REMIT revision history.</p>
       <div id="trip-revisions"></div>
+    </div>
+
+    <!-- GridTrip-style trip chart (design ported from the GridTrip Alert app): the
+         selected trip's plan (FPN), what the plant could actually deliver
+         (adjusted FPN) and its capability (MEL), filled automatically from
+         the FPN pipeline -- no sheet to paste or upload. REMIT confirmation
+         stays in the table above and the revision history below it. -->
+    <div class="fpn-card wide" id="trip-telemetry-card">
+      <h2>Trip telemetry <span id="tt-title" class="tt-title"></span></h2>
+      <div id="tt-metrics" class="tt-metrics"></div>
+      <div class="wb-canvas-wrap tt-canvas-wrap"><canvas id="tt-chart"></canvas></div>
+      <p id="tt-empty" class="trips-hint"></p>
+      <p class="trips-hint">The <strong style="color:#10b981">emerald</strong> area is what the plant could actually deliver (FPN limited by its MEL). The <strong style="color:#818cf8">indigo</strong> space above it is power that was scheduled but not available. The <strong style="color:#f43f5e">red</strong> line is the plant capability (MEL). After the white "now" line the chart is the plant published plan for coming back.</p>
     </div>
 
     <!-- Worst-behaviour graphs (the reference app' "Worst Behaviour Plants" chart plus the

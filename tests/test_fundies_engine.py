@@ -92,19 +92,6 @@ def test_interconnector_real_flows_maps_fuelhh_codes_onto_our_column_names():
     assert row["real_eleclink_net"] != 9999
 
 
-def test_natgrid_ng_vol_prefers_neso_and_falls_back_to_disbsad():
-    neso_trades = [{"Date": "2026-09-28", "SP": 10, "Volume": 5}]
-    disbsad = [
-        {"settlementDate": "2026-09-28", "settlementPeriod": 10, "volume": 999},  # covered by NESO -> ignored
-        {"settlementDate": "2026-09-28", "settlementPeriod": 11, "volume": 3},  # not covered -> used
-    ]
-    out = natgrid_ng_vol(neso_trades, disbsad).sort_values("settlementPeriod").reset_index(drop=True)
-    assert out.iloc[0]["settlementPeriod"] == 10
-    assert out.iloc[0]["ng_vol"] == 10  # 5 * 2, NESO wins over DISBSAD's 999
-    assert out.iloc[1]["settlementPeriod"] == 11
-    assert out.iloc[1]["ng_vol"] == 6  # 3 * 2, DISBSAD fallback
-
-
 def test_semo_net_flows_ida2_overrides_ida1():
     def _row(ni_gb, gb_ni):
         return {
@@ -175,3 +162,118 @@ def test_gtma_blocks_expand_to_per_sp_rows_in_the_old_feeds_unit():
     assert [(r["Date"], r["SP"], r["Volume"]) for r in rows] == [("2026-10-02", 21, 150.0), ("2026-10-02", 22, 150.0)]
     out = natgrid_ng_vol(rows, []).sort_values("settlementPeriod")
     assert out["ng_vol"].tolist() == [300.0, 300.0]
+
+
+def test_gtma_expansion_keeps_per_trade_detail_for_the_natgrid_ladder():
+    from citadel.ingest.neso import gtma_blocks_to_sp_rows
+
+    rows = gtma_blocks_to_sp_rows([{"ID": "ES1", "StartTime": "2026-10-02T09:00:00", "EndTime": "2026-10-02T09:30:00",
+                                    "Volume": 300.0, "Price": 142.36, "SO_Flag": "T", "Reason": None}])
+    assert len(rows) == 1
+    assert rows[0]["MW"] == 300.0 and rows[0]["Price"] == 142.36 and rows[0]["Volume"] == 150.0  # MWh per SP unchanged
+
+
+def test_natgrid_ladder_keeps_sells_negative_and_ladders_each_side_separately():
+    from citadel.engine.natgrid import build_ladder
+
+    neso = [
+        {"Date": "2026-09-30", "SP": 30, "MW": 100.0, "Price": 150.0},
+        {"Date": "2026-09-30", "SP": 30, "MW": -22.9, "Price": -92.69, "Reason": "B6_localised"},
+        {"Date": "2026-09-30", "SP": 30, "MW": -10.0, "Price": -50.0},
+        {"Date": "2026-09-30", "SP": 30, "MW": 50.0, "Price": 120.0},
+    ]
+    rows = build_ladder(neso, [])["2026-09-30"]["30"]
+    buys = [r for r in rows if r["side"] == "buy"]
+    sells = [r for r in rows if r["side"] == "sell"]
+    assert [(r["price"], r["disc_cumm"]) for r in buys] == [(120.0, 50.0), (150.0, 150.0)]
+    assert [(r["price"], r["disc_cumm"], r["volume_mw"]) for r in sells] == [(-92.69, -22.9, -22.9), (-50.0, -32.9, -10.0)]
+    assert sells[0]["reason"] == "B6_localised"
+
+
+def test_natgrid_store_normalises_detects_revisions_and_reconciles():
+    from datetime import timezone
+
+    from citadel.ingest.natgrid_store import block_changed, normalise_block, normalise_disbsad, reconcile
+
+    raw = {"ID": "ES9", "StartTime": "2026-10-02T09:00:00", "EndTime": "2026-10-02T10:00:00", "Volume": 300.0,
+           "Price": 142.36, "Cost": 42708.0, "SO_Flag": "T", "Reason": None, "Last_Updated": "2026-10-02T00:20:30.393000"}
+    row = normalise_block(raw)
+    assert row["id"] == "ES9" and row["start_time"].tzinfo == timezone.utc and row["volume_mw"] == 300.0
+    assert normalise_block({"StartTime": "2026-10-02T09:00:00"}) is None  # no ID
+
+    assert not block_changed(row, normalise_block({**raw, "Last_Updated": "2026-10-02T05:00:00"}))  # a re-fetch is not a revision
+    assert block_changed(row, normalise_block({**raw, "Volume": 250.0}))
+    assert block_changed(row, normalise_block({**raw, "Price": 150.0}))
+
+    d = normalise_disbsad({"settlementDate": "2026-10-02", "settlementPeriod": 21, "id": 1, "cost": 21354.0, "volume": 150.0,
+                           "soFlag": True, "storFlag": False, "partyId": "p", "assetId": "a", "service": "System"})
+    assert d["price"] == 142.36 and d["action_id"] == 1
+
+    neso = [{"Date": "2026-10-02", "SP": 21, "MW": 300.0, "Price": 142.36},
+            {"Date": "2026-10-02", "SP": 22, "MW": 300.0, "Price": 142.0},
+            {"Date": "2026-10-02", "SP": 23, "MW": 100.0, "Price": 150.0}]
+    disbsad = [{"settlementDate": "2026-10-02", "settlementPeriod": 21, "volume": 150.0, "cost": 21354.0},  # agrees (300 MW)
+               {"settlementDate": "2026-10-02", "settlementPeriod": 22, "volume": 100.0, "cost": 14200.0},  # 200 MW: differs
+               {"settlementDate": "2026-10-02", "settlementPeriod": 24, "volume": 10.0, "cost": 1000.0}]    # NESO has nothing
+    status = {p["sp"]: p["status"] for p in reconcile(neso, disbsad)}
+    assert status == {21: "match", 22: "mismatch", 23: "neso_only", 24: "disbsad_only"}
+
+
+# 2 Oct 2026 is BST: SP21 is 10:00-10:30 London (ended by 12:00Z), SP30 is 14:30-15:00 London (still to come).
+def _now_noon_utc():
+    from datetime import datetime, timezone
+
+    return datetime(2026, 10, 2, 12, 0, tzinfo=timezone.utc)
+
+
+def _disb(sp, volume_mwh, price, date="2026-10-02"):
+    return {"settlementDate": date, "settlementPeriod": sp, "volume": volume_mwh, "cost": volume_mwh * price, "soFlag": True, "service": "Energy"}
+
+
+def test_resolve_past_periods_use_disbsad_and_keep_its_extra_actions():
+    from citadel.engine.natgrid import resolve_trades, total_mw_by_period
+
+    neso = [{"Date": "2026-10-02", "SP": 21, "MW": 300.0, "Price": 142.36, "Source": "GTMA"}]
+    disbsad = [_disb(21, 150.0, 142.36), _disb(21, 0.25, 210.0)]          # the NESO trade, plus a small extra NESO lacks
+    rows = resolve_trades(neso, disbsad, _now_noon_utc())
+    assert {r["source"] for r in rows} == {"DISBSAD"} and len(rows) == 2
+    assert total_mw_by_period(neso, disbsad, _now_noon_utc()) == {("2026-10-02", 21): 300.5}
+
+
+def test_resolve_past_period_with_no_disbsad_yet_falls_back_to_neso():
+    from citadel.engine.natgrid import total_mw_by_period
+
+    neso = [{"Date": "2026-10-02", "SP": 21, "MW": 300.0, "Price": 142.36}]
+    assert total_mw_by_period(neso, [], _now_noon_utc()) == {("2026-10-02", 21): 300.0}
+
+
+def test_resolve_future_periods_use_neso_and_add_only_the_disbsad_extras():
+    from citadel.engine.natgrid import resolve_trades, total_mw_by_period
+
+    neso = [{"Date": "2026-10-02", "SP": 30, "MW": 300.0, "Price": 142.36, "Source": "GTMA"},
+            {"Date": "2026-10-02", "SP": 30, "MW": 100.0, "Price": 150.0, "Source": "GTMA"}]
+    # DISBSAD already lists the 300 MW trade (counted once, not twice) and one action NESO has not got.
+    disbsad = [_disb(30, 150.0, 142.36), _disb(30, 4.0, 200.0)]
+    rows = resolve_trades(neso, disbsad, _now_noon_utc())
+    assert sorted((r["source"], round(r["volume_mw"], 1)) for r in rows) == [("DISBSAD", 8.0), ("GTMA", 100.0), ("GTMA", 300.0)]
+    assert total_mw_by_period(neso, disbsad, _now_noon_utc()) == {("2026-10-02", 30): 408.0}
+
+    # a future period DISBSAD alone knows about is kept as it stands
+    assert total_mw_by_period([], [_disb(31, 50.0, 180.0)], _now_noon_utc()) == {("2026-10-02", 31): 100.0}
+
+
+def test_natgrid_rows_for_fundies_and_the_ladder_follow_the_same_rule():
+    from citadel.engine.natgrid import build_ladder
+
+    neso = [{"Date": "2026-10-02", "SP": 21, "MW": 100.0, "Price": 200.0, "SO_Flag": "T", "Source": "GTMA"},
+            {"Date": "2026-10-02", "SP": 21, "MW": 300.0, "Price": 142.36, "SO_Flag": "T", "Source": "GTMA"},
+            {"Date": "2026-10-02", "SP": 30, "MW": 50.0, "Price": 150.0, "Source": "GTMA"}]
+    disbsad = [_disb(21, 150.0, 142.36), _disb(21, 50.0, 200.0), _disb(21, 1.0, 300.0)]   # SP21: past, DISBSAD is the record
+    now = _now_noon_utc()
+
+    ladder = build_ladder(neso, disbsad, now)["2026-10-02"]
+    assert [(r["price"], r["disc_cumm"], r["source"]) for r in ladder["21"]] == [(142.36, 300.0, "DISBSAD"), (200.0, 400.0, "DISBSAD"), (300.0, 402.0, "DISBSAD")]
+    assert [(r["price"], r["source"]) for r in ladder["30"]] == [(150.0, "GTMA")]            # SP30: future, NESO
+
+    out = natgrid_ng_vol(neso, disbsad, now).sort_values("settlementPeriod").reset_index(drop=True)
+    assert out["ng_vol"].tolist() == [402.0, 50.0]

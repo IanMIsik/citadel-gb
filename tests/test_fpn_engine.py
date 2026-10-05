@@ -406,3 +406,34 @@ def test_build_aggregated_delta_defaults_to_zero_with_no_niv_spot_time_data():
     aggregated = build_aggregated(by_fuel, demand)
 
     assert aggregated.iloc[0]["delta"] == pytest.approx(0.0)
+
+
+def test_exploded_input_cache_reuses_identical_input_and_notices_any_change():
+    import pandas as pd
+
+    from citadel.engine import fpn
+
+    fpn._EXPLODE_CACHE.clear()
+    calls = []
+
+    def explode(df):
+        calls.append(len(df))
+        return df.assign(doubled=df["x"] * 2)
+
+    base = pd.DataFrame({"unit": ["A", "B"], "x": [1, 2]})
+    first, hit1 = fpn._cached_explode("t", base, explode)
+    second, hit2 = fpn._cached_explode("t", base.copy(), explode)   # same content, different object
+    assert (hit1, hit2) == (False, True) and calls == [2]
+    assert second["doubled"].tolist() == [2, 4]
+
+    second.loc[0, "doubled"] = 999                                   # callers may mutate their copy...
+    third, hit3 = fpn._cached_explode("t", base, explode)
+    assert hit3 and third["doubled"].tolist() == [2, 4]              # ...without corrupting the cache
+
+    changed = base.copy()
+    changed.loc[1, "x"] = 5                                          # any change in the input forces a re-explode
+    fourth, hit4 = fpn._cached_explode("t", changed, explode)
+    assert not hit4 and fourth["doubled"].tolist() == [2, 10] and calls == [2, 2]
+
+    empty, hit5 = fpn._cached_explode("e", pd.DataFrame({"x": []}), lambda d: d)
+    assert empty.empty

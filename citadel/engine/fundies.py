@@ -30,6 +30,7 @@ import numpy as np
 import pandas as pd
 
 from ..settlement import utc_to_settlement
+from .natgrid import total_mw_by_period
 from .fpn import fuel_type_reference  # noqa: F401  (re-exported for callers that only import this module)
 
 # ---------------------------------------------------------------------------
@@ -208,38 +209,20 @@ def interconnector_real_flows(fuelhh_records: list[dict]) -> pd.DataFrame:
 
 
 # ---------------------------------------------------------------------------
-# National Grid trades (NESO feed, DISBSAD fallback) -- same combination
-# logic as engine/fpn.py's natgrid_trade_rows(), flat per-SP shape instead
-# of that function's per-minute-exploded one.
+# National Grid trades: NESO and Elexon DISBSAD resolved by engine/natgrid.py's rule
+# (DISBSAD for periods that have ended, NESO for current/future, DISBSAD extras merged in);
+# flat per-SP shape here, engine/fpn.py's natgrid_trade_rows() is the per-minute one.
 # ---------------------------------------------------------------------------
 
-def natgrid_ng_vol(neso_trades: list[dict], disbsad_records: list[dict]) -> pd.DataFrame:
-    ng_df = pd.DataFrame(neso_trades)
-    if not ng_df.empty and {"SP", "Date", "Volume"}.issubset(ng_df.columns):
-        ng_df = ng_df.rename(columns={"SP": "settlementPeriod", "Date": "settlementDate"})
-        ng_df["settlementDate"] = pd.to_datetime(ng_df["settlementDate"]).dt.date
-        ng_df = ng_df.groupby(["settlementDate", "settlementPeriod"])["Volume"].sum().reset_index()
-        ng_df = ng_df.rename(columns={"Volume": "ng_vol"})
-    else:
-        ng_df = pd.DataFrame(columns=["settlementDate", "settlementPeriod", "ng_vol"])
-
-    disbsad_fallback = pd.DataFrame(columns=["settlementDate", "settlementPeriod", "ng_vol"])
-    disbsad_df = pd.DataFrame(disbsad_records)
-    if not disbsad_df.empty and "volume" in disbsad_df.columns:
-        disbsad_df["settlementDate"] = pd.to_datetime(disbsad_df["settlementDate"]).dt.date
-        disbsad_fallback = disbsad_df.groupby(["settlementDate", "settlementPeriod"])["volume"].sum().reset_index()
-        disbsad_fallback = disbsad_fallback.rename(columns={"volume": "ng_vol"})
-
-    if not ng_df.empty:
-        covered = set(ng_df[["settlementDate", "settlementPeriod"]].itertuples(index=False, name=None))
-        keys = disbsad_fallback[["settlementDate", "settlementPeriod"]].apply(tuple, axis=1)
-        disbsad_fallback = disbsad_fallback[~keys.isin(covered)]
-
-    combined = pd.concat([ng_df, disbsad_fallback], ignore_index=True)
-    if combined.empty:
+def natgrid_ng_vol(neso_trades: list[dict], disbsad_records: list[dict], now=None) -> pd.DataFrame:
+    """Net MW of National Grid trades per settlement period (columns settlementDate, settlementPeriod,
+    ng_vol), from the two sources resolved as engine/natgrid.py describes."""
+    totals = total_mw_by_period(neso_trades, disbsad_records, now)
+    if not totals:
         return pd.DataFrame(columns=["settlementDate", "settlementPeriod", "ng_vol"])
-    combined["ng_vol"] = combined["ng_vol"] * 2
-    return combined
+    return pd.DataFrame([
+        {"settlementDate": pd.Timestamp(d).date(), "settlementPeriod": sp, "ng_vol": mw} for (d, sp), mw in sorted(totals.items())
+    ])
 
 
 # ---------------------------------------------------------------------------

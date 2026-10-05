@@ -67,7 +67,20 @@ let liveSd = null;
 let liveSp = null;
 // key "date|sp" -> {sd, sp, rows}
 const periodBuffer = new Map();
-const visibleKeys = new Set();
+
+// Which periods are shown is the USER's choice and must survive every live push. Two
+// pieces of state, never touched by incoming data:
+//   hiddenKeys  periods the user unticked (a period arriving for the first time is shown
+//               unless it is in here);
+//   focusKey    when set, ONLY that period is shown -- new periods arriving on the websocket
+//               stay hidden. followLive makes the focus track the live period as it advances.
+// (This used to re-add every period to the visible set on every update, so a filter to one
+// SP was undone by the next push.)
+const hiddenKeys = new Set();
+let focusKey = null;
+let followLive = false;
+const isVisible = (key) => (focusKey !== null ? key === focusKey : !hiddenKeys.has(key));
+const liveKey = () => (liveSd == null ? null : `${liveSd}|${liveSp}`);
 
 function withinLiveWindow(sd, sp) {
   if (liveSd == null) return true; // live pointer not known yet -- accept, pruned once it arrives
@@ -80,7 +93,8 @@ function pruneToLiveWindow() {
   for (const [key, period] of periodBuffer) {
     if (!withinLiveWindow(period.sd, period.sp)) {
       periodBuffer.delete(key);
-      visibleKeys.delete(key);
+      hiddenKeys.delete(key);
+      if (focusKey === key) focusKey = null;
     }
   }
 }
@@ -90,13 +104,12 @@ function setLive(sd, sp) {
   liveSd = sd;
   liveSp = sp;
   pruneToLiveWindow();
+  if (followLive) focusKey = liveKey();
 }
 
 function mergePeriod(sd, sp, rows) {
   if (!withinLiveWindow(sd, sp)) return; // outside the live +/- window -- by request, never shown at all
-  const key = `${sd}|${sp}`;
-  periodBuffer.set(key, { sd, sp, rows });
-  visibleKeys.add(key);
+  periodBuffer.set(`${sd}|${sp}`, { sd, sp, rows });
 }
 
 function renderSpSelector() {
@@ -107,17 +120,55 @@ function renderSpSelector() {
   });
   el.innerHTML = keys.map((key) => {
     const { sp } = periodBuffer.get(key);
-    const label = sp === liveSp ? `SP ${sp} (live)` : `SP ${sp}`;
-    return `<label><input type="checkbox" data-key="${key}" ${visibleKeys.has(key) ? "checked" : ""}/> ${label}</label>`;
+    const label = key === liveKey() ? `SP ${sp} (live)` : `SP ${sp}`;
+    return `<div class="sp-row${focusKey === key ? " sp-focused" : ""}">` +
+      `<label><input type="checkbox" data-key="${key}" ${isVisible(key) ? "checked" : ""}/> ${label}</label>` +
+      `<button type="button" class="sp-only" data-key="${key}" title="Show only this settlement period">only</button></div>`;
   }).join("");
+
   el.querySelectorAll("input[type=checkbox]").forEach((cb) => {
     cb.addEventListener("change", (e) => {
       const key = e.target.dataset.key;
-      if (e.target.checked) visibleKeys.add(key); else visibleKeys.delete(key);
-      renderChart();
+      if (focusKey !== null) {
+        // Leaving focus mode: everything except the focused period becomes explicitly hidden,
+        // then this tick applies on top of that.
+        for (const k of periodBuffer.keys()) if (k !== focusKey) hiddenKeys.add(k);
+        focusKey = null;
+        followLive = false;
+      }
+      if (e.target.checked) hiddenKeys.delete(key); else hiddenKeys.add(key);
+      refreshView();
     });
   });
+  el.querySelectorAll("button.sp-only").forEach((btn) => {
+    btn.addEventListener("click", () => { followLive = false; focusKey = btn.dataset.key; refreshView(); });
+  });
+  document.getElementById("sp-follow-live").classList.toggle("active", followLive);
 }
+
+function refreshView() {
+  renderSpSelector();
+  renderChart();
+}
+
+// Every recompute pushes one message per settlement period (about six), back to back. Each
+// redraw rebuilds 150+ datasets, so redrawing per message made the page lag behind the data;
+// the messages are merged into the buffer as they arrive and drawn once, a moment after the
+// last of the burst.
+let redrawTimer = null;
+function scheduleRefresh() {
+  if (redrawTimer !== null) return;
+  redrawTimer = setTimeout(() => { redrawTimer = null; refreshView(); }, 60);
+}
+
+document.getElementById("sp-show-all").addEventListener("click", () => {
+  focusKey = null; followLive = false; hiddenKeys.clear(); refreshView();
+});
+document.getElementById("sp-follow-live").addEventListener("click", () => {
+  followLive = !followLive;
+  focusKey = followLive ? liveKey() : null;
+  refreshView();
+});
 
 function renderFuelLegend() {
   const el = document.getElementById("fuel-legend");
@@ -127,9 +178,66 @@ function renderFuelLegend() {
   }).join("");
 }
 
+const SP_MS = 30 * 60 * 1000;
+const LONDON_FMT = new Intl.DateTimeFormat("en-GB", {
+  timeZone: "Europe/London", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false,
+});
+
+// Settlement date, period number and clock time of an instant, on the market (London) clock.
+function londonSp(ms) {
+  const p = Object.fromEntries(LONDON_FMT.formatToParts(new Date(ms)).map((x) => [x.type, x.value]));
+  const hh = Number(p.hour) % 24, mm = Number(p.minute);
+  return { date: `${p.year}-${p.month}-${p.day}`, sp: hh * 2 + Math.floor(mm / 30) + 1, clock: `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}` };
+}
+
+// Makes every settlement period unmistakable: alternating shaded bands, a firm line at each
+// period boundary, the live period tinted, and the period named at the top of its band.
+const spBands = {
+  id: "spBands",
+  beforeDatasetsDraw(c) {
+    const { ctx: g, chartArea: area, scales } = c;
+    const x = scales.x;
+    if (!area || !x) return;
+    g.save();
+    for (let t = Math.floor(x.min / SP_MS) * SP_MS; t < x.max; t += SP_MS) {
+      const x0 = Math.max(x.getPixelForValue(t), area.left);
+      const x1 = Math.min(x.getPixelForValue(t + SP_MS), area.right);
+      if (x1 <= x0) continue;
+      const info = londonSp(t);
+      const live = liveSd != null && info.date === liveSd && info.sp === liveSp;
+      g.fillStyle = live ? "rgba(114,196,246,0.10)" : info.sp % 2 ? "rgba(255,255,255,0.05)" : "rgba(255,255,255,0)";
+      g.fillRect(x0, area.top, x1 - x0, area.height);
+      if (x0 > area.left + 1) {
+        g.strokeStyle = "rgba(185,187,179,0.6)"; g.lineWidth = 1;
+        g.beginPath(); g.moveTo(x0, area.top); g.lineTo(x0, area.bottom); g.stroke();
+      }
+    }
+    g.restore();
+  },
+  afterDatasetsDraw(c) {
+    const { ctx: g, chartArea: area, scales } = c;
+    const x = scales.x;
+    if (!area || !x) return;
+    g.save();
+    g.textAlign = "center"; g.textBaseline = "top";
+    for (let t = Math.floor(x.min / SP_MS) * SP_MS; t < x.max; t += SP_MS) {
+      const x0 = Math.max(x.getPixelForValue(t), area.left);
+      const x1 = Math.min(x.getPixelForValue(t + SP_MS), area.right);
+      if (x1 - x0 < 44) continue; // too narrow to name
+      const info = londonSp(t);
+      const live = liveSd != null && info.date === liveSd && info.sp === liveSp;
+      g.font = "bold 11px Consolas, monospace";
+      g.fillStyle = live ? "#72c4f6" : "#e6e8eb";
+      g.fillText(`SP ${info.sp}${live ? " LIVE" : ""}`, (x0 + x1) / 2, area.top + 4);
+    }
+    g.restore();
+  },
+};
+
 const ctx = document.getElementById("all-plants-boalf-canvas");
 const chart = new Chart(ctx, {
   type: "line",
+  plugins: [spBands],
   data: { datasets: [] },
   options: {
     animation: false,
@@ -151,7 +259,8 @@ const chart = new Chart(ctx, {
         // so stepping from UTC epoch 0 in fixed 30-minute increments still
         // lines up correctly on both sides of a clock change.
         afterBuildTicks: (axis) => {
-          const stepMs = 30 * 60 * 1000;
+          // One tick per period boundary -- or every 5 minutes when zoomed to a single period.
+          const stepMs = axis.max - axis.min <= 31 * 60 * 1000 ? 5 * 60 * 1000 : 30 * 60 * 1000;
           const start = Math.ceil(axis.min / stepMs) * stepMs;
           const ticks = [];
           for (let t = start; t <= axis.max; t += stepMs) ticks.push({ value: t });
@@ -163,14 +272,8 @@ const chart = new Chart(ctx, {
         // gridlines.
         ticks: {
           color: "#b9bbb3", font: { size: 9 },
-          callback: (value) => {
-            const parts = new Intl.DateTimeFormat("en-GB", {
-              timeZone: "Europe/London", hour: "2-digit", minute: "2-digit", hour12: false,
-            }).formatToParts(new Date(value));
-            const hh = Number(parts.find((p) => p.type === "hour").value);
-            const mm = Number(parts.find((p) => p.type === "minute").value);
-            return `SP ${hh * 2 + Math.floor(mm / 30) + 1}`;
-          },
+          // The period names are drawn inside each band (spBands); the axis carries the clock time.
+          callback: (value) => londonSp(value).clock,
         },
         grid: { color: "#2a2e38" },
       },
@@ -209,9 +312,9 @@ function renderChart() {
   // the reference app's own renderers.js trick, so a stacked area never has to
   // represent one line swinging from positive to negative.
   const series = new Map(); // key -> {fuel_bucket, points: Map(iso -> delta)}
-  for (const key of visibleKeys) {
+  for (const key of periodBuffer.keys()) {
+    if (!isVisible(key)) continue;
     const period = periodBuffer.get(key);
-    if (!period) continue;
     for (const row of period.rows) {
       const seriesKey = row.delta >= 0 ? row.bmUnit : `${row.bmUnit}_`;
       if (!series.has(seriesKey)) series.set(seriesKey, { fuel_bucket: row.fuel_bucket, points: new Map() });
@@ -236,6 +339,12 @@ function renderChart() {
     });
 
   chart.data.datasets = datasets;
+  // Focused on one period: pin the axis to exactly that half hour (even if its data is partial).
+  const focusPeriod = focusKey !== null ? periodBuffer.get(focusKey) : null;
+  const firstMs = focusPeriod && focusPeriod.rows.length
+    ? Math.min(...focusPeriod.rows.map((r) => Date.parse(r.spot_time))) : null;
+  chart.options.scales.x.min = firstMs !== null ? Math.floor(firstMs / SP_MS) * SP_MS : undefined;
+  chart.options.scales.x.max = firstMs !== null ? Math.floor(firstMs / SP_MS) * SP_MS + SP_MS : undefined;
   chart.update();
 }
 
@@ -250,9 +359,8 @@ async function loadInitial() {
     byPeriod.get(key).rows.push(row);
   }
   for (const { sd, sp, rows } of byPeriod.values()) mergePeriod(sd, sp, rows);
-  renderSpSelector();
   renderFuelLegend();
-  renderChart();
+  refreshView();
 }
 
 function loadEnvBadge() {
@@ -280,8 +388,7 @@ function connectWebSocket() {
     if (msg.settlement_period === undefined) return;
     setLive(msg.live_settlement_date, msg.live_settlement_period);
     mergePeriod(msg.settlement_date, msg.settlement_period, msg.rows || []);
-    renderSpSelector();
-    renderChart();
+    scheduleRefresh();
   };
   setInterval(() => { if (ws.readyState === WebSocket.OPEN) ws.send("ping"); }, 30000);
 }

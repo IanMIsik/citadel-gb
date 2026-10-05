@@ -12,18 +12,22 @@ from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta, timezone
 
 import httpx
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from ..config import settings
 from ..engine.fpn_runner import FpnRunner
 from ..engine.fundies_runner import FundiesRunner
+from ..engine.natgrid import build_ladder
+from ..engine.trip_chart import build_trip_chart, mel_evidence
+from ..ingest.natgrid_store import reconcile
+from ..ingest.neso import gtma_blocks_to_sp_rows
 from ..engine.runner import Runner
 from ..engine.view import split_and_sort
 from ..ingest import gbpw_import, misco_fuel_type_reference
 from ..ingest.elexon_rest import fetch_bmu_reference
-from ..settlement import current_period, rolling_window, utc_to_settlement, window_around
+from ..settlement import current_period, rolling_window, sp_start_utc, utc_to_settlement, window_around
 from ..storage import db
 from .broadcast import Broadcaster
 from .exploded_boalf_broadcast import ExplodedBoalfBroadcaster
@@ -35,6 +39,11 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname
 logger = logging.getLogger("citadel.api.app")
 
 WEB_DIR = __import__("pathlib").Path(__file__).resolve().parents[1] / "web"
+
+
+def _finite(v):
+    """`v`, or None if it is NaN or infinite."""
+    return None if isinstance(v, float) and (v != v or v in (float("inf"), float("-inf"))) else v
 
 
 def _clean_record(record) -> dict:
@@ -158,6 +167,8 @@ async def lifespan(app: FastAPI):
     app.state.trip_broadcaster = trip_broadcaster
     fpn_runner = FpnRunner(settings, pool, fpn_broadcaster, runner.buffers, process_pool, trip_broadcaster=trip_broadcaster)
     app.state.fpn_runner = fpn_runner
+    # The decision table reads the stack's saved rows, so it recomputes the moment they land.
+    runner.add_stack_persisted_listener(fpn_runner.on_stack_persisted)
     fpn_runner_task = asyncio.create_task(fpn_runner.run())
 
     fundies_broadcaster = FundiesBroadcaster()
@@ -366,9 +377,24 @@ def _with_affected_sps(d: dict, end_dt) -> dict:
 
 
 @app.get("/api/trips/recent")
-async def trips_recent(limit: int = 50):
-    records = await db.fetch_recent_trips(app.state.pool, limit)
-    trips = [_with_affected_sps(_clean_record(r), r["resolved_at"] or r["event_end_time"]) for r in records]
+async def trips_recent(limit: int = 200, days: int = 2):
+    """The Plant Trips table: every trip that is still ongoing, plus resolved trips from the
+    last `days` days (by when they resolved, falling back to when they were detected)."""
+    records = await db.fetch_recent_trips(app.state.pool, 1000)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    kept = [r for r in records if r["status"] != "resolved" or (r["resolved_at"] or r["detected_at"]) >= cutoff][:limit]
+    trips = [_with_affected_sps(_clean_record(r), r["resolved_at"] or r["event_end_time"]) for r in kept]
+
+    # A plant can be unavailable without ever publishing a REMIT notice. For the open trips REMIT has not
+    # matched, say what the plant's own MEL shows (a cut, since when, and when it is due back).
+    now = datetime.now(timezone.utc)
+    unmatched = [t["bm_unit"] for t in trips if t["status"] != "resolved" and not t.get("remit_mrid")]
+    by_unit: dict[str, list[dict]] = {}
+    for r in await db.trip_telemetry_for_units(app.state.pool, sorted(set(unmatched)), now - timedelta(hours=3), now + timedelta(hours=3)):
+        by_unit.setdefault(r["bm_unit"], []).append(dict(r))
+    for t in trips:
+        if t["status"] != "resolved" and not t.get("remit_mrid"):
+            t["mel_evidence"] = mel_evidence(by_unit.get(t["bm_unit"], []), now)
     return {"trips": trips}
 
 
@@ -387,6 +413,37 @@ async def trip_revisions(trip_id: int):
     }
 
 
+@app.get("/api/trips/{trip_id}/telemetry")
+async def trip_telemetry(trip_id: int):
+    """GridTrip-style chart data for one trip: the unit's FPN, adjusted FPN and
+    MEL from 1.5h before its settlement period to 3h past now (its published
+    plan), plus the headline loss figures. Fed from trip_telemetry, which the
+    FPN runner fills every cycle, so it works for any trip, not just the live
+    ones -- the REMIT side stays on /api/trips/{id}/revisions."""
+    trips = await db.fetch_recent_trips(app.state.pool, 500)
+    trip = next((t for t in trips if t["id"] == trip_id), None)
+    if trip is None:
+        raise HTTPException(status_code=404, detail="unknown trip")
+    now = datetime.now(timezone.utc)
+    ongoing = trip["status"] != "resolved"
+    if ongoing:
+        # Still tripped: chart the last 3 hours and the published plan for the next 3, with the
+        # headline figures for the period it is in now -- not for the period it first tripped in,
+        # which may be days ago and long out of the telemetry window.
+        cur = current_period(now)
+        sp_start = sp_start_utc(cur.settlement_date, cur.settlement_period)
+        start, end = now - timedelta(hours=3), now + timedelta(hours=3)
+    else:
+        sp_start = sp_start_utc(trip["settlement_date"], trip["settlement_period"])
+        start, end = sp_start - timedelta(hours=1, minutes=30), min(now + timedelta(hours=3), sp_start + timedelta(hours=14))
+    records = await db.trip_telemetry_between(app.state.pool, trip["bm_unit"], start, end)
+    chart = build_trip_chart([dict(r) for r in records], sp_start, now)
+    return {
+        "trip": _clean_record(trip), "sp_start": sp_start.isoformat(), "detected_at": trip["detected_at"].isoformat(),
+        "ongoing": ongoing, "window_start": start.isoformat(), "has_data": bool(records), **chart,
+    }
+
+
 @app.get("/api/trips/worst-behaviour")
 async def trips_worst_behaviour_graph():
     """reference-app-style "Worst Behaviour Plants" data: for each tripped (or
@@ -399,7 +456,10 @@ async def trips_worst_behaviour_graph():
     units: dict[str, dict] = {}
     for r in runner.latest_wb_series:
         u = units.setdefault(r["bm_unit"], {"bm_unit": r["bm_unit"], "fuel_type": r["fuel_type"], "status": r["status"], "series": []})
-        u["series"].append({"t": r["spot_time"], "sp": r["settlement_period"], "fpn": r["fpn"], "mel": r["mel"], "vol": r["vol"]})
+        # NaN/inf are not valid JSON (the encoder raises, i.e. a 500) -- a unit with no usable
+        # value in one minute must show as a gap, not take the whole endpoint down.
+        u["series"].append({"t": r["spot_time"], "sp": r["settlement_period"], "fpn": _finite(r["fpn"]),
+                            "mel": _finite(r["mel"]), "vol": _finite(r["vol"])})
     cur = current_period()
     return {
         "computed_at": runner.wb_computed_at.isoformat() if runner.wb_computed_at else None,
@@ -559,6 +619,48 @@ async def all_plants_boalf_page():
 @app.get("/trips")
 async def trips_page():
     return FileResponse(str(WEB_DIR / "trips.html"))
+
+
+@app.get("/natgrid")
+async def natgrid_page():
+    return FileResponse(str(WEB_DIR / "natgrid.html"))
+
+
+async def _stored_natgrid_trades(days: int) -> tuple[list[dict], list[dict]]:
+    """NESO trade rows and DISBSAD actions from the local database for the last
+    `days` settlement days through tomorrow (see ingest/natgrid_store.py)."""
+    today = current_period().settlement_date
+    first, last = today - timedelta(days=days - 1), today + timedelta(days=1)
+    midnight = datetime(first.year, first.month, first.day, tzinfo=timezone.utc)
+    blocks = await db.natgrid_blocks_between(
+        app.state.pool, midnight - timedelta(days=1), datetime(last.year, last.month, last.day, tzinfo=timezone.utc) + timedelta(days=1))
+    neso_rows = [r for r in gtma_blocks_to_sp_rows(blocks) if first.isoformat() <= r["Date"] <= last.isoformat()]
+    return neso_rows, await db.disbsad_between(app.state.pool, first, last)
+
+
+@app.get("/api/natgrid")
+async def natgrid(days: int = Query(2, ge=1, le=60)):
+    """National Grid's balancing trades per settlement period as a price
+    ladder (see engine/natgrid.py), from the locally stored NESO trades with
+    stored DISBSAD filling periods NESO has none for. `days` is how many
+    settlement days back to include (today counts as one).
+    Shape: {data: {date: {sp: [{side, disc_cumm, price, ...}]}}}.
+    """
+    neso_rows, disbsad = await _stored_natgrid_trades(days)
+    return {"data": build_ladder(neso_rows, disbsad)}
+
+
+@app.get("/api/natgrid/reconcile")
+async def natgrid_reconcile(days: int = Query(2, ge=1, le=60)):
+    """NESO trades vs Elexon DISBSAD, period by period. They describe the same
+    actions so should agree; periods where they do not are listed first.
+    `neso_only` just means DISBSAD has not been published for that period yet."""
+    neso_rows, disbsad = await _stored_natgrid_trades(days)
+    periods = reconcile(neso_rows, disbsad)
+    counts: dict[str, int] = {}
+    for p in periods:
+        counts[p["status"]] = counts.get(p["status"], 0) + 1
+    return {"counts": counts, "mismatches": [p for p in periods if p["status"] == "mismatch"], "periods": periods}
 
 
 @app.get("/bm-stack")

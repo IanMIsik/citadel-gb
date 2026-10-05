@@ -16,6 +16,7 @@ message arriving, not by waiting out a fixed poll interval.
 from __future__ import annotations
 
 import asyncio
+import time
 import functools
 import logging
 from datetime import datetime, timezone
@@ -127,6 +128,7 @@ class Runner:
         # recompute running alongside it. None keeps the old inline
         # behaviour (e.g. for tests constructing a Runner directly).
         self.process_pool = process_pool
+        self._stack_persisted_listeners: list = []
         self._dirty = asyncio.Event()
         self._stop = asyncio.Event()
         self._http = httpx.AsyncClient()
@@ -246,8 +248,10 @@ class Runner:
             # one recompute instead of one per message.
             await asyncio.sleep(DEBOUNCE_SECONDS)
             self._dirty.clear()
+            started = time.perf_counter()
             try:
                 await self._recompute_and_persist()
+                logger.info("stack recompute took %.1fs", time.perf_counter() - started)
             except Exception:
                 logger.exception("recompute cycle failed")
 
@@ -306,6 +310,7 @@ class Runner:
         boalf = self.buffers.frame("boalf")
         if boalf.empty:
             return
+        t0 = time.perf_counter()
         bod, pn, mel, disbsad = self.buffers.frame("bod"), self.buffers.frame("pn"), self.buffers.frame("mel"), self.buffers.frame("disbsad")
         compute = functools.partial(
             stack_engine.compute_stack, boalf, bod, pn, mel, disbsad,
@@ -319,8 +324,10 @@ class Runner:
             result, spot_niv, unit_delta_5min, exploded_boalf = await loop.run_in_executor(self.process_pool, compute)
         else:
             result, spot_niv, unit_delta_5min, exploded_boalf = compute()
+        t1 = time.perf_counter()
         if result.empty:
             return
+        logger.info("stack compute steps: %s", result.attrs.get("timings"))
 
         # Fuel-type join (fpn.py, not stack.py -- see that module's own
         # docstring) + the in-memory rolling window + live broadcast for
@@ -330,6 +337,16 @@ class Runner:
         if not exploded_boalf.empty and not self.fuel_ref.empty:
             exploded_boalf = fpn_engine.exploded_boalf_with_fuel_type(exploded_boalf, self.fuel_ref)
         self.latest_exploded_boalf = exploded_boalf
+
+        # The All Plants BOALF chart needs nothing from the database, so its pushes go out
+        # NOW -- they used to sit in the same queue as the ~30 DB writes below (bounded to
+        # 4 at a time) and reach the page only after those finished, seconds later.
+        if self.exploded_boalf_broadcaster is not None and not exploded_boalf.empty:
+            await asyncio.gather(*[
+                self._broadcast_exploded_boalf_period(sd, sp, group)
+                for (sd, sp), group in exploded_boalf.groupby(["settlementDate", "settlementPeriod"])
+            ])
+        t2 = time.perf_counter()
 
         # Each period's own persist+broadcast used to run one full round-trip
         # at a time (delete+insert, then wait for the next period); every
@@ -351,12 +368,23 @@ class Runner:
                 _bounded(self._persist_unit_delta_5min_period(sd, sp, group))
                 for (sd, sp), group in unit_delta_5min.groupby(["settlementDate", "settlementPeriod"])
             ]
-        if self.exploded_boalf_broadcaster is not None and not exploded_boalf.empty:
-            tasks += [
-                _bounded(self._broadcast_exploded_boalf_period(sd, sp, group))
-                for (sd, sp), group in exploded_boalf.groupby(["settlementDate", "settlementPeriod"])
-            ]
         await asyncio.gather(*tasks)
+        logger.info("stack stages: compute %.1fs, all-plants push %.1fs, persist %.1fs (all-plants chart updated %.1fs after the cycle started)",
+                    t1 - t0, t2 - t1, time.perf_counter() - t2, t2 - t0)
+
+        # Everything this cycle computed is now saved: tell anything that
+        # reads the stack tables (the FPN runner's decision table) to
+        # recompute straight away, instead of waiting for its own timer and
+        # reading a stale copy.
+        for callback in self._stack_persisted_listeners:
+            try:
+                callback()
+            except Exception:
+                logger.exception("stack-persisted listener failed")
+
+    def add_stack_persisted_listener(self, callback) -> None:
+        """Register a no-argument callable run after every cycle's persist finishes."""
+        self._stack_persisted_listeners.append(callback)
 
     async def _broadcast_exploded_boalf_period(self, sd, sp, group: pd.DataFrame) -> None:
         sd_date = sd.date() if hasattr(sd, "date") else sd

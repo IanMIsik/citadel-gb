@@ -83,6 +83,13 @@ async def fetch_mils(client: httpx.AsyncClient, from_iso: str, to_iso: str) -> l
     return await _get_stream(client, f"{BASE}/datasets/MILS/stream", {"from": from_iso, "to": to_iso})
 
 
+async def fetch_disbsad_day(client: httpx.AsyncClient, sd: date) -> list[dict]:
+    """Every DISBSAD action for one settlement date in one call (the FPN notebook's
+    own form of the query), for storing locally. The endpoint rejects windows
+    longer than a day, so callers loop over days."""
+    return await _get(client, f"{BASE}/datasets/DISBSAD", {"from": f"{sd.isoformat()}T00:00Z", "to": f"{(sd + timedelta(days=1)).isoformat()}T00:00Z"})
+
+
 async def fetch_disbsad(client: httpx.AsyncClient, sd: date, sp: int) -> list[dict]:
     return await _get(client, f"{BASE}/balancing/nonbm/disbsad/details", {"settlementDate": sd.isoformat(), "settlementPeriod": sp})
 

@@ -732,6 +732,26 @@ async function loadAll() {
   await Promise.all([loadCurrent(), loadDashboard(), loadWorstDeviants(), loadGenerationByFuel()]);
 }
 
+// A pricing-stack update ("tail") only changes what is built from the stack's saved rows:
+// the by-fuel table, the Generation / Delta charts, the decision tables and generation by
+// fuel -- not the worst-deviants list -- so only those are refetched. Updates that arrive
+// while a refresh is running are merged into one follow-up, so the charts always end on
+// the newest data instead of queueing a refetch per message.
+let refreshing = false;
+let pendingKind = null;
+
+function refreshOnUpdate(kind) {
+  if (refreshing) { pendingKind = pendingKind === "full" || kind === "full" ? "full" : kind; return; }
+  refreshing = true;
+  const run = kind === "tail"
+    ? Promise.all([loadCurrent(), loadDashboard(), loadGenerationByFuel()])
+    : loadAll();
+  run.catch(() => {}).finally(() => {
+    refreshing = false;
+    if (pendingKind) { const next = pendingKind; pendingKind = null; refreshOnUpdate(next); }
+  });
+}
+
 function connectWebSocket() {
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
   const ws = new WebSocket(`${proto}//${location.host}/ws/fpn`);
@@ -746,7 +766,7 @@ function connectWebSocket() {
   ws.onmessage = (event) => {
     const msg = JSON.parse(event.data);
     if (msg.type !== "fpn_update") return;
-    loadAll();
+    refreshOnUpdate(msg.kind || "full");
   };
   setInterval(() => { if (ws.readyState === WebSocket.OPEN) ws.send("ping"); }, 30000);
 }

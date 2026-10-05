@@ -10,6 +10,8 @@ actions).
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import ProcessPoolExecutor
+import time
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
@@ -30,7 +32,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("citadel.engine.fpn_runner")
 
-DEBOUNCE_SECONDS = 2.0
+# compute() outputs that are built from the pricing stack's saved rows; FpnRunner._recompute_tail()
+# is what saves them (see _run_full).
+_STACK_DEPENDENT_RESULTS = ("by_fuel", "aggregated", "generation_by_fuel")
+
+DEBOUNCE_SECONDS = 0.5  # was 2.0: only needs to absorb a burst of near-simultaneous triggers
 GENERATION_BY_FUEL_RETENTION = timedelta(hours=6)
 # REMIT revisions/publishes arrive far less often than MEL/MIL, so this polls
 # on its own much slower cadence, independent of the FUELINST/demand loop.
@@ -48,13 +54,25 @@ def _parse_iso(value: str | None) -> datetime | None:
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
-def best_remit_match(candidates: list[dict], detected_at: datetime, window_hours: float = REMIT_MATCH_WINDOW_HOURS) -> str | None:
-    """`candidates` are full REMIT message details (assetId already
-    filtered server-side by the caller) -- picks the one whose
-    `eventStartTime` is closest to `detected_at`, only within
-    `window_hours` either side. A candidate with no eventStartTime, or one
-    outside the window, is never picked -- better to show "no REMIT match
-    yet" than a stale/unrelated outage for the same unit.
+def best_remit_match(
+    candidates: list[dict], detected_at: datetime, window_hours: float = REMIT_MATCH_WINDOW_HOURS,
+    mel_now: float | None = None, drop_mw: float | None = None,
+) -> str | None:
+    """`candidates` are full REMIT message details (assetId already filtered server-side by the
+    caller). Two ways to match, in this order:
+
+    1. A notice whose `eventStartTime` is within `window_hours` of `detected_at` -- the closest
+       wins. This is a trip that was detected as it happened. A candidate with no eventStartTime,
+       or one outside the window, is never picked this way.
+    2. Otherwise, a notice that is ACTIVE at `detected_at` (started before it, not yet ended),
+       chosen by how well it explains what the plant is doing. This is a plant that was already
+       down when we first saw it, or one whose outage notice has been running for weeks (and
+       revised over a hundred times, so its start is nowhere near our detection). A unit can have
+       several such notices at once -- a long full outage next to partial derates -- so the choice
+       is made on capacity: the notice's available capacity against the plant's own MEL now
+       (`mel_now`), or failing that its unavailable capacity against the size of the trip
+       (`drop_mw`). A notice that does not fit within a tolerance is rejected: better to show "no
+       REMIT match yet" than a stale or unrelated outage for the same unit.
     """
     best_mrid, best_delta = None, None
     for detail in candidates:
@@ -64,7 +82,33 @@ def best_remit_match(candidates: list[dict], detected_at: datetime, window_hours
         delta = abs((start - detected_at).total_seconds())
         if delta <= window_hours * 3600 and (best_delta is None or delta < best_delta):
             best_mrid, best_delta = detail["mrid"], delta
+    if best_mrid is not None or (mel_now is None and drop_mw is None):
+        return best_mrid
+
+    best_key = None
+    for detail in candidates:
+        if not detail:
+            continue
+        start, end = _parse_iso(detail.get("eventStartTime")), _parse_iso(detail.get("eventEndTime"))
+        if start is None or start > detected_at or (end is not None and end < detected_at):
+            continue
+        if detail.get("eventStatus") not in (None, "Active"):
+            continue
+        normal = detail.get("normalCapacity") or 0.0
+        if mel_now is not None and detail.get("availableCapacity") is not None:
+            err, tolerance = abs(detail["availableCapacity"] - mel_now), max(25.0, 0.1 * normal)
+        elif drop_mw is not None and detail.get("unavailableCapacity") is not None:
+            err, tolerance = abs(detail["unavailableCapacity"] - drop_mw), max(25.0, 0.15 * normal)
+        else:
+            continue
+        if err > tolerance:
+            continue
+        key = (err, -(_parse_iso(detail.get("publishTime")) or detected_at).timestamp())   # best fit, then most recently revised
+        if best_key is None or key < best_key:
+            best_mrid, best_key = detail["mrid"], key
     return best_mrid
+
+
 # Same reasoning as engine/runner.py's own PERSIST_CONCURRENCY: this module
 # persists up to 3 tables x ~8 periods per cycle (up to 24 delete+insert
 # transactions), previously one full round-trip at a time. Each (table, sd,
@@ -126,6 +170,18 @@ class FpnRunner:
         self.trip_broadcaster = trip_broadcaster
         self.shared_buffers = shared_buffers
         self.process_pool = process_pool
+        # compute() keeps an exploded-input cache in module state (see
+        # engine/fpn.py's _EXPLODE_CACHE), which only helps if every call lands in
+        # the SAME process -- the shared pool hands calls to whichever worker is
+        # free -- so the FPN compute gets one dedicated long-lived worker.
+        self.compute_pool = ProcessPoolExecutor(max_workers=1) if process_pool is not None else None
+        # State the last full compute left for fpn.compute_tail(), and whether the next
+        # recompute has to be a full one (set by every REST refresh).
+        self._tail_state: dict | None = None
+        self._full_dirty = True
+        self._stack_dirty = False
+        self._full_task: asyncio.Task | None = None
+        self._tail_lock = asyncio.Lock()
         self.fpn_buffers = FpnBuffers()
         self.bm_unit_reference = pd.DataFrame()
         self._demand_window: tuple[pd.Timestamp, pd.Timestamp] | None = None
@@ -166,7 +222,7 @@ class FpnRunner:
         neso_from = today_midnight.strftime("%Y-%m-%dT%H:%M:%S")
         neso_to = (today_midnight + timedelta(days=2)).strftime("%Y-%m-%dT%H:%M:%S")
         try:
-            trades = await neso.fetch_national_grid_trades(self._http, neso_from, neso_to)
+            trades = await neso.national_grid_trades_cached(self.pool, self._http, neso_from, neso_to, store=False)
         except Exception:
             logger.warning("NESO national grid trades fetch failed, keeping the last fetched trades", exc_info=True)
             trades = self.fpn_buffers.neso_trades
@@ -182,6 +238,7 @@ class FpnRunner:
 
         await self._refresh_bm_unit_reference()
         await db.log_refresh(self.pool, "rest", "fpn_window", True, note=f"{len(periods)} periods")
+        self._full_dirty = True
         self._dirty.set()
 
     async def _rest_poll_loop(self) -> None:
@@ -199,17 +256,81 @@ class FpnRunner:
             except asyncio.TimeoutError:
                 pass
 
+    async def _read_stack_rows(self) -> tuple[list[dict], list[dict], list[dict], list[dict]]:
+        """The pricing stack's saved rows for the rolling window (what the decision table is built from)."""
+        cur = current_period()
+        periods = [sp for sd, sp in rolling_window() if sd == cur.settlement_date]
+        return (
+            [dict(r) for r in await db.pricing_stack_delta_by_bm_unit(self.pool, cur.settlement_date, periods)],
+            [dict(r) for r in await db.pricing_stack_niv_by_period(self.pool, cur.settlement_date, periods)],
+            [dict(r) for r in await db.pricing_stack_niv_spot_time_by_period(self.pool, cur.settlement_date, periods)],
+            [dict(r) for r in await db.pricing_stack_unit_delta_5min_by_period(self.pool, cur.settlement_date, periods)],
+        )
+
+    async def _recompute_tail(self) -> None:
+        """Fast path for a pricing-stack update: redo only the stack-dependent end of the
+        pipeline (fpn.compute_tail) from the last full compute's saved state, in a thread
+        so it never waits behind a full compute in the worker process."""
+        # One tail at a time: two overlapping ones (the loop's and a full recompute's closing
+        # one) would delete+insert the same period rows against each other.
+        async with self._tail_lock:
+            t0 = time.perf_counter()
+            rows = await self._read_stack_rows()
+            t1 = time.perf_counter()
+            results = await asyncio.get_running_loop().run_in_executor(None, fpn_engine.compute_tail, self._tail_state, *rows)
+            t2 = time.perf_counter()
+            await self._persist(results)
+            t3 = time.perf_counter()
+            await self.broadcaster.publish({"type": "fpn_update", "kind": "tail"})
+            logger.info("FPN tail stages: db reads %.1fs, compute %.1fs, persist %.1fs", t1 - t0, t2 - t1, t3 - t2)
+
+    def on_stack_persisted(self) -> None:
+        """Called by the pricing-stack Runner the moment a cycle has saved its
+        rows. The decision table is built from those rows, so recompute now
+        rather than on the next REST timer -- that is what keeps the two in
+        step as actions are accepted. A burst coalesces into one recompute."""
+        self._stack_dirty = True
+        self._dirty.set()
+
     async def _recompute_loop(self) -> None:
         while not self._stop.is_set():
             await self._dirty.wait()
             await asyncio.sleep(DEBOUNCE_SECONDS)
             self._dirty.clear()
-            try:
-                await self._recompute_and_persist()
-            except Exception:
-                logger.exception("FPN recompute cycle failed")
+            # A REST refresh (new demand/FUELINST/PN data) needs the full per-unit recompute
+            # (8-13 s). It runs in the background so it never holds up the fast path: a
+            # pricing-stack save only needs fpn.compute_tail, which reuses the last full
+            # compute's state and takes 1-2 s.
+            if (self._full_dirty or self._tail_state is None) and (self._full_task is None or self._full_task.done()):
+                self._full_dirty = False
+                self._full_task = asyncio.create_task(self._run_full())
+            if self._stack_dirty and self._tail_state is not None:
+                self._stack_dirty = False
+                started = time.perf_counter()
+                try:
+                    await self._recompute_tail()
+                    logger.info("FPN tail recompute took %.1fs", time.perf_counter() - started)
+                except Exception:
+                    logger.exception("FPN tail recompute failed")
+
+    async def _run_full(self) -> None:
+        started = time.perf_counter()
+        try:
+            await self._recompute_and_persist()
+            if self._tail_state is not None:
+                # The full compute's own stack-dependent output was computed from rows read
+                # when it started, so it is not saved; one fresh tail does that instead, and
+                # the saved table can never fall back to older stack values.
+                await self._recompute_tail()
+            logger.info("FPN full recompute took %.1fs", time.perf_counter() - started)
+        except Exception:
+            logger.exception("FPN full recompute failed")
+        finally:
+            if self._full_dirty or self._stack_dirty:
+                self._dirty.set()
 
     async def _recompute_and_persist(self) -> None:
+        t0 = time.perf_counter()
         pn = self.shared_buffers.frame("pn")
         if pn.empty or self.bm_unit_reference.empty or self._demand_window is None:
             return
@@ -224,40 +345,17 @@ class FpnRunner:
         # engine/fpn.py's module docstring. Read fresh each cycle, same
         # window as everything else, since Runner's own recompute cadence
         # can differ from this one's.
-        cur = current_period()
-        same_date_periods = [sp for sd, sp in rolling_window() if sd == cur.settlement_date]
-        pricing_stack_delta_rows = [
-            dict(r) for r in await db.pricing_stack_delta_by_bm_unit(self.pool, cur.settlement_date, same_date_periods)
-        ]
-        pricing_stack_niv_rows = [
-            dict(r) for r in await db.pricing_stack_niv_by_period(self.pool, cur.settlement_date, same_date_periods)
-        ]
-        # The pricing stack's own genuinely per-minute NIV trajectory (see
-        # engine/stack.py's spot_time_niv()/SPOT_NIV_COLUMNS docstring) --
-        # feeds the Delta Chart's `delta` line with real sub-period
-        # resolution instead of `pricing_stack_niv_rows`'s own flat
-        # once-per-period figure (that one still feeds `delta_av`, the
-        # period average -- see engine/fpn.py's build_aggregated()).
-        pricing_stack_niv_spot_time_rows = [
-            dict(r) for r in await db.pricing_stack_niv_spot_time_by_period(self.pool, cur.settlement_date, same_date_periods)
-        ]
-        # Same real, reversal/CADL-aware delta as pricing_stack_delta_rows
-        # above, but kept per-5-minute-bucket instead of collapsed to one
-        # period-total figure -- feeds the Real Time Generation table's `_d`
-        # column with an actual per-bucket value instead of the same
-        # period-total repeated across every row of a period (see
-        # engine/stack.py's spot_time_bm_unit_delta_5min() docstring).
-        pricing_stack_unit_delta_5min_rows = [
-            dict(r) for r in await db.pricing_stack_unit_delta_5min_by_period(self.pool, cur.settlement_date, same_date_periods)
-        ]
+        (pricing_stack_delta_rows, pricing_stack_niv_rows, pricing_stack_niv_spot_time_rows,
+         pricing_stack_unit_delta_5min_rows) = await self._read_stack_rows()
 
+        t1 = time.perf_counter()
         loop = asyncio.get_running_loop()
         # Runs in its own OS process (see api/app.py's shared
         # ProcessPoolExecutor) so this pandas-heavy recompute -- like the
         # pricing stack's own -- never blocks the event loop that's also
         # serving WebSocket broadcasts.
         results = await loop.run_in_executor(
-            self.process_pool, fpn_engine.compute,
+            self.compute_pool or self.process_pool, fpn_engine.compute,
             pn, boalf, mel, mil, disbsad,
             self.fpn_buffers.fuelinst, self.fpn_buffers.ndf, self.fpn_buffers.tsdf,
             self.fpn_buffers.indo, self.fpn_buffers.itsdo, self.fpn_buffers.da_ndf,
@@ -271,9 +369,14 @@ class FpnRunner:
             self.settings.bm_stack_enabled,
             not self._trip_seeded,
         )
+        t2 = time.perf_counter()
         if not results:
             return
-        await self._persist(results)
+        self._tail_state = results.get("tail_state", self._tail_state)
+        await self._persist({k: v for k, v in results.items() if k not in _STACK_DEPENDENT_RESULTS})
+        t3 = time.perf_counter()
+        logger.info("FPN stages: db reads %.1fs, compute %.1fs, persist %.1fs", t1 - t0, t2 - t1, t3 - t2)
+        logger.info("FPN compute steps: %s", results.get("timings"))
         self._trip_state = results.get("trip_state", self._trip_state)
         bm_stack = results.get("bm_stack")
         if self.settings.bm_stack_enabled and bm_stack is not None:
@@ -283,9 +386,50 @@ class FpnRunner:
         if wb is not None:
             self.latest_wb_series = wb.to_dict("records")
             self.wb_computed_at = datetime.now(timezone.utc)
+            try:
+                await db.upsert_trip_telemetry(self.pool, self.latest_wb_series)
+            except Exception:
+                logger.warning("saving trip telemetry failed", exc_info=True)
         await self._handle_trips(results.get("trips") or [], results.get("trip_recoveries") or [])
+        await self._adopt_ongoing_trips()
         self._trip_seeded = True
-        await self.broadcaster.publish({"type": "fpn_update"})
+        await self.broadcaster.publish({"type": "fpn_update", "kind": "full"})
+
+    async def _adopt_ongoing_trips(self) -> None:
+        """Keep the trip table honest about what is ongoing. A trip is ongoing only while the
+        plant is actually still tripped (detect_trips() state), so:
+          * a plant already tripped when this process started is only *seeded* (no event, so no
+            pop-up on every restart) -- give it a quiet row if it has no open trip;
+          * a plant with several open rows keeps the newest; the rest are closed;
+          * an open row for a plant that is no longer tripped, more than 12h old, is a leftover
+            (e.g. from the old repeated-alert bug) and is closed.
+        The stale-row clean-up waits for the second cycle so a half-loaded first cycle cannot
+        close a real trip."""
+        tripped = {u: s for u, s in (self._trip_state or {}).items() if s.get("peak") is not None}
+        open_rows = await db.fetch_open_trips(self.pool)  # newest first
+        now = datetime.now(timezone.utc)
+        newest: dict[str, dict] = {}
+        to_close: list[int] = []
+        for t in open_rows:
+            if t["bm_unit"] in tripped and t["bm_unit"] not in newest:
+                newest[t["bm_unit"]] = t
+            elif t["bm_unit"] in tripped:
+                to_close.append(t["id"])                       # an older duplicate of a still-open trip
+            elif self._trip_seeded and t["detected_at"] < now - timedelta(hours=12):
+                to_close.append(t["id"])                       # the plant is no longer tripped
+        await db.close_trip_rows(self.pool, to_close)
+
+        fuel = {r["bm_unit"]: r.get("fuel_type") for r in self.latest_wb_series}
+        cur = current_period(now)
+        adopted = [
+            fpn_engine.TripEvent(u, fuel.get(u), float(s.get("drop") or s["peak"]), cur.settlement_date, cur.settlement_period, now)
+            for u, s in tripped.items() if u not in newest
+        ]
+        if adopted:
+            await db.insert_trip_events(self.pool, adopted)
+            logger.info("adopted %d plants that were already tripped: %s", len(adopted), [t.bm_unit for t in adopted])
+        if to_close:
+            logger.info("closed %d leftover open trip rows", len(to_close))
 
     async def _handle_trips(self, trips: list, recoveries: list) -> None:
         # A unit that already has an open trip (recent enough to still be
@@ -372,6 +516,12 @@ class FpnRunner:
         from_dt = max(detected_at - timedelta(days=1), now - timedelta(days=6))
         return from_dt.strftime("%Y-%m-%dT%H:%M:%SZ"), now.strftime("%Y-%m-%dT%H:%M:%SZ")
 
+    async def _latest_mel(self, bm_unit: str, now: datetime) -> float | None:
+        """The plant's own MEL as of now (from the saved trip telemetry), None if there is none yet."""
+        rows = await db.trip_telemetry_between(self.pool, bm_unit, now - timedelta(minutes=30), now)
+        known = [r for r in rows if r["mel"] is not None and r["mel"] == r["mel"]]
+        return float(known[-1]["mel"]) if known else None
+
     async def _poll_trip_remit(self, trip, now: datetime) -> None:
         bm_unit = trip["bm_unit"]
         detected_at = trip["detected_at"]
@@ -381,7 +531,7 @@ class FpnRunner:
         if mrid is None:
             candidates_idx = await remit.fetch_remit_by_event(self._http, from_iso, to_iso, latest_revision_only=True, asset_id=bm_unit)
             details = [d for d in [await remit.fetch_remit_message(self._http, ev["id"]) for ev in candidates_idx] if d]
-            mrid = best_remit_match(details, detected_at)
+            mrid = best_remit_match(details, detected_at, mel_now=await self._latest_mel(bm_unit, now), drop_mw=trip["drop_mw"])
             if mrid is None:
                 return
             await db.set_trip_remit_match(self.pool, trip["id"], mrid)
@@ -446,3 +596,5 @@ class FpnRunner:
     async def stop(self) -> None:
         self._stop.set()
         await self._http.aclose()
+        if self.compute_pool is not None:
+            self.compute_pool.shutdown(wait=False, cancel_futures=True)

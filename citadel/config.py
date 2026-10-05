@@ -37,6 +37,10 @@ class Settings(BaseSettings):
     # number on a memory-constrained host -- each worker is ~130 MB.
     process_pool_workers: int = 0
 
+    # Days of National Grid trades (NESO and Elexon DISBSAD) pulled into the local
+    # database once at start, so the Natgrid page has history straight away. 0 = off.
+    natgrid_backfill_days: int = 14
+
     # ENTSO-E Transparency Platform key -- register free at
     # https://transparency.entsoe.eu/. Needed only for the Fundies
     # dashboard's interconnector-flow rows/graphs (ingest/entsoe_flows.py);

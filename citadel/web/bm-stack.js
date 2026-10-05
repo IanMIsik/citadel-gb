@@ -23,10 +23,49 @@ const FUEL_ORDER = ["BIOMASS", "CCGT", "PS", "COAL", "WIND", "NUCLEAR", "OTHER",
 // segment) only when the segment is tall enough to hold it; every unit is
 // still in the tooltip.
 const MIN_LABEL_MW = 20;
-const PX_PER_PRICE = 26;     // horizontal room per distinct price -- the chart scrolls sideways
-// Price ticks: bold white monospace so digits are evenly spaced and easy to
-// read when rotated (monospace keeps "1.00" / "100.00" the same glyph width).
-const PRICE_TICK_FONT = { size: 12, weight: "bold", family: "Consolas, 'SF Mono', 'Courier New', monospace" };
+const PX_PER_PRICE = 32;     // horizontal room per distinct price -- the chart scrolls sideways
+// Price ticks: bold white monospace so digits are evenly spaced and easy to read when rotated.
+// Roboto Mono (loaded from Google Fonts in bm-stack.html) first, so the digits look the same on
+// every machine; the system monospaces are only the fallback if that cannot load.
+const PRICE_FONT_FAMILY = "'Roboto Mono', Consolas, 'SF Mono', 'Courier New', monospace";
+const PRICE_TICK_FONT = { size: 14, weight: "bold", family: PRICE_FONT_FAMILY };
+
+// Chart.js tick labels cannot have an outline, and thin white digits vanish against the grid lines
+// and the stacked bars behind them. So Chart.js still lays the ticks out (that reserves the room and
+// sets the rotation), but they are drawn transparent and this plugin draws the same labels on top:
+// 14px bold, white with a dark outline.
+const priceLabels = {
+  id: "priceLabels",
+  afterDraw(chart) {
+    const x = chart.scales.x;
+    if (!x) return;
+    const g = chart.ctx;
+    g.save();
+    g.font = `bold ${PRICE_TICK_FONT.size}px ${PRICE_FONT_FAMILY}`;
+    g.textAlign = "right";
+    g.textBaseline = "middle";
+    g.lineJoin = "round";
+    for (const tick of x.ticks) {
+      const label = chart.data.labels[tick.value];
+      if (label == null) continue;
+      g.save();
+      g.translate(x.getPixelForTick(tick.value), x.top + 6);
+      g.rotate(-Math.PI / 2);                    // reads upward, hanging down from the axis
+      g.lineWidth = 4;
+      g.strokeStyle = "#0c0c0c";
+      g.strokeText(label, 0, 0);
+      g.fillStyle = "#ffffff";
+      g.fillText(label, 0, 0);
+      g.restore();
+    }
+    g.restore();
+  },
+};
+
+// The webfont loads after the first draw; redraw once it is ready so the labels switch to it.
+if (document.fonts && document.fonts.load) {
+  document.fonts.load(`bold ${PRICE_TICK_FONT.size}px 'Roboto Mono'`).then(() => { if (state.chart) state.chart.update(); }).catch(() => {});
+}
 const GW_LABEL_STEP = 0.5;   // running-sum label only each time it climbs this many GW
 const POLL_MS = 30000;
 
@@ -195,12 +234,13 @@ function renderChart(rows) {
   const muted = "#d6d6d6", grid = "#474847";
   state.chart = new Chart(document.getElementById("bm-stack-canvas"), {
     type: "bar",
+    plugins: [priceLabels],
     data: { labels, datasets },
     options: {
       responsive: true, maintainAspectRatio: false, animation: { duration: 3 },
       interaction: { mode: "index", intersect: false },
       scales: {
-        x: { stacked: true, title: { display: true, text: "Price (£/MWh)", color: muted, font: { size: 12, weight: "bold" } }, ticks: { color: "#ffffff", autoSkip: false, maxRotation: 90, minRotation: 90, padding: 4, font: PRICE_TICK_FONT }, grid: { color: grid } },
+        x: { stacked: true, title: { display: true, text: "Price (£/MWh)", color: muted, font: { size: 12, weight: "bold" } }, ticks: { color: "rgba(0,0,0,0)", autoSkip: false, maxRotation: 90, minRotation: 90, padding: 4, font: PRICE_TICK_FONT }, grid: { color: grid } },
         y: { stacked: true, beginAtZero: true, position: "left", title: { display: true, text: "Available MW", color: muted, font: { size: 12, weight: "bold" } }, ticks: { color: muted, font: { size: 11 } }, grid: { color: grid } },
         y2: { position: "right", beginAtZero: true, title: { display: true, text: "Running sum of available MW", color: muted, font: { size: 12, weight: "bold" } }, ticks: { color: muted, font: { size: 11 } }, grid: { drawOnChartArea: false } },
       },

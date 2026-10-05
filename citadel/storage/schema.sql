@@ -399,3 +399,72 @@ CREATE TABLE IF NOT EXISTS refresh_log (
     ts          TIMESTAMPTZ NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_refresh_log_ts ON refresh_log(ts);
+
+-- National Grid trades, kept locally from both sources so a failed or revised
+-- fetch never loses them and the two can be compared (see
+-- ingest/natgrid_store.py). natgrid_trades is NESO's GTMA trade list, one row
+-- per trade block (volume_mw held from start_time to end_time);
+-- natgrid_trade_history keeps the previous version whenever NESO revises one.
+CREATE TABLE IF NOT EXISTS natgrid_trades (
+    id              TEXT PRIMARY KEY,
+    start_time      TIMESTAMPTZ NOT NULL,
+    end_time        TIMESTAMPTZ NOT NULL,
+    volume_mw       DOUBLE PRECISION NOT NULL,
+    price           DOUBLE PRECISION,
+    cost            DOUBLE PRECISION,
+    so_flag         TEXT,
+    reason          TEXT,
+    source_updated  TIMESTAMPTZ,
+    first_seen_at   TIMESTAMPTZ NOT NULL,
+    last_seen_at    TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_natgrid_trades_window ON natgrid_trades(start_time, end_time);
+
+CREATE TABLE IF NOT EXISTS natgrid_trade_history (
+    history_id      BIGSERIAL PRIMARY KEY,
+    id              TEXT NOT NULL,
+    changed_at      TIMESTAMPTZ NOT NULL,
+    start_time      TIMESTAMPTZ,
+    end_time        TIMESTAMPTZ,
+    volume_mw       DOUBLE PRECISION,
+    price           DOUBLE PRECISION,
+    so_flag         TEXT,
+    reason          TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_natgrid_trade_history_id ON natgrid_trade_history(id);
+
+-- Elexon DISBSAD actions (volume is MWh for the settlement period).
+CREATE TABLE IF NOT EXISTS disbsad_actions (
+    settlement_date   DATE NOT NULL,
+    settlement_period INTEGER NOT NULL,
+    action_id         INTEGER NOT NULL,
+    volume            DOUBLE PRECISION,
+    cost              DOUBLE PRECISION,
+    price             DOUBLE PRECISION,
+    so_flag           BOOLEAN,
+    stor_flag         BOOLEAN,
+    party_id          TEXT,
+    asset_id          TEXT,
+    service           TEXT,
+    is_tendered       BOOLEAN,
+    first_seen_at     TIMESTAMPTZ NOT NULL,
+    last_seen_at      TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (settlement_date, settlement_period, action_id)
+);
+
+-- Per-unit FPN / MEL / adjusted-FPN points for every tripped (or just
+-- recovered) plant, saved as engine/fpn.py's worst_behaviour_series() produces
+-- them (5-minute points, past and published plan). Without this the Plant
+-- Trips page could only graph a trip while it was inside the rolling window;
+-- with it, any trip keeps its chart. Later cycles overwrite the same minute,
+-- so forecast points track the plant's latest plan.
+CREATE TABLE IF NOT EXISTS trip_telemetry (
+    bm_unit         TEXT NOT NULL,
+    spot_time       TIMESTAMPTZ NOT NULL,
+    fuel_type       TEXT,
+    fpn             DOUBLE PRECISION,
+    mel             DOUBLE PRECISION,
+    adjusted_fpn    DOUBLE PRECISION,
+    updated_at      TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (bm_unit, spot_time)
+);
