@@ -112,8 +112,6 @@ function selectTrip(id, trips) {
   const trip = trips.find((t) => t.id === id);
   loadRevisions(id);
   loadTelemetry(id, trip);
-  const unitSel = document.getElementById("mel-plan-unit");
-  if (trip && [...unitSel.options].some((o) => o.value === trip.bm_unit)) { unitSel.value = trip.bm_unit; loadMelPlan(trip.bm_unit); }
   renderTrips(trips);
 }
 
@@ -178,14 +176,8 @@ async function loadWorstBehavior() {
 }
 
 
-// ---- worst-behaviour graphs -----------------------------------------------
-// Style follows the reference app' "Worst Behaviour Plants" window: black canvas, one
-// line per plant from its 15-colour palette, 30-minute x ticks labelled with
-// three lines (SP / date / time).
-
-const WB_COLORS = ["#df574f", "#f2d554", "#3dc77f", "#52a0d2", "#5666bf", "#00b2b6", "#e3ff7a", "#f39da3",
-  "#a8dcf3", "#d2d2d0", "#d5927c", "#a67041", "#ffffff", "#ec4488", "#f5d3e4"];
-const wbCharts = { wb: null, plan: null };
+// ---- time axis shared by the trip telemetry chart --------------------------
+// 30-minute x ticks labelled with three lines (SP / date / time), London time.
 
 const ukParts = (ms) => {
   const d = new Date(ms);
@@ -367,86 +359,6 @@ async function loadTelemetry(tripId, trip) {
   });
 }
 
-function nowMarker(ymax) {
-  const now = Date.now();
-  return { label: "now", data: [{ x: now, y: 0 }, { x: now, y: ymax }], borderColor: "#ffffff", borderDash: [4, 4], borderWidth: 1, pointRadius: 0, order: 99 };
-}
-
-async function loadWbGraphs() {
-  const data = await (await fetch("/api/trips/worst-behaviour")).json();
-  const units = data.units || [];
-  document.getElementById("wb-empty").textContent = units.length ? "" : "No tripped or recently recovered plants right now.";
-
-  const sel = document.getElementById("mel-plan-unit");
-  const previous = sel.value;
-  sel.innerHTML = units.map((u) => `<option value="${u.bm_unit}">${u.bm_unit} (${u.status})</option>`).join("");
-  if (units.some((u) => u.bm_unit === previous)) sel.value = previous;
-  sel.onchange = () => loadMelPlan(sel.value);
-
-  const ymax = Math.max(100, ...units.flatMap((u) => u.series.map((p) => Math.max(p.vol, p.fpn)))) * 1.05;
-  const datasets = units.map((u, i) => ({
-    label: `${u.bm_unit}${u.status === "recovered" ? " (recovered)" : ""}`,
-    data: u.series.map((p) => ({ x: Date.parse(p.t), y: p.vol })),
-    borderColor: WB_COLORS[i % WB_COLORS.length], backgroundColor: WB_COLORS[i % WB_COLORS.length],
-    borderWidth: 2, pointRadius: 1.5, fill: false, tension: 0,
-  }));
-  if (units.length) datasets.push(nowMarker(ymax));
-  if (wbCharts.wb) wbCharts.wb.destroy();
-  wbCharts.wb = new Chart(document.getElementById("wb-chart"), {
-    type: "line", data: { datasets },
-    options: {
-      responsive: true, maintainAspectRatio: false, animation: { duration: 3 },
-      interaction: { mode: "nearest", intersect: false },
-      scales: {
-        x: timeAxis(),
-        y: { min: 0, title: { display: true, text: "MW", color: "#d6d6d6" }, grid: { color: "#474847" }, ticks: { color: "#d6d6d6" } },
-      },
-      plugins: { legend: { labels: { color: "rgb(185,185,185)", filter: (l) => l.text !== "now" } } },
-    },
-  });
-  if (units.length && !sel.value) sel.value = units[0].bm_unit;
-  if (sel.value) loadMelPlan(sel.value);
-}
-
-async function loadMelPlan(unit) {
-  const empty = document.getElementById("mel-plan-empty");
-  if (!unit) { empty.textContent = ""; return; }
-  const data = await (await fetch(`/api/trips/mel-plan?bm_unit=${encodeURIComponent(unit)}`)).json();
-  const vs = data.vintages || [];
-  empty.textContent = vs.length ? "" : "No MEL notifications held for this plant yet.";
-  const n = vs.length;
-  const datasets = vs.map((v, i) => {
-    const t = n === 1 ? 1 : i / (n - 1);                       // 0 = oldest, 1 = newest
-    const lightness = 32 + Math.round(t * 38);
-    const newest = i === n - 1;
-    return {
-      label: `notified ${ukParts(Date.parse(v.notification_time)).hm}`,
-      data: v.points.map((p) => ({ x: Date.parse(p.t), y: p.mel })),
-      borderColor: `hsl(${newest ? 28 : 205}, ${newest ? 95 : 25}%, ${newest ? 58 : lightness}%)`,
-      borderWidth: newest ? 3 : 1.5, pointRadius: 0, fill: false, stepped: true,
-    };
-  });
-  const ymax = Math.max(100, ...vs.flatMap((v) => v.points.map((p) => p.mel)), ...data.fpn.map((p) => p.fpn)) * 1.05;
-  if (data.fpn.length) {
-    datasets.push({ label: "FPN", data: data.fpn.map((p) => ({ x: Date.parse(p.t), y: p.fpn })), borderColor: "#ffffff", borderDash: [6, 4], borderWidth: 1.5, pointRadius: 0, fill: false });
-  }
-  const tripX = Date.parse(data.trip_at);
-  datasets.push({ label: "trip detected", data: [{ x: tripX, y: 0 }, { x: tripX, y: ymax }], borderColor: "#ff5353", borderDash: [4, 4], borderWidth: 1.5, pointRadius: 0 });
-  datasets.push(nowMarker(ymax));
-  if (wbCharts.plan) wbCharts.plan.destroy();
-  wbCharts.plan = new Chart(document.getElementById("mel-plan-chart"), {
-    type: "line", data: { datasets },
-    options: {
-      responsive: true, maintainAspectRatio: false, animation: { duration: 3 },
-      scales: {
-        x: timeAxis(),
-        y: { min: 0, title: { display: true, text: "MEL (MW)", color: "#d6d6d6" }, grid: { color: "#474847" }, ticks: { color: "#d6d6d6" } },
-      },
-      plugins: { legend: { labels: { color: "rgb(185,185,185)", filter: (l) => l.text !== "now" } } },
-    },
-  });
-}
-
 function loadEnvBadge() {
   fetch("/api/health").then((r) => r.json()).then((data) => {
     if (data.environment_label === "prod") return;
@@ -473,7 +385,6 @@ function connectWebSocket() {
     // refetch both panels rather than hand-patch each message shape twice.
     loadTrips();
     loadWorstBehavior();
-    loadWbGraphs();
     if (selectedTripId) { loadRevisions(selectedTripId); loadTelemetry(selectedTripId, allTrips.find((t) => t.id === selectedTripId)); }
   };
   setInterval(() => { if (ws.readyState === WebSocket.OPEN) ws.send("ping"); }, 30000);
@@ -482,7 +393,5 @@ function connectWebSocket() {
 loadEnvBadge();
 loadTrips();
 loadWorstBehavior();
-loadWbGraphs();
 connectWebSocket();
-setInterval(loadWbGraphs, 60000);
 setInterval(() => { if (selectedTripId) loadTelemetry(selectedTripId, allTrips.find((t) => t.id === selectedTripId)); }, 60000);

@@ -11,11 +11,11 @@ from __future__ import annotations
 import csv
 import io
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import httpx
 
-from ..settlement import utc_to_settlement
+from ..settlement import sp_end_utc, sp_start_utc, utc_to_settlement
 from ..storage import db
 from .natgrid_store import normalise_block
 
@@ -79,29 +79,71 @@ async def fetch_national_grid_trades(client: httpx.AsyncClient, date_from_iso: s
     return combine_trades(historic, upcoming)
 
 
+def upcoming_rows_to_blocks(rows: list[dict]) -> list[dict]:
+    """NESO's "Upcoming Trades" list -> trade blocks in the same shape as the GTMA history, so
+    both can live in one table.
+
+    The upcoming list is per settlement period: a trade covering two periods is two rows with
+    the same ID. `Volume` there is MWh for the period (verified: Cost = Volume x Price exactly,
+    and a period's volumes sum to Elexon's DISBSAD volume for it), so MW = Volume x 2. Rows with
+    one ID that are contiguous and the same size become ONE block that keeps the ID -- the
+    nightly GTMA history later carries the same ID, and simply replaces this copy. Rows that
+    cannot be one block (different sizes, or a gap) are kept as one block per period.
+    """
+    by_id: dict[str, list[dict]] = {}
+    for r in rows:
+        if r.get("ID") and r.get("SP") is not None and r.get("Date") and r.get("Volume") is not None and r.get("Price") is not None:
+            by_id.setdefault(str(r["ID"]), []).append(r)
+
+    def block(block_id: str, group: list[dict]) -> dict:
+        first, last = min(group, key=lambda r: int(r["SP"])), max(group, key=lambda r: int(r["SP"]))
+        start = sp_start_utc(date.fromisoformat(str(first["Date"])[:10]), int(first["SP"]))
+        end = sp_end_utc(date.fromisoformat(str(last["Date"])[:10]), int(last["SP"]))
+        return {
+            "ID": block_id, "StartTime": start.strftime("%Y-%m-%dT%H:%M:%S"), "EndTime": end.strftime("%Y-%m-%dT%H:%M:%S"),
+            "Volume": float(first["Volume"]) * 2, "Price": first["Price"],
+            "Cost": sum(float(x["Cost"]) for x in group if x.get("Cost") is not None) or None,
+            "SO_Flag": first.get("SO_Flag"), "Reason": first.get("Reason"), "Last_Updated": max((x.get("Last_Updated") for x in group if x.get("Last_Updated")), default=None),
+        }
+
+    out: list[dict] = []
+    for trade_id, group in by_id.items():
+        sps = sorted(int(r["SP"]) for r in group)
+        one_size = len({float(r["Volume"]) for r in group}) == 1 and len({str(r["Date"])[:10] for r in group}) == 1
+        if one_size and sps == list(range(sps[0], sps[0] + len(sps))):
+            out.append(block(trade_id, group))
+        else:
+            out.extend(block(f"{trade_id}@{r['Date'][:10]}-SP{r['SP']}", [r]) for r in group)
+    return out
+
+
 async def national_grid_trades_cached(pool, client: httpx.AsyncClient, date_from_iso: str, date_to_iso: str,
                                       store: bool = True) -> list[dict]:
-    """Per-SP trade rows for the window, read from the local database. With
-    `store`, a fresh NESO fetch is saved first (new trades added, revised ones
-    versioned in natgrid_trade_history); if the fetch fails the stored copy is
-    used as it stands, so a NESO outage or a restart never blanks the trades."""
+    """Per-SP trade rows for the window, read from the local database. With `store`, a fresh
+    fetch of BOTH NESO lists is saved first -- the GTMA history (updated nightly) and the
+    upcoming list (the trades agreed since, up to the end of the day) -- new trades added,
+    revised ones versioned in natgrid_trade_history. If a fetch fails the stored copy is used
+    as it stands, so a NESO outage or a restart never blanks the trades. Without `store`
+    (the FPN runner) it only reads; the Fundies runner keeps the database fresh every minute.
+    """
     if store:
         try:
             rows = [r for r in map(normalise_block, await fetch_gtma_blocks(client, date_from_iso, date_to_iso)) if r]
             new, revised = await db.upsert_natgrid_trades(pool, rows)
             if new or revised:
-                logger.info("NESO trades stored: %d new, %d revised", new, revised)
+                logger.info("NESO GTMA trades stored: %d new, %d revised", new, revised)
         except Exception:
             logger.warning("NESO GTMA trades fetch failed, using the stored trades", exc_info=True)
+        try:
+            rows = [r for r in map(normalise_block, upcoming_rows_to_blocks(await fetch_upcoming_trades(client, date_from_iso, date_to_iso))) if r]
+            new, revised = await db.upsert_natgrid_trades(pool, rows)
+            if new or revised:
+                logger.info("NESO upcoming trades stored: %d new, %d revised", new, revised)
+        except Exception:
+            logger.warning("NESO upcoming trades fetch failed, using the stored trades", exc_info=True)
     start = datetime.fromisoformat(date_from_iso).replace(tzinfo=timezone.utc) - timedelta(days=1)
     end = datetime.fromisoformat(date_to_iso).replace(tzinfo=timezone.utc)
-    historic = gtma_blocks_to_sp_rows(await db.natgrid_blocks_between(pool, start, end))
-    try:
-        upcoming = await fetch_upcoming_trades(client, date_from_iso, date_to_iso)
-    except Exception:
-        logger.warning("NESO upcoming trades fetch failed, using stored GTMA trades only", exc_info=True)
-        upcoming = []
-    return combine_trades(historic, upcoming)
+    return gtma_blocks_to_sp_rows(await db.natgrid_blocks_between(pool, start, end))
 
 
 def gtma_blocks_to_sp_rows(blocks: list[dict]) -> list[dict]:
@@ -127,7 +169,7 @@ def gtma_blocks_to_sp_rows(blocks: list[dict]) -> list[dict]:
             # the Natgrid ladder (engine/natgrid.py).
             rows.append({
                 "Date": sd.isoformat(), "SP": sp, "Volume": mw / 2, "MW": mw, "Price": b.get("Price"),
-                "SO_Flag": b.get("SO_Flag"), "Reason": b.get("Reason"), "ID": b.get("ID"), "Source": "GTMA",
+                "SO_Flag": b.get("SO_Flag"), "Reason": b.get("Reason"), "ID": b.get("ID"), "Source": "NESO",
             })
             t += timedelta(minutes=30)
     return rows

@@ -277,3 +277,26 @@ def test_natgrid_rows_for_fundies_and_the_ladder_follow_the_same_rule():
 
     out = natgrid_ng_vol(neso, disbsad, now).sort_values("settlementPeriod").reset_index(drop=True)
     assert out["ng_vol"].tolist() == [402.0, 50.0]
+
+
+def test_upcoming_trades_become_blocks_that_keep_their_id_and_convert_mwh_to_mw():
+    from citadel.ingest.neso import gtma_blocks_to_sp_rows, upcoming_rows_to_blocks
+    from citadel.ingest.natgrid_store import normalise_block
+
+    # one trade over SP31-32 (the shape of NESO's real upcoming list): per-period rows, same ID, Volume in MWh
+    rows = [{"ID": "ES1", "Date": "2026-10-05", "SP": 31, "Volume": 75.0, "Price": 107.23, "Cost": 8042.25, "SO_Flag": "F", "Reason": "MARGIN"},
+            {"ID": "ES1", "Date": "2026-10-05", "SP": 32, "Volume": 75.0, "Price": 107.23, "Cost": 8042.25, "SO_Flag": "F", "Reason": "MARGIN"}]
+    blocks = upcoming_rows_to_blocks(rows)
+    assert len(blocks) == 1 and blocks[0]["ID"] == "ES1" and blocks[0]["Volume"] == 150.0          # 75 MWh per period = 150 MW
+    assert blocks[0]["StartTime"] == "2026-10-05T14:00:00" and blocks[0]["EndTime"] == "2026-10-05T15:00:00"   # SP31-32 on a BST day
+    assert blocks[0]["Cost"] == 16084.5 and normalise_block(blocks[0]) is not None
+
+    back = gtma_blocks_to_sp_rows(blocks)                      # expands to the periods it covers, MW intact
+    assert [(r["SP"], r["MW"], r["Price"], r["Source"]) for r in back] == [(31, 150.0, 107.23, "NESO"), (32, 150.0, 107.23, "NESO")]
+
+    # periods of different sizes, or with a gap, cannot be one block: kept one block per period
+    odd = [{"ID": "ES2", "Date": "2026-10-05", "SP": 33, "Volume": 10.0, "Price": 100.0}, {"ID": "ES2", "Date": "2026-10-05", "SP": 34, "Volume": 12.0, "Price": 100.0}]
+    assert sorted(b["ID"] for b in upcoming_rows_to_blocks(odd)) == ["ES2@2026-10-05-SP33", "ES2@2026-10-05-SP34"]
+    gap = [{"ID": "ES3", "Date": "2026-10-05", "SP": 33, "Volume": 10.0, "Price": 100.0}, {"ID": "ES3", "Date": "2026-10-05", "SP": 35, "Volume": 10.0, "Price": 100.0}]
+    assert len(upcoming_rows_to_blocks(gap)) == 2
+    assert upcoming_rows_to_blocks([{"ID": "ES4", "Date": "2026-10-05", "SP": 36}]) == []               # no volume or price: dropped
