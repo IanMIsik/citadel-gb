@@ -41,6 +41,16 @@ class Settings(BaseSettings):
     # database once at start, so the Natgrid page has history straight away. 0 = off.
     natgrid_backfill_days: int = 14
 
+    # How many days of each table family to keep (storage/retention.py deletes older rows every
+    # few hours so the database cannot grow for ever). 0 keeps that family for ever. The trip,
+    # REMIT and settlement-price history tables are never pruned.
+    retention_days_stack: int = 14       # pricing stack rows, NIV and per-unit deltas
+    retention_days_fpn: int = 7          # FPN per-fuel, aggregated and worst-deviants rows
+    retention_days_log: int = 7          # the refresh log
+    retention_days_telemetry: int = 30   # per-unit trip telemetry
+    retention_days_natgrid: int = 90     # stored NESO trades and DISBSAD actions
+    retention_days_fundies: int = 90     # the Fundies cache tables
+
     # ENTSO-E Transparency Platform key -- register free at
     # https://transparency.entsoe.eu/. Needed only for the Fundies
     # dashboard's interconnector-flow rows/graphs (ingest/entsoe_flows.py);

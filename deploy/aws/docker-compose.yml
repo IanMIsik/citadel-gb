@@ -1,0 +1,85 @@
+# Citadel on ONE small EC2 instance: Postgres + the app + Caddy (reverse proxy, automatic HTTPS).
+# Started by bootstrap.sh / update.sh as:
+#   docker compose -p citadel --env-file /opt/citadel/.env.aws -f /opt/citadel/deploy/aws/docker-compose.yml up -d --build
+# Nothing here is published to the internet except Caddy's ports 80/443: Postgres and the app are
+# only reachable inside the compose network.
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: citadel
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.aws}
+      POSTGRES_DB: citadel
+    # Tuned for a 2 GiB box shared with the app: small buffers (the OS caches the rest), few
+    # connections, and more eager autovacuum because the app rewrites period rows all day.
+    command:
+      - postgres
+      - -c
+      - shared_buffers=128MB
+      - -c
+      - effective_cache_size=512MB
+      - -c
+      - work_mem=8MB
+      - -c
+      - maintenance_work_mem=64MB
+      - -c
+      - max_connections=40
+      - -c
+      - autovacuum_vacuum_scale_factor=0.05
+      - -c
+      - checkpoint_timeout=15min
+      - -c
+      - max_wal_size=1GB
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U citadel -d citadel"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  citadel:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    init: true                      # reaps the recompute worker processes cleanly
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - ../../.env.aws
+    environment:
+      DATABASE_URL: postgresql://citadel:${POSTGRES_PASSWORD}@postgres:5432/citadel
+    expose:
+      - "8000"
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - citadel
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:-:80}
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:

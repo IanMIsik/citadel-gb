@@ -20,6 +20,7 @@ from ..config import settings
 from ..engine.fpn_runner import FpnRunner
 from ..engine.fundies_runner import FundiesRunner
 from ..engine.natgrid import build_ladder
+from ..storage.retention import run_retention_loop
 from ..engine.trip_chart import build_trip_chart, mel_evidence
 from ..ingest.natgrid_store import reconcile
 from ..ingest.neso import gtma_blocks_to_sp_rows
@@ -176,6 +177,7 @@ async def lifespan(app: FastAPI):
     fundies_runner = FundiesRunner(settings, pool, fundies_broadcaster, process_pool)
     app.state.fundies_runner = fundies_runner
     fundies_runner_task = asyncio.create_task(fundies_runner.run())
+    retention_task = asyncio.create_task(run_retention_loop(pool, settings))
 
     yield
 
@@ -185,6 +187,7 @@ async def lifespan(app: FastAPI):
     fpn_runner_task.cancel()
     await fundies_runner.stop()
     fundies_runner_task.cancel()
+    retention_task.cancel()
     process_pool.shutdown(wait=False, cancel_futures=True)
     await pool.close()
 

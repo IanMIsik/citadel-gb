@@ -338,7 +338,12 @@ async def fpn_decision_drivers_sp(pool: asyncpg.Pool, sd: date, periods: list[in
                AVG(delta) AS delta,
                AVG(niv_error) AS niv_error,
                AVG(dmd_risk) AS dmd_risk,
-               COALESCE(AVG(misco_indo_vs_ndf), AVG(dmd_risk)) AS dmd_error,
+               -- dmd_error is the real outturn-vs-forecast error, so it is NULL (shown as a dash, like
+               -- unexp) for a period that has not delivered yet. The decision calculator still needs
+               -- a number for the latest (usually future) period, so the stand-in -- the demand
+               -- risk -- stays available to it under its own name.
+               AVG(misco_indo_vs_ndf) AS dmd_error,
+               COALESCE(AVG(misco_indo_vs_ndf), AVG(dmd_risk)) AS dmd_error_or_risk,
                AVG(unexp_delta) AS unexp,
                AVG(wind_deviation) AS wind_deviation,
                AVG(other_gen_deviation) AS other_gen_deviation,

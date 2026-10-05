@@ -700,7 +700,10 @@ function renderDecisionColumn(col) {
   setDecisionText(`othergen-text-${col}`, otherGenVsNow);
 
   const dmdInput = decisionInputNumber(`dmd-input-${col}`);
-  const dmdCurrent = latestDriver("dmd_error");
+  // dmd_error itself is null for periods that have not delivered (shown as a dash in the tables); the
+  // calculator needs the latest period's value, so it reads the version that falls back to demand risk.
+  // (An API that predates the split still sends only dmd_error, which then already carries the fallback.)
+  const dmdCurrent = latestDriver("dmd_error_or_risk") ?? latestDriver("dmd_error");
   const dmdDerived = dmdCurrent != null ? dmdInput - dmdCurrent : null;
   setDecisionText(`dmd-text-${col}`, dmdDerived);
 
