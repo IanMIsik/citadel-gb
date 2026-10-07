@@ -12,8 +12,9 @@ from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta, timezone
 
 import httpx
-from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
+from fastapi import Path as PathParam
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from ..config import settings
@@ -31,6 +32,7 @@ from ..ingest.elexon_rest import fetch_bmu_reference
 from ..settlement import current_period, rolling_window, sp_start_utc, utc_to_settlement, window_around
 from ..storage import db
 from .broadcast import Broadcaster
+from .security import GuardMiddleware, SecurityHeadersMiddleware, check_db_credentials
 from .exploded_boalf_broadcast import ExplodedBoalfBroadcaster
 from .fpn_broadcast import FpnBroadcaster
 from .fundies_broadcast import FundiesBroadcaster
@@ -64,6 +66,7 @@ def _clean_record(record) -> dict:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    check_db_credentials(settings.database_url)
     pool = await db.create_pool(settings.database_url)
     app.state.pool = pool
 
@@ -192,7 +195,21 @@ async def lifespan(app: FastAPI):
     await pool.close()
 
 
-app = FastAPI(title="Citadel Pricing Stack", lifespan=lifespan)
+_docs = "/docs" if settings.api_docs_enabled else None
+app = FastAPI(title="Citadel Pricing Stack", lifespan=lifespan, docs_url=_docs,
+              redoc_url="/redoc" if settings.api_docs_enabled else None,
+              openapi_url="/openapi.json" if settings.api_docs_enabled else None)
+# Added innermost-first: headers wrap everything, including the guard's 429 responses.
+app.add_middleware(GuardMiddleware, requests_per_minute=settings.rate_limit_per_minute,
+                   ws_max_per_ip=settings.ws_max_per_ip)
+app.add_middleware(SecurityHeadersMiddleware)
+
+
+@app.exception_handler(Exception)
+async def unhandled_error(request: Request, exc: Exception):
+    """Log the real error server-side; the caller only ever sees a generic message."""
+    logging.getLogger("citadel.api").exception("unhandled error on %s %s", request.method, request.url.path)
+    return JSONResponse({"detail": "internal server error"}, status_code=500)
 
 
 @app.get("/api/health")
@@ -207,7 +224,7 @@ async def stack_current():
 
 
 @app.get("/api/stack/recent")
-async def stack_recent(count: int = 4):
+async def stack_recent(count: int = Query(4, ge=1, le=20)):
     """The current settlement period, the `count - 1` immediately
     preceding it (all "completed" -- i.e. in the past), plus the 2
     immediately following it -- Gate Closure (1 hour before delivery) has
@@ -231,7 +248,7 @@ async def stack_recent(count: int = 4):
 
 
 @app.get("/api/stack/{settlement_date}/{settlement_period}")
-async def stack_for_period(settlement_date: date, settlement_period: int):
+async def stack_for_period(settlement_date: date, settlement_period: int = PathParam(ge=1, le=50)):
     records = await db.stack_for_period(app.state.pool, settlement_date, settlement_period)
     if not records:
         return {
@@ -247,7 +264,7 @@ async def stack_for_period(settlement_date: date, settlement_period: int):
 
 
 @app.get("/api/accuracy/{settlement_date}/{settlement_period}")
-async def accuracy_for_period(settlement_date: date, settlement_period: int):
+async def accuracy_for_period(settlement_date: date, settlement_period: int = PathParam(ge=1, le=50)):
     computed = await db.stack_for_period(app.state.pool, settlement_date, settlement_period)
     actual = await db.settlement_price_for_period(app.state.pool, settlement_date, settlement_period)
     if not computed:
@@ -289,7 +306,7 @@ async def fpn_worst_deviants():
 
 
 @app.get("/api/fpn/generation-by-fuel")
-async def fpn_generation_by_fuel(hours: float = 3.0):
+async def fpn_generation_by_fuel(hours: float = Query(3.0, gt=0, le=48)):
     since = datetime.now(timezone.utc) - timedelta(hours=hours)
     records = await db.fpn_generation_by_fuel_recent(app.state.pool, since)
     return {"generation_by_fuel": [_clean_record(r) for r in records]}
@@ -325,7 +342,7 @@ async def fpn_dashboard():
 
 
 @app.get("/api/fpn/{settlement_date}/{settlement_period}")
-async def fpn_for_period(settlement_date: date, settlement_period: int):
+async def fpn_for_period(settlement_date: date, settlement_period: int = PathParam(ge=1, le=50)):
     aggregated_records = await db.fpn_aggregated_for_period(app.state.pool, settlement_date, settlement_period)
     by_fuel_records = await db.fpn_by_fuel_for_period(app.state.pool, settlement_date, settlement_period)
     return {
@@ -380,7 +397,7 @@ def _with_affected_sps(d: dict, end_dt) -> dict:
 
 
 @app.get("/api/trips/recent")
-async def trips_recent(limit: int = 200, days: int = 2):
+async def trips_recent(limit: int = Query(200, ge=1, le=1000), days: int = Query(2, ge=0, le=60)):
     """The Plant Trips table: every trip that is still ongoing, plus resolved trips from the
     last `days` days (by when they resolved, falling back to when they were detected)."""
     records = await db.fetch_recent_trips(app.state.pool, 1000)
@@ -402,7 +419,7 @@ async def trips_recent(limit: int = 200, days: int = 2):
 
 
 @app.get("/api/trips/{trip_id}/revisions")
-async def trip_revisions(trip_id: int):
+async def trip_revisions(trip_id: int = PathParam(ge=1)):
     trips = await db.fetch_recent_trips(app.state.pool, 500)
     trip = next((t for t in trips if t["id"] == trip_id), None)
     if trip is None or not trip["remit_mrid"]:
@@ -417,7 +434,7 @@ async def trip_revisions(trip_id: int):
 
 
 @app.get("/api/trips/{trip_id}/telemetry")
-async def trip_telemetry(trip_id: int):
+async def trip_telemetry(trip_id: int = PathParam(ge=1)):
     """GridTrip-style chart data for one trip: the unit's FPN, adjusted FPN and
     MEL from 1.5h before its settlement period to 3h past now (its published
     plan), plus the headline loss figures. Fed from trip_telemetry, which the
@@ -472,7 +489,7 @@ async def trips_worst_behaviour_graph():
 
 
 @app.get("/api/trips/mel-plan")
-async def trips_mel_plan(bm_unit: str):
+async def trips_mel_plan(bm_unit: str = Query(..., min_length=1, max_length=60, pattern=r"^[A-Za-z0-9_.\-]+$")):
     """How `bm_unit`'s MEL (its plan for coming back) has changed with each
     notification since it tripped -- see engine/mel_plan.py."""
     from ..engine.mel_plan import mel_vintages

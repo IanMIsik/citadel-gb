@@ -62,7 +62,9 @@ compute in the single seconds; if it is regularly above ~10 s the instance is to
 - **Disk growth:** `storage/retention.py` deletes old rows every few hours (settings
   `RETENTION_DAYS_STACK` 14, `_FPN` 7, `_LOG` 7, `_TELEMETRY` 30, `_NATGRID` 90, `_FUNDIES` 90; 0 keeps
   forever). Trips and REMIT history are never pruned.
-- **Tuning for a small box:** `PROCESS_POOL_WORKERS=2` is set in `.env.aws`; drop it to 1 to save about
-  100 MB at the cost of slower recomputes; on a 4 GiB instance 3 is fine.
+- **Profiles:** `PROFILE` in the CONFIG block of `bootstrap.sh`. `small` (default, for a 2 GiB t4g.small):
+  1 recompute worker, BM Stack page off, 10 s polling, 3-day natgrid backfill, 4 GiB swap; measured at
+  about 0.9 GiB for the app, but on an almost empty database. `standard` (4 GiB or more): 2 workers, BM
+  Stack on, 5 s polling, 14-day backfill. To change later, edit `/opt/citadel/.env.aws` and run `update.sh`.
 - **Not set up:** monitoring/alerts (add a CloudWatch alarm on CPU credits and disk), and nothing here
   protects against the AWS account itself being the single point of failure.

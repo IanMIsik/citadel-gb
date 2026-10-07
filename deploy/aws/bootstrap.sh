@@ -31,6 +31,10 @@ IRIS_CLIENT_ID=""
 IRIS_CLIENT_SECRET=""
 IRIS_QUEUE_NAME=""
 
+# "small" = 2 GiB box (t4g.small): 1 recompute worker, BM Stack page off, 10 s polling, 3-day natgrid
+# backfill, 4 GiB swap. "standard" = 4 GiB or more (t4g.medium): the full-speed settings.
+PROFILE="small"
+
 # Optional: also copy each daily backup to this S3 bucket (needs an instance role allowing PutObject).
 BACKUP_S3_BUCKET=""
 ################################################################################################
@@ -42,9 +46,15 @@ compose() { docker compose -p citadel --env-file "$ENV_FILE" -f "$COMPOSE_DIR/do
 
 if [ "$(id -u)" -ne 0 ]; then echo "run as root"; exit 1; fi
 
-echo "--- swap (2 GiB box: a safety net for the pandas recompute spikes)"
+if [ "$PROFILE" = "small" ]; then
+  SWAP_SIZE=4G; POLL=10; BM_STACK=false; WORKERS=1; BACKFILL=3
+else
+  SWAP_SIZE=2G; POLL=5; BM_STACK=true; WORKERS=2; BACKFILL=14
+fi
+
+echo "--- swap ($SWAP_SIZE: a safety net for the pandas recompute spikes)"
 if ! swapon --show | grep -q '^/swapfile'; then
-  fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
+  fallocate -l "$SWAP_SIZE" && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
   grep -q '^/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
 fi
 echo 'vm.swappiness=10' > /etc/sysctl.d/99-citadel.conf
@@ -85,12 +95,13 @@ ENTSOE_KEY=${ENTSOE_KEY}
 IRIS_CLIENT_ID=${IRIS_CLIENT_ID}
 IRIS_CLIENT_SECRET=${IRIS_CLIENT_SECRET}
 IRIS_QUEUE_NAME=${IRIS_QUEUE_NAME}
-REST_POLL_INTERVAL_SECONDS=5
+REST_POLL_INTERVAL_SECONDS=${POLL}
 ENVIRONMENT_LABEL=prod
 FPN_OTHER_FALLBACK_ENABLED=true
 DISBSAD_DISAGGREGATION_ENABLED=true
-BM_STACK_ENABLED=true
-PROCESS_POOL_WORKERS=2
+BM_STACK_ENABLED=${BM_STACK}
+PROCESS_POOL_WORKERS=${WORKERS}
+NATGRID_BACKFILL_DAYS=${BACKFILL}
 EOF
 umask 022
 

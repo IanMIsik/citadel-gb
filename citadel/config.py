@@ -103,6 +103,13 @@ class Settings(BaseSettings):
     # enabled. Enabled in .env.dev first.
     bm_stack_enabled: bool = False
 
+    # Web hardening (api/security.py). /docs, /redoc and /openapi.json list every endpoint, so they
+    # stay off unless this is set (dev only). Rate limit is per client address on /api/*; websocket
+    # cap is concurrent sockets per client address. 0 turns a limit off.
+    api_docs_enabled: bool = False
+    rate_limit_per_minute: int = 600
+    ws_max_per_ip: int = 20
+
     @property
     def iris_configured(self) -> bool:
         return bool(self.iris_client_id and self.iris_client_secret and self.iris_queue_name)
