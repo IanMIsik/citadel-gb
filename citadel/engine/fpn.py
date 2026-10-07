@@ -63,6 +63,13 @@ from ..settlement import current_period, utc_to_settlement, window_around
 # interconnector reference is needed.
 INTERCONNECTOR_FUEL_PREFIX = "INT"
 
+# Second letter of an interconnector user's BM unit name -> its FUELINST code (observed across every
+# unit in bm_unit_reference that already has a specific code; "IE" units name the interconnector later).
+INTERCONNECTOR_NAME_PREFIX_CODES = {
+    "I2": "INTIFA2", "IB": "INTNED", "IF": "INTFR", "IG": "INTGRNL", "II": "INTEW",
+    "IL": "INTELEC", "IM": "INTIRL", "IN": "INTNEM", "IS": "INTNSL", "IV": "INTVKL",
+}
+
 # Elexon's own documented FUELINST fuel-type enum -- the fixed set of
 # categories Elexon itself recognises (confirmed against the Fuelinst
 # notebook's own explicit column list, which only ever used names from
@@ -101,7 +108,7 @@ def fuel_type_reference(bm_unit_reference: pd.DataFrame, other_fallback: bool = 
     `other_fallback` (opt-in, see config.py's `fpn_other_fallback_enabled`):
     instead of dropping a unit whose curated `fuel_type` isn't one of
     `ELEXON_FUEL_TYPES` (BATTERIES, LOAD RESPONSE, GAS, DIESEL, SOLAR, the
-    generic INTERCONNECTOR label -- see that constant's own docstring),
+    generic INTERCONNECTOR label is NOT remapped -- it stays dropped, see below),
     remaps it to "OTHER" so it still shows up on the FPN dashboard instead
     of contributing nothing at all. Checked live 2026-09-25: all 110 units
     currently carrying one of those five labels are genuinely live BM units
@@ -113,8 +120,15 @@ def fuel_type_reference(bm_unit_reference: pd.DataFrame, other_fallback: bool = 
     """
     ref = bm_unit_reference.dropna(subset=["elexon_bm_unit", "national_grid_bm_unit", "fuel_type"]).copy()
     ref["fuel_type"] = ref["fuel_type"].str.upper()
+    # A unit curated only as the generic "INTERCONNECTOR" is an interconnector user's trading unit. Its
+    # name says which interconnector (second letter, e.g. IBD-BAYW1 -> BritNed): the same rule holds
+    # for every unit that already carries a specific INT* code. Anything we can't place stays generic
+    # and is never remapped to OTHER (it is not generation).
+    generic = ref["fuel_type"] == "INTERCONNECTOR"
+    ref.loc[generic, "fuel_type"] = ref.loc[generic, "national_grid_bm_unit"].str[:2].map(INTERCONNECTOR_NAME_PREFIX_CODES).fillna("INTERCONNECTOR")
     if other_fallback:
-        ref.loc[~ref["fuel_type"].isin(ELEXON_FUEL_TYPES), "fuel_type"] = "OTHER"
+        remap = ~ref["fuel_type"].isin(ELEXON_FUEL_TYPES) & ~ref["fuel_type"].str.startswith("INTERCONNECTOR")
+        ref.loc[remap, "fuel_type"] = "OTHER"
     ref = ref[ref["fuel_type"].isin(ELEXON_FUEL_TYPES)]
     ref = ref.rename(columns={"elexon_bm_unit": "bmUnit", "national_grid_bm_unit": "nationalGridBmUnit", "fuel_type": "FT"})[
         ["bmUnit", "nationalGridBmUnit", "FT"]

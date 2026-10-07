@@ -437,3 +437,20 @@ def test_exploded_input_cache_reuses_identical_input_and_notices_any_change():
 
     empty, hit5 = fpn._cached_explode("e", pd.DataFrame({"x": []}), lambda d: d)
     assert empty.empty
+
+
+def test_generic_interconnector_units_get_their_code_from_the_name_never_other():
+    import pandas as pd
+    from citadel.engine.fpn import fuel_type_reference
+    ref = pd.DataFrame({
+        "national_grid_bm_unit": ["A-1", "B-1", "IBD-BAYW1", "IFD-MELT1", "IND-IMTC1", "IZD-NOPE1", "D-1"],
+        "elexon_bm_unit": ["E_A", "E_B", "I_IBD-BAYW1", "I_IFD-MELT1", "I_IND-IMTC1", "I_IZD-NOPE1", "T_D"],
+        "fuel_type": ["BATTERIES", "LOAD RESPONSE", "INTERCONNECTOR", "INTERCONNECTOR", "INTERCONNECTOR",
+                      "INTERCONNECTOR", "WIND"],
+    })
+    off = fuel_type_reference(ref, other_fallback=False)
+    on = fuel_type_reference(ref, other_fallback=True)
+    expected_inter = {"I_IBD-BAYW1": "INTNED", "I_IFD-MELT1": "INTFR", "I_IND-IMTC1": "INTNEM"}
+    assert dict(zip(off["bmUnit"], off["FT"])) == {**expected_inter, "T_D": "WIND"}
+    # with the fallback: batteries etc. become OTHER; the unplaceable interconnector unit is dropped, not OTHER
+    assert dict(zip(on["bmUnit"], on["FT"])) == {**expected_inter, "E_A": "OTHER", "E_B": "OTHER", "T_D": "WIND"}
