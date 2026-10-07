@@ -783,127 +783,13 @@ function loadEnvBadge() {
   });
 }
 
-// Plant trip alerts -- a short WebAudio beep (no binary asset needed) plus
-// an in-page toast, per request: no OS Notification permission, just
-// something impossible to miss while this tab is open. See
-// engine/fpn.py's detect_trips() for what counts as a trip (>50MW single-
-// unit MIL/MEL drop, edge-triggered) and engine/fpn_runner.py's
-// _remit_poll_loop for the REMIT match/revision/resolved follow-ups this
-// same toast gets updated in place with.
-function playTripAlarm() {
-  try {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    [0, 0.18, 0.36].forEach((delay, i) => {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = "square";
-      osc.frequency.value = i % 2 === 0 ? 880 : 660;
-      gain.gain.setValueAtTime(0.15, ctx.currentTime + delay);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + delay + 0.15);
-      osc.connect(gain).connect(ctx.destination);
-      osc.start(ctx.currentTime + delay);
-      osc.stop(ctx.currentTime + delay + 0.15);
-    });
-  } catch (e) { /* WebAudio unavailable -- toast alone still shows */ }
-}
-
-const tripToasts = new Map(); // trip_id -> toast element
-
-function tripToastContainer() {
-  let el = document.getElementById("trip-toast-container");
-  if (!el) {
-    el = document.createElement("div");
-    el.id = "trip-toast-container";
-    document.body.appendChild(el);
-  }
-  return el;
-}
-
-function showTripToast(msg) {
-  playTripAlarm();
-  const el = document.createElement("div");
-  el.className = "trip-toast";
-  el.innerHTML =
-    `<button class="trip-toast-close" aria-label="Dismiss">&times;</button>` +
-    `<div class="trip-toast-title">Plant trip -- ${msg.bm_unit}</div>` +
-    `<div class="trip-toast-body">${msg.fuel_type || "Unknown fuel"} &middot; dropped ${msg.drop_mw.toFixed(0)} MW</div>` +
-    `<div class="trip-toast-status">Checking REMIT for expected return time…</div>` +
-    `<a class="trip-toast-link" href="/trips" target="citadel-trips" rel="noopener">Open Plant Trips</a>`;
-  el.querySelector(".trip-toast-close").addEventListener("click", () => el.remove());
-  tripToastContainer().appendChild(el);
-  tripToasts.set(msg.trip_id ?? `${msg.bm_unit}:${msg.detected_at}`, el);
-  setTimeout(() => el.remove(), 60000);
-}
-
-function updateTripToast(tripId, text) {
-  const el = tripToasts.get(tripId);
-  if (!el) return;
-  const status = el.querySelector(".trip-toast-status");
-  if (status) status.textContent = text;
-}
-
-// "Trip going away" pop-up (green, softer rising chime): `partial` once the
-// drop has halved from its peak, `full` once it's cleared. Fires once per
-// stage per trip -- see engine/fpn.py's detect_trips().
-function playRecoveryChime() {
-  try {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    [0, 0.15].forEach((delay, i) => {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = "sine";
-      osc.frequency.value = i === 0 ? 523 : 784;
-      gain.gain.setValueAtTime(0.12, ctx.currentTime + delay);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + delay + 0.25);
-      osc.connect(gain).connect(ctx.destination);
-      osc.start(ctx.currentTime + delay);
-      osc.stop(ctx.currentTime + delay + 0.25);
-    });
-  } catch (e) { /* toast alone still shows */ }
-}
-
-function showRecoveryToast(msg) {
-  playRecoveryChime();
-  const back = Math.max(0, Math.min(100, Math.round((1 - msg.drop_mw / msg.peak_mw) * 100)));
-  const full = msg.kind === "full";
-  const expected = msg.expected_back
-    ? `<div class="trip-toast-status">REMIT expected back: ${new Date(msg.expected_back).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</div>` : "";
-  const el = document.createElement("div");
-  el.className = "trip-toast recovery";
-  el.innerHTML =
-    `<button class="trip-toast-close" aria-label="Dismiss">&times;</button>` +
-    `<div class="trip-toast-title">${full ? "Back online" : "Coming back"} -- ${msg.bm_unit}</div>` +
-    `<div class="trip-toast-body">${msg.fuel_type || "Unknown fuel"} &middot; ` +
-    (full ? `trip cleared (peak drop was ${msg.peak_mw.toFixed(0)} MW)`
-          : `drop ${msg.peak_mw.toFixed(0)} &rarr; ${msg.drop_mw.toFixed(0)} MW (${back}% recovered)`) +
-    ` &middot; SP${msg.settlement_period}</div>` +
-    `<div class="trip-toast-bar"><span style="width:${full ? 100 : back}%"></span></div>` + expected +
-    `<a class="trip-toast-link" href="/trips" target="citadel-trips" rel="noopener">Open Plant Trips</a>`;
-  el.querySelector(".trip-toast-close").addEventListener("click", () => el.remove());
-  tripToastContainer().appendChild(el);
-  setTimeout(() => el.remove(), 60000);
-}
-
+// Trip alert sound + toasts live in trip-alerts.js (shared with the Plant Trips page).
 function connectTripsWebSocket() {
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
   const ws = new WebSocket(`${proto}//${location.host}/ws/trips`);
   ws.onclose = () => setTimeout(connectTripsWebSocket, 2000);
   ws.onerror = () => ws.close();
-  ws.onmessage = (event) => {
-    const msg = JSON.parse(event.data);
-    if (msg.type === "trip") {
-      showTripToast(msg);
-    } else if (msg.type === "remit_match") {
-      updateTripToast(msg.trip_id, "Matched to REMIT -- fetching expected return time…");
-    } else if (msg.type === "remit_revision") {
-      const when = msg.event_end_time ? new Date(msg.event_end_time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "unknown";
-      updateTripToast(msg.trip_id, `Revised: now expected back ~${when}.`);
-    } else if (msg.type === "trip_recovery") {
-      showRecoveryToast(msg);
-    } else if (msg.type === "resolved") {
-      updateTripToast(msg.trip_id, "Resolved -- unit is back per REMIT.");
-    }
-  };
+  ws.onmessage = (event) => { try { handleTripAlertMessage(JSON.parse(event.data)); } catch (e) { console.error(e); } };
   setInterval(() => { if (ws.readyState === WebSocket.OPEN) ws.send("ping"); }, 30000);
 }
 

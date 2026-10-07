@@ -368,11 +368,20 @@ function loadEnvBadge() {
   });
 }
 
+function refreshAll() {
+  loadTrips();
+  loadWorstBehavior();
+  if (selectedTripId) { loadRevisions(selectedTripId); loadTelemetry(selectedTripId, allTrips.find((t) => t.id === selectedTripId)); }
+}
+
 function connectWebSocket() {
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
   const ws = new WebSocket(`${proto}//${location.host}/ws/trips`);
   const status = document.getElementById("connection-status");
-  ws.onopen = () => { status.textContent = "live"; status.className = "connected"; };
+  ws.onopen = () => {
+    status.textContent = "live"; status.className = "connected";
+    refreshAll(); // anything that happened while the socket was down
+  };
   ws.onclose = () => {
     status.textContent = "reconnecting…";
     status.className = "disconnected";
@@ -383,9 +392,7 @@ function connectWebSocket() {
     // Every message type (trip/remit_match/remit_revision/resolved) changes
     // something this page shows -- simplest correct thing is to just
     // refetch both panels rather than hand-patch each message shape twice.
-    loadTrips();
-    loadWorstBehavior();
-    if (selectedTripId) { loadRevisions(selectedTripId); loadTelemetry(selectedTripId, allTrips.find((t) => t.id === selectedTripId)); }
+    refreshAll();
   };
   setInterval(() => { if (ws.readyState === WebSocket.OPEN) ws.send("ping"); }, 30000);
 }
@@ -395,3 +402,7 @@ loadTrips();
 loadWorstBehavior();
 connectWebSocket();
 setInterval(() => { if (selectedTripId) loadTelemetry(selectedTripId, allTrips.find((t) => t.id === selectedTripId)); }, 60000);
+// A websocket can die silently (laptop sleep, network change, a proxy timeout), so also poll lightly
+// and refresh as soon as the tab is looked at again -- the table never needs a manual reload.
+setInterval(() => { if (!document.hidden) loadTrips(); }, 30000);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) refreshAll(); });
