@@ -468,3 +468,4 @@ CREATE TABLE IF NOT EXISTS trip_telemetry (
     updated_at      TIMESTAMPTZ NOT NULL,
     PRIMARY KEY (bm_unit, spot_time)
 );
+ALTER TABLE trip_telemetry ADD COLUMN IF NOT EXISTS mil DOUBLE PRECISION;

@@ -37,13 +37,17 @@ function noRemitNotice(trip) {
   return trip.status !== "resolved" && !trip.remit_mrid && Date.now() - Date.parse(trip.detected_at) > REMIT_LAG_MS;
 }
 
+// A plant that exports is held back by its MEL (Maximum Export Level); one that imports (pumped storage
+// pumping) by its MIL (Maximum Import Level). The server says which one did the limiting.
+const limitName = (ev) => (ev && ev.limit === "mil" ? "MIL" : "MEL");
+
 function statusLabel(trip) {
   if (trip.status === "resolved") return "Resolved";
   if (trip.status === "matched") return "REMIT matched";
   if (noRemitNotice(trip)) {
     const ev = trip.mel_evidence;
     return ev && ev.verdict === "mel_cut"
-      ? `No REMIT notice, MEL cut ${ev.unavailable_mw.toFixed(0)} MW`
+      ? `No REMIT notice, ${limitName(ev)} cut ${ev.unavailable_mw.toFixed(0)} MW`
       : "No REMIT notice";
   }
   return "Open (searching REMIT)";
@@ -53,7 +57,7 @@ function statusLabel(trip) {
 function expectedBackLabel(trip) {
   if (trip.event_end_time) return fmtTime(trip.event_end_time);
   const ev = trip.mel_evidence;
-  if (ev && ev.verdict === "mel_cut") return ev.back_at ? `MEL plan: ${fmtTime(ev.back_at)}` : "MEL: not back in plan";
+  if (ev && ev.verdict === "mel_cut") return ev.back_at ? `${limitName(ev)} plan: ${fmtTime(ev.back_at)}` : `${limitName(ev)}: not back in plan`;
   return "--";
 }
 
@@ -66,12 +70,15 @@ function noMatchCommentary(trip) {
   if (!ev || ev.verdict === "no_data") return `<p class="trips-hint">${why}</p>`;
   if (ev.verdict === "mel_cut") {
     const since = ev.since ? ` since ${fmtTime(ev.since)}` : "";
-    const back = ev.back_at ? `Its published MEL has it back to plan by ${fmtTime(ev.back_at)}.` : "Its published MEL does not return to plan inside the window it covers.";
-    return `<p class="trips-hint">${why}</p><p class="trips-hint trips-evidence"><strong>The plant's own MEL tells the story REMIT does not:</strong> ` +
-      `it has cut its Maximum Export Level by about ${ev.unavailable_mw.toFixed(0)} MW${since}, so it is signalling that capacity is unavailable. ` +
+    const lim = limitName(ev);
+    const full = lim === "MIL" ? "Maximum Import Level" : "Maximum Export Level";
+    const back = ev.back_at ? `Its published ${lim} has it back to plan by ${fmtTime(ev.back_at)}.` : `Its published ${lim} does not return to plan inside the window it covers.`;
+    const meaning = lim === "MIL" ? "so it cannot import as much as planned" : "so it is signalling that capacity is unavailable";
+    return `<p class="trips-hint">${why}</p><p class="trips-hint trips-evidence"><strong>The plant's own ${lim} tells the story REMIT does not:</strong> ` +
+      `it has cut its ${full} by about ${ev.unavailable_mw.toFixed(0)} MW${since}, ${meaning}. ` +
       `${back} Treat this as a probable unpublished outage; the "expected back" shown is the MEL plan, not a REMIT estimate.</p>`;
   }
-  return `<p class="trips-hint">${why}</p><p class="trips-hint trips-evidence">The plant's MEL does <strong>not</strong> show a clear cut ` +
+  return `<p class="trips-hint">${why}</p><p class="trips-hint trips-evidence">The plant's ${limitName(ev)} does <strong>not</strong> show a clear cut ` +
     `(it is within ${ev.unavailable_mw ? "a few" : "0"} MW of plan), so this may be a plan or dispatch change rather than an outage.</p>`;
 }
 
@@ -203,7 +210,7 @@ function timeAxis() {
 // dashed indigo area, delivered (adjusted) FPN as a solid emerald area, MEL as a
 // red step line, and a tooltip that spells out the shortfall. Data comes from
 // /api/trips/{id}/telemetry, so there is nothing to paste or upload.
-const TT = { plan: "#4f46e5", delivered: "#10b981", mel: "#ff4d6d" };
+const TT = { plan: "#4f46e5", delivered: "#10b981", mel: "#ff4d6d", mil: "#f59e0b" };
 
 // MEL is the line that explains a trip (it is where the plant itself says how much it can export), so
 // it is the most prominent thing on the chart: a thick bright step line (no shading), a marker at every
@@ -211,22 +218,24 @@ const TT = { plan: "#4f46e5", delivered: "#10b981", mel: "#ff4d6d" };
 const MEL_CHANGE_MW = 0.5;
 const MEL_LABELS_MAX = 6;
 
-function melChangeIndices(pts) {
+function melChangeIndices(pts, key = "mel") {
   const idx = [];
   for (let i = 1; i < pts.length; i++) {
-    const a = pts[i - 1].mel, b = pts[i].mel;
+    const a = pts[i - 1][key], b = pts[i][key];
     if (a != null && b != null && Math.abs(b - a) > MEL_CHANGE_MW) idx.push(i);
   }
   return idx;
 }
 
-function melLabelsPlugin(pts, changes) {
-  // only the largest changes are labelled, so a noisy MEL cannot bury the chart in text
-  const labelled = new Set([...changes].sort((i, j) => Math.abs(pts[j].mel - pts[j - 1].mel) - Math.abs(pts[i].mel - pts[i - 1].mel)).slice(0, MEL_LABELS_MAX));
+// Labels the biggest changes of one limit line (MEL, or MIL for an importing plant) with its new MW value.
+function limitLabelsPlugin(id, key, datasetIndex, title, colour, pts, changes) {
+  // only the largest changes are labelled, so a noisy line cannot bury the chart in text
+  const size = (i) => Math.abs(pts[i][key] - pts[i - 1][key]);
+  const labelled = new Set([...changes].sort((i, j) => size(j) - size(i)).slice(0, MEL_LABELS_MAX));
   return {
-    id: "melLabels",
+    id,
     afterDatasetsDraw(chart) {
-      const meta = chart.getDatasetMeta(2);              // the MEL dataset
+      const meta = chart.getDatasetMeta(datasetIndex);
       if (!meta || meta.hidden) return;
       const g = chart.ctx, area = chart.chartArea;
       g.save();
@@ -236,13 +245,13 @@ function melLabelsPlugin(pts, changes) {
       for (const i of labelled) {
         const el = meta.data[i];
         if (!el) continue;
-        const text = `MEL ${Math.round(pts[i].mel)} MW`;
+        const text = `${title} ${Math.round(pts[i][key])} MW`;
         const w = g.measureText(text).width + 12;
         const x = Math.min(Math.max(el.x, area.left + w / 2), area.right - w / 2);
         // above the point, unless it sits near the top of the chart
         const y = el.y - 18 < area.top + 10 ? el.y + 18 : el.y - 18;
         g.fillStyle = "rgba(40,8,18,0.92)";
-        g.strokeStyle = TT.mel;
+        g.strokeStyle = colour;
         g.lineWidth = 1.5;
         g.beginPath();
         g.roundRect(x - w / 2, y - 10, w, 20, 4);
@@ -264,19 +273,23 @@ function ttMetric(label, value, cls = "") {
 function renderTelemetryMetrics(data, trip) {
   const s = data.stats || {};
   const mw = (v) => (v == null ? "--" : `${v.toFixed(1)} MW`);
+  const lim = s.limit === "mil" ? "MIL" : "MEL";
   const melNote = s.mel_limited_share == null ? "--"
-    : s.mel_limited_share >= 0.5 ? "MEL cut (plant limit)" : "Output below plan, MEL intact";
+    : s.mel_limited_share >= 0.5 ? (lim === "MIL" ? "MIL cut (plant import limit)" : "MEL cut (plant limit)")
+      : `Output below plan, ${lim} intact`;
+  const importing = s.side === "import";
   const remit = !trip ? "--" : trip.status === "resolved" ? "Resolved"
     : trip.remit_mrid ? `Confirmed${trip.event_end_time ? `, back ${fmtTime(trip.event_end_time)}` : ""}` : "Searching REMIT";
   document.getElementById("tt-metrics").innerHTML =
-    ttMetric("Generation loss", s.loss_mw == null ? "--" : `-${s.loss_mw.toFixed(1)} MW`, "tt-loss") +
+    ttMetric(importing ? "Import not taken" : "Generation loss",
+             s.loss_mw == null ? "--" : importing ? `${s.loss_mw.toFixed(1)} MW less` : `-${s.loss_mw.toFixed(1)} MW`, "tt-loss") +
     ttMetric("Impact", s.impact_pct == null ? "--" : `${s.impact_pct.toFixed(1)}%`, "tt-loss") +
     ttMetric("Mean plan (FPN)", mw(s.mean_fpn)) + ttMetric("Mean delivered (ADJ)", mw(s.mean_adj)) +
     ttMetric("Peak shortfall", mw(s.peak_shortfall_mw)) + ttMetric("Constraint source", melNote) + ttMetric("REMIT", remit);
 }
 
-function verticalMarker(label, x, ymax, colour) {
-  return { label, data: [{ x, y: 0 }, { x, y: ymax }], borderColor: colour, borderDash: [4, 4], borderWidth: 1, pointRadius: 0, order: 99 };
+function verticalMarker(label, x, ymin, ymax, colour) {
+  return { label, data: [{ x, y: ymin }, { x, y: ymax }], borderColor: colour, borderDash: [4, 4], borderWidth: 1, pointRadius: 0, order: 99 };
 }
 
 async function loadTelemetry(tripId, trip) {
@@ -302,10 +315,18 @@ async function loadTelemetry(tripId, trip) {
   if (!pts.length) return;
 
   const xy = (key) => pts.map((p) => ({ x: Date.parse(p.t), y: p[key] }));
-  const ymax = Math.max(100, ...pts.map((p) => Math.max(p.fpn ?? 0, p.adj ?? 0, p.mel ?? 0))) * 1.08;
+  // An importing plant (pumped storage pumping) has a negative plan and is held back by its MIL, so its chart
+  // needs room below zero and a MIL line; an exporting plant keeps the original zero-based chart.
+  const usesMil = pts.some((p) => (p.fpn != null && p.fpn < 0) || (p.mil != null && p.mil < -5));
+  const values = pts.flatMap((p) => [p.fpn, p.adj, p.mel, usesMil ? p.mil : null]).filter((v) => v != null);
+  const ymax = Math.max(100, ...values) * 1.08;
+  const hasNegative = Math.min(0, ...values) < 0;
+  const ymin = hasNegative ? Math.min(...values) * 1.08 : -ymax * 0.05;
   const tMin = Date.parse(pts[0].t), tMax = Date.parse(pts[pts.length - 1].t);
-  const changeList = melChangeIndices(pts);
+  const changeList = melChangeIndices(pts, "mel");
+  const milChangeList = usesMil ? melChangeIndices(pts, "mil") : [];
   const melChanges = new Set(changeList);
+  const milChanges = new Set(milChangeList);
   const datasets = [
     { label: "Scheduled (FPN)", data: xy("fpn"), borderColor: TT.plan, borderDash: [4, 4], borderWidth: 1.5,
       backgroundColor: "rgba(99,102,241,0.14)", fill: "origin", pointRadius: 0, tension: 0.2, order: 3 },
@@ -316,15 +337,22 @@ async function loadTelemetry(tripId, trip) {
       fill: false, spanGaps: false, order: 1,
       pointRadius: pts.map((_, i) => (melChanges.has(i) ? 6 : 0)), pointHoverRadius: 7,
       pointBackgroundColor: "#ffffff", pointBorderColor: TT.mel, pointBorderWidth: 3 },
-    verticalMarker("now", Date.now(), ymax, "#ffffff"),
   ];
+  if (usesMil) {
+    datasets.push({ label: "Import limit (MIL)", data: xy("mil"), borderColor: TT.mil, borderWidth: 4, stepped: "after",
+      fill: false, spanGaps: false, order: 1,
+      pointRadius: pts.map((_, i) => (milChanges.has(i) ? 6 : 0)), pointHoverRadius: 7,
+      pointBackgroundColor: "#ffffff", pointBorderColor: TT.mil, pointBorderWidth: 3 });
+  }
+  datasets.push(verticalMarker("now", Date.now(), ymin, ymax, "#ffffff"));
   // The detection time only belongs on the chart if it falls inside the charted window. For a plant
   // that has been down for days it sits far to the left, and a marker there used to stretch the time
   // axis back to it, squashing all the actual data into a sliver on the right.
   const detectedMs = Date.parse(data.detected_at);
-  if (detectedMs >= tMin && detectedMs <= tMax) datasets.splice(3, 0, verticalMarker("detected", detectedMs, ymax, "#f43f5e"));
+  if (detectedMs >= tMin && detectedMs <= tMax) datasets.push(verticalMarker("detected", detectedMs, ymin, ymax, "#f43f5e"));
   ttChart = new Chart(document.getElementById("tt-chart"), {
-    type: "line", data: { datasets }, plugins: [melLabelsPlugin(pts, changeList)],
+    type: "line", data: { datasets }, plugins: [limitLabelsPlugin("melLabels", "mel", 2, "MEL", TT.mel, pts, changeList),
+              ...(usesMil ? [limitLabelsPlugin("milLabels", "mil", 3, "MIL", TT.mil, pts, milChangeList)] : [])],
     options: {
       responsive: true, maintainAspectRatio: false, animation: false,
       interaction: { mode: "index", intersect: false },
@@ -334,23 +362,26 @@ async function loadTelemetry(tripId, trip) {
              afterBuildTicks: (axis) => { axis.ticks = axis.ticks.filter((t) => new Date(t.value).getUTCMinutes() % 30 === 0); } },
         // A little room below zero: in a full trip MEL IS zero, and a line drawn exactly on the axis is
         // half hidden by it.
-        y: { min: -ymax * 0.05, max: ymax, title: { display: true, text: "MW", color: "#d6d6d6" }, grid: { color: "#474847" },
-             ticks: { color: "#d6d6d6", callback: (v) => (v < 0 ? "" : v) } },
+        y: { min: ymin, max: ymax, title: { display: true, text: "MW", color: "#d6d6d6" }, grid: { color: "#474847" },
+             ticks: { color: "#d6d6d6", callback: (v) => (v < 0 && !hasNegative ? "" : v) } },
       },
       plugins: {
         legend: { labels: { color: "rgb(185,185,185)", boxWidth: 12 } },
         tooltip: {
-          filter: (item) => item.datasetIndex < 3,
+          filter: (item) => item.datasetIndex < (usesMil ? 4 : 3),
           backgroundColor: "#0f172a", borderColor: "#334155", borderWidth: 1, titleColor: "#94a3b8", bodyColor: "#e2e8f0",
           callbacks: {
             label: (c) => {
-              const name = ["PLAN (FPN)", "ACTUAL (ADJ)", "MEL (CAPABILITY LIMIT)"][c.datasetIndex];
+              const name = ["PLAN (FPN)", "ACTUAL (ADJ)", "MEL (CAPABILITY LIMIT)", "MIL (IMPORT LIMIT)"][c.datasetIndex];
               return c.parsed.y == null ? `${name}: --` : `${name}: ${c.parsed.y.toFixed(1)} MW`;
             },
             footer: (items) => {
               const get = (i) => items.find((it) => it.datasetIndex === i)?.parsed.y;
               const fpn = get(0), adj = get(1);
-              return fpn != null && adj != null && fpn - adj > 0 ? `SHORTFALL: -${(fpn - adj).toFixed(1)} MW` : "";
+              if (fpn == null || adj == null) return "";
+              const gap = Math.abs(fpn - adj);
+              if (gap <= 0.05) return "";
+              return fpn < 0 ? `IMPORT SHORTFALL: ${gap.toFixed(1)} MW less than planned` : `SHORTFALL: -${gap.toFixed(1)} MW`;
             },
           },
         },

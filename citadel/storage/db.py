@@ -854,20 +854,21 @@ async def upsert_trip_telemetry(pool: asyncpg.Pool, rows: list[dict]) -> int:
 
     await pool.executemany(
         """
-        INSERT INTO trip_telemetry (bm_unit, spot_time, fuel_type, fpn, mel, adjusted_fpn, updated_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        INSERT INTO trip_telemetry (bm_unit, spot_time, fuel_type, fpn, mel, mil, adjusted_fpn, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         ON CONFLICT (bm_unit, spot_time) DO UPDATE SET
-            fuel_type = excluded.fuel_type, fpn = excluded.fpn, mel = excluded.mel,
+            fuel_type = excluded.fuel_type, fpn = excluded.fpn, mel = excluded.mel, mil = excluded.mil,
             adjusted_fpn = excluded.adjusted_fpn, updated_at = excluded.updated_at
         """,
-        [(r["bm_unit"], _ts(r["spot_time"]), r.get("fuel_type"), r.get("fpn"), r.get("mel"), r.get("vol"), now) for r in rows],
+        [(r["bm_unit"], _ts(r["spot_time"]), r.get("fuel_type"), r.get("fpn"), r.get("mel"), r.get("mil"), r.get("vol"), now)
+         for r in rows],
     )
     return len(rows)
 
 
 async def trip_telemetry_between(pool: asyncpg.Pool, bm_unit: str, start: datetime, end: datetime) -> list[asyncpg.Record]:
     return await pool.fetch(
-        "SELECT spot_time, fpn, mel, adjusted_fpn FROM trip_telemetry WHERE bm_unit = $1 AND spot_time >= $2 AND spot_time <= $3 ORDER BY spot_time",
+        "SELECT spot_time, fpn, mel, mil, adjusted_fpn FROM trip_telemetry WHERE bm_unit = $1 AND spot_time >= $2 AND spot_time <= $3 ORDER BY spot_time",
         bm_unit, start, end)
 
 
@@ -875,6 +876,6 @@ async def trip_telemetry_for_units(pool: asyncpg.Pool, units: list[str], start: 
     if not units:
         return []
     return await pool.fetch(
-        "SELECT bm_unit, spot_time, fpn, mel, adjusted_fpn FROM trip_telemetry "
+        "SELECT bm_unit, spot_time, fpn, mel, mil, adjusted_fpn FROM trip_telemetry "
         "WHERE bm_unit = ANY($1::text[]) AND spot_time >= $2 AND spot_time <= $3 ORDER BY bm_unit, spot_time",
         units, start, end)

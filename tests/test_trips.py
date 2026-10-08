@@ -255,3 +255,54 @@ def test_remit_match_still_prefers_a_notice_that_starts_at_detection():
     detected_at = datetime(2026, 10, 5, 9, 39, tzinfo=timezone.utc)
     fresh = {**_PARTIAL_DERATE, "mrid": "FRESH", "eventStartTime": "2026-10-05T09:00:00Z"}
     assert best_remit_match([_FULL_OUTAGE, fresh], detected_at, mel_now=0.0) == "FRESH"
+
+
+def test_trip_chart_handles_a_pumping_plant_held_back_by_its_mil():
+    from datetime import datetime, timedelta, timezone
+
+    from citadel.engine.trip_chart import build_trip_chart
+
+    sp = datetime(2026, 10, 4, 12, 0, tzinfo=timezone.utc)
+    # Pumped storage planning to import 300 MW; its MIL (max import) is cut to -100, so it can only take 100.
+    pts = [{"spot_time": sp + timedelta(minutes=5 * i), "fpn": -300.0, "mel": 300.0, "mil": -100.0,
+            "adjusted_fpn": -100.0} for i in range(6)]
+    out = build_trip_chart(pts, sp, now=sp + timedelta(minutes=30))
+    s = out["stats"]
+    assert s["mean_fpn"] == -300.0 and s["mean_adj"] == -100.0
+    assert s["loss_mw"] == 200.0 and s["impact_pct"] == 66.7 and s["peak_shortfall_mw"] == 200.0
+    assert s["side"] == "import" and s["limit"] == "mil" and s["mel_limited_share"] == 1.0
+    assert out["points"][0]["mil"] == -100.0 and out["points"][0]["shortfall"] == 200.0
+
+
+def test_mil_evidence_for_an_importing_plant_and_mel_for_an_exporting_one():
+    from datetime import datetime, timedelta, timezone
+
+    from citadel.engine.trip_chart import mel_evidence
+
+    now = datetime(2026, 10, 5, 12, 0, tzinfo=timezone.utc)
+    pts = []
+    for i in range(-24, 13):
+        t = now + timedelta(minutes=5 * i)
+        cut = t >= now - timedelta(minutes=50) and t < now + timedelta(minutes=30)
+        pts.append({"spot_time": t, "fpn": -250.0, "mel": 250.0, "mil": 0.0 if cut else -250.0})
+    ev = mel_evidence(pts, now)
+    assert ev["verdict"] == "mel_cut" and ev["limit"] == "mil" and ev["unavailable_mw"] == 250.0
+    assert ev["since"] == "2026-10-05T11:10:00Z" and ev["back_at"] == "2026-10-05T12:30:00Z"
+    # an importing plant whose MEL happens to be zero is NOT cut: MEL is not its limit
+    only_mel_zero = [{"spot_time": p["spot_time"], "fpn": -250.0, "mel": 0.0, "mil": -250.0} for p in pts]
+    assert mel_evidence(only_mel_zero, now)["verdict"] == "no_cut"
+    # rows stored before MIL was recorded carry no import limit, so there is nothing to judge
+    assert mel_evidence([{**p, "mil": None} for p in pts], now)["verdict"] == "no_data"
+    exporting = [{"spot_time": p["spot_time"], "fpn": 300.0, "mel": 0.0, "mil": None} for p in pts]
+    assert mel_evidence(exporting, now)["limit"] == "mel"
+
+
+def test_worst_behaviour_series_carries_mil_and_drops_unpublished_values():
+    import numpy as np
+
+    rows = [_row("T_P", "2026-09-30T10:00:00Z", -300, -100), _row("T_P", "2026-09-30T10:05:00Z", -300, -100)]
+    for r, mil in zip(rows, (-100.0, -np.inf)):
+        r["mil_spot_vol"] = mil
+    state = {"T_P": {"drop": 200.0, "peak": 200.0, "partial": False, "recovered_at": None}}
+    out = worst_behaviour_series(pd.DataFrame(rows), state, [(date(2026, 9, 30), 20)], NOW)
+    assert out["mil"].iloc[0] == -100.0 and pd.isna(out["mil"].iloc[1])

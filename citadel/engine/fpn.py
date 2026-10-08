@@ -52,7 +52,7 @@ import numpy as np
 import pandas as pd
 
 from . import stack as stack_engine
-from .bm_stack import compute_bm_stack
+from .bm_stack import compute_bm_stack
 from .natgrid import total_mw_by_period
 from ..settlement import current_period, utc_to_settlement, window_around
 
@@ -557,7 +557,7 @@ def worst_behaviour_series(
         u for u, s in trip_state.items()
         if s.get("peak") is not None or (s.get("recovered_at") and pd.Timestamp(s["recovered_at"]) >= pd.Timestamp(cutoff))
     ]
-    cols = ["bm_unit", "fuel_type", "status", "spot_time", "settlement_period", "fpn", "mel", "vol"]
+    cols = ["bm_unit", "fuel_type", "status", "spot_time", "settlement_period", "fpn", "mel", "mil", "vol"]
     if by_unit.empty or not units or not window_periods:
         return pd.DataFrame(columns=cols)
     periods = pd.DataFrame({
@@ -572,12 +572,16 @@ def worst_behaviour_series(
         return pd.DataFrame(columns=cols)
     bu["status"] = bu["bmUnit"].map(lambda u: "tripped" if trip_state[u].get("peak") is not None else "recovered")
     bu["mel"] = bu["mel_spot_vol"].where(np.isfinite(bu["mel_spot_vol"]), None)
+    # MIL (Maximum Import Level) is what holds back an importing plant such as pumped storage; an
+    # unpublished MIL is stored as -inf ("no limit"), which is not a value worth keeping.
+    bu["mil"] = bu["mil_spot_vol"].where(np.isfinite(bu["mil_spot_vol"]), None) if "mil_spot_vol" in bu else None
     bu["spot_time"] = bu["spot_time"].dt.strftime("%Y-%m-%dT%H:%M:%SZ")
     out = bu.rename(columns={"bmUnit": "bm_unit", "FT": "fuel_type", "settlementPeriod": "settlement_period", "fpn_spot_vol": "fpn", "adjusted_fpn": "vol"})
     out = out[cols].sort_values(["bm_unit", "spot_time"])
     for c in ("fpn", "vol"):
         out[c] = out[c].round(1)
-    out["mel"] = out["mel"].map(lambda v: None if v is None or pd.isna(v) else round(float(v), 1))
+    for c in ("mel", "mil"):
+        out[c] = out[c].map(lambda v: None if v is None or pd.isna(v) else round(float(v), 1))
     return out.reset_index(drop=True)
 
 
