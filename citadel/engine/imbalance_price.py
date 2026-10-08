@@ -212,7 +212,7 @@ def _par_tag(survivors: list[_Tag], is_offer: bool) -> float:
 
 
 def compute_imbalance_price(
-    rows: list[dict], market_index_price: float | None = None
+    rows: list[dict], market_index_price: float | None = None, apply_de_minimis: bool = True,
 ) -> tuple[float, dict[int, float]]:
     """`rows`: one settlement period's priced actions -- dicts with at
     least 'delta' (signed MWh, positive=offer/negative=bid), 'm_orig_price',
@@ -237,8 +237,9 @@ def compute_imbalance_price(
         for r in rows if float(r["delta"]) < 0
     ]
 
-    offer_tags = _de_minimis(offer_tags)
-    bid_tags = _de_minimis(bid_tags)
+    if apply_de_minimis:   # False when the caller has already applied it per whole acceptance
+        offer_tags = _de_minimis(offer_tags)
+        bid_tags = _de_minimis(bid_tags)
     _arbitrage(offer_tags, bid_tags)
     offer_tags = [t for t in offer_tags if t.vol > 0]
     bid_tags = [t for t in bid_tags if t.vol > 0]

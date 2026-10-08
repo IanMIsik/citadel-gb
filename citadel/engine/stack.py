@@ -1006,6 +1006,7 @@ def build_price_stack(
     pricing_method: str = "guide",
     par_band_method: str = "interval",
     market_index_prices: dict[tuple, float] | None = None,
+    bm_rows: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Groups every priced row (real acceptances + synthetic DISBSAD rows)
     into the final settlement-period price stack, then derives the
@@ -1050,8 +1051,17 @@ def build_price_stack(
     m_orig_price_disbsad = (misik_stack["disbsad_cost"] / misik_stack["delta"]).replace([np.inf, -np.inf], np.nan).fillna(0)
     misik_stack["m_orig_price"] = m_orig_price_unit + m_orig_price_disbsad
 
-    summary_niv = df[["settlementDate", "settlementPeriod", "delta"]].groupby(["settlementDate", "settlementPeriod"])["delta"].sum().reset_index()
-    summary_niv["delta"] = summary_niv["delta"] / 60
+    if bm_rows is not None:
+        # Acceptance model (engine/acceptance_volumes.py): the BM rows come from the previous-
+        # acceptance rule and bid-offer band split instead of the FPN-relative minute model; the
+        # synthetic DISBSAD rows are kept exactly as built above.
+        non_bm = misik_stack[misik_stack["bmUnit"].astype(str).str.startswith("disbsad_")].copy()
+        non_bm["dmatKey"] = non_bm["bmUnit"]
+        misik_stack = pd.concat([non_bm, bm_rows], ignore_index=True)
+        summary_niv = misik_stack.groupby(["settlementDate", "settlementPeriod"])["delta"].sum().reset_index()
+    else:
+        summary_niv = df[["settlementDate", "settlementPeriod", "delta"]].groupby(["settlementDate", "settlementPeriod"])["delta"].sum().reset_index()
+        summary_niv["delta"] = summary_niv["delta"] / 60
     summary_niv["delta_sign"] = np.sign(summary_niv["delta"])
     summary_niv = summary_niv.rename(columns={"delta": "total_delta"})
 
@@ -1171,6 +1181,7 @@ def _price_via_guide_methodology(misik_stack: pd.DataFrame, market_index_prices:
     misik_stack = misik_stack.copy()
     misik_stack["misik_imb_price"] = 0.0
     misik_stack["total_misik_price"] = 0.0
+    per_acceptance_dmat = "dmatKey" in misik_stack.columns
 
     for (sd, sp), group in misik_stack.groupby(["settlementDate", "settlementPeriod"]):
         rows = [
@@ -1183,7 +1194,15 @@ def _price_via_guide_methodology(misik_stack: pd.DataFrame, market_index_prices:
         ]
         sd_date = sd.date() if hasattr(sd, "date") else sd
         mip = market_index_prices.get((sd_date, int(sp)))
-        price, contributions = compute_imbalance_price(rows, market_index_price=mip)
+        if per_acceptance_dmat:
+            # Elexon's de-minimis tagging looks at a whole acceptance (all its bid-offer pairs on one
+            # side), not at each row: drop acceptances under 0.1 MWh here, then price without the
+            # per-row rule.
+            totals = group.assign(_v=group["delta"].abs()).groupby("dmatKey")["_v"].sum()
+            keep = [row for row, key in zip(rows, group["dmatKey"]) if totals[key] >= 0.1]
+            price, contributions = compute_imbalance_price(keep, market_index_price=mip, apply_de_minimis=False)
+        else:
+            price, contributions = compute_imbalance_price(rows, market_index_price=mip)
         idx = group.index
         misik_stack.loc[idx, "misik_imb_price"] = [contributions.get(id(r), 0.0) for r in rows]
         misik_stack.loc[idx, "total_misik_price"] = price
@@ -1207,6 +1226,7 @@ def compute_stack(
     return_exploded_boalf: bool = False,
     reversal_side_fix: bool = False,
     disaggregate_disbsad: bool = False,
+    acceptance_model: bool = False,
 ) -> pd.DataFrame | tuple[pd.DataFrame, ...]:
     """End-to-end: raw per-dataset DataFrames in, the final price-stack
     DataFrame out (columns: STACK_COLUMNS). Empty at any stage short-
@@ -1246,6 +1266,14 @@ def compute_stack(
     validated) fix so PAR Tagging sees each DISBSAD action's own price
     instead of one blended average across every action sharing a
     (soFlag, storFlag).
+
+    `acceptance_model`: opt-in (config.py's `acceptance_model_enabled`, dev-only until validated).
+    Prices the stack from engine/acceptance_volumes.py's rows -- each acceptance measured against
+    the previous acceptance in force, split across the bid-offer bands -- instead of the FPN-relative
+    `latest_wins`/reversal-aware minute model, which nets away the upward moves Elexon books as
+    offers. Reproduced Elexon's published price for 24/24 periods on 2026-10-08 and 46/48 on
+    2026-10-07. Everything else (spot NIV, per-unit deltas, the exploded BOALF chart) still comes
+    from the minute model, whose net volumes are identical.
     """
     empty_stack = pd.DataFrame(columns=STACK_COLUMNS)
     empty_niv = pd.DataFrame(columns=SPOT_NIV_COLUMNS)
@@ -1332,9 +1360,16 @@ def compute_stack(
 
     combined = blend_disbsad(fpn_mel_boalf_dp, disbsad_df, flags_df, disaggregate_disbsad=disaggregate_disbsad)
     _lap("blend_disbsad")
+    bm_rows = None
+    if acceptance_model and pricing_method == "guide":
+        from .acceptance_volumes import acceptance_stack_rows
+
+        bm_rows = acceptance_stack_rows(
+            boalf_df, pn_df, bod_df, flags_df, combined[["settlementDate", "settlementPeriod"]].drop_duplicates(), max_ta)
+        _lap("acceptance_rows")
     stack_result = build_price_stack(
         combined, max_ta, pricing_method=pricing_method, par_band_method=par_band_method,
-        market_index_prices=market_index_prices,
+        market_index_prices=market_index_prices, bm_rows=bm_rows,
     )
     _lap("price_stack")
     if not return_spot_niv and not return_exploded_boalf:

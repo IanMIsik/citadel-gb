@@ -318,6 +318,7 @@ class Runner:
             return_exploded_boalf=True,
             reversal_side_fix=self.settings.reversal_side_fix_enabled,
             disaggregate_disbsad=self.settings.disbsad_disaggregation_enabled,
+            acceptance_model=self.settings.acceptance_model_enabled,
         )
         if self.process_pool is not None:
             loop = asyncio.get_running_loop()

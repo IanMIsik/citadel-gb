@@ -593,3 +593,32 @@ def test_reversal_tail_sign_is_anchored_per_settlement_period():
     assert (aware["boalf_spot_vol"] - aware["fpn_spot_vol"]).sum() == pytest.approx(
         (latest["boalf_spot_vol"] - latest["fpn_spot_vol"]).sum()
     )
+
+
+def test_compute_stack_acceptance_model_prices_the_same_simple_case_and_keeps_the_stack_layout():
+    sd = "2026-01-01"
+    boalf_df = pd.DataFrame([_flat_acceptance("T_TEST-1", 10.0, sd)])
+    pn_df = pd.DataFrame([{
+        "bmUnit": "T_TEST-1", "timeFrom": f"{sd}T00:00:00Z", "timeTo": f"{sd}T00:01:00Z",
+        "levelFrom": 0.0, "levelTo": 0.0, "dataset": "PN", "nationalGridBmUnit": "T_TEST-1",
+        "settlementDate": sd, "settlementPeriod": 1,
+    }])
+    mel_df = pd.DataFrame([{
+        "bmUnit": "T_TEST-1", "timeFrom": f"{sd}T00:00:00Z", "timeTo": f"{sd}T00:01:00Z",
+        "levelFrom": 100.0, "levelTo": 100.0, "dataset": "MELS", "nationalGridBmUnit": "T_TEST-1",
+        "settlementDate": sd, "settlementPeriod": 1, "notificationTime": f"{sd}T00:00:00Z", "notificationSequence": 1,
+    }])
+    bod_df = pd.DataFrame([{
+        "settlementDate": sd, "settlementPeriod": 1, "bmUnit": "T_TEST-1",
+        "bid": -50.0, "offer": 75.0, "levelTo": 20.0, "pairId": 1,
+    }])
+    disbsad_df = pd.DataFrame(columns=["settlementDate", "settlementPeriod", "soFlag", "storFlag", "volume", "cost"])
+
+    result = compute_stack(boalf_df, bod_df, pn_df, mel_df, disbsad_df, acceptance_model=True)
+
+    assert len(result) == 1
+    row = result.iloc[0]
+    assert row["m_orig_price"] == pytest.approx(75.0) and row["total_misik_price"] == pytest.approx(75.0)
+    assert row["delta"] == pytest.approx(10 / 60, abs=1e-5) and row["total_delta"] == pytest.approx(10 / 60, abs=1e-5)
+    assert row["bmUnit"] == "T_TEST-1_1"
+    assert list(result.columns) == list(compute_stack(boalf_df, bod_df, pn_df, mel_df, disbsad_df).columns)

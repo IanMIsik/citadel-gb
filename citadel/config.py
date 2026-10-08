@@ -97,6 +97,10 @@ class Settings(BaseSettings):
     # .env.dev only until validated against real settlement periods there.
     disbsad_disaggregation_enabled: bool = False
 
+    # Opt-in, dev-only until validated: price the stack from raw acceptances measured against the previous
+    # acceptance in force and split across bid-offer bands (engine/acceptance_volumes.py).
+    acceptance_model_enabled: bool = False
+
     # Opt-in, defaulted off -- the BM Stack page (engine/bm_stack.py,
     # /bm-stack): untouched bids/offers available to be called. Costs an
     # extra pandas pass inside every FPN recompute, so it only runs where

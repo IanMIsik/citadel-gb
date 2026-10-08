@@ -40,7 +40,7 @@ def _mel_mil_ranges_for(sd: date, sp: int) -> list[tuple[str, str]]:
 
 async def run(
     target_date: date, sp: int, include_case_6: bool, use_mel_gate: bool, pricing_method: str, par_band_method: str,
-    overlap_resolution: str, reversal_side_fix: bool, disaggregate_disbsad: bool,
+    overlap_resolution: str, reversal_side_fix: bool, disaggregate_disbsad: bool, acceptance_model: bool = False,
 ) -> None:
     periods = window_around(target_date, sp)
     mel_mil_ranges = _mel_mil_ranges_for(target_date, sp)
@@ -60,6 +60,7 @@ async def run(
         pricing_method=pricing_method, par_band_method=par_band_method,
         market_index_prices=market_index_prices, overlap_resolution=overlap_resolution,
         reversal_side_fix=reversal_side_fix, disaggregate_disbsad=disaggregate_disbsad,
+        acceptance_model=acceptance_model,
     )
 
     actual = next((r for r in actual_rows if r.get("settlementPeriod") == sp), None)
@@ -101,13 +102,15 @@ def main() -> None:
                          help="Only applies with --overlap-resolution reversal_aware (the default). A genuine reversal's marginal delta is computed relative to the acceptance it reverses (base_before) instead of relative to FPN, so it lands on the correct side of the bid/offer stack. Confirmed against T_FERRB-1/SP14 (acceptanceId 14433/14434) and systematic across 45/370 reversal-flagged acceptances sampled; defaulted off pending broader validation (see engine/stack.py's build_marginal_deltas() docstring).")
     parser.add_argument("--disaggregate-disbsad", action="store_true",
                          help="Prices each DISBSAD action at its own price instead of pre-summing every action sharing a (soFlag, storFlag) into one blended-average row before PAR Tagging runs. Confirmed live SP39 2026-09-25: 34 separate actions (GBP212.50-235.00/MWh) collapsed into one blended row, discarding the per-action detail PAR Tagging needs when its 1 MWh boundary falls inside that block (see engine/stack.py's blend_disbsad() docstring).")
+    parser.add_argument("--acceptance-model", action="store_true",
+                         help="Price from raw acceptances against the previous acceptance in force, split across bid-offer bands (engine/acceptance_volumes.py).")
     parser.set_defaults(mel_gate=True)
     args = parser.parse_args()
 
     asyncio.run(run(
         date.fromisoformat(args.date), args.sp, args.include_case_6, args.mel_gate,
         args.pricing_method, args.par_band_method, args.overlap_resolution, args.reversal_side_fix,
-        args.disaggregate_disbsad,
+        args.disaggregate_disbsad, args.acceptance_model,
     ))
 
 
