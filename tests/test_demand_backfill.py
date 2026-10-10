@@ -97,10 +97,11 @@ def test_neso_historic_rows_handles_missing_columns_and_date_formats():
         {"SETTLEMENT_DATE": "2024-01-15T00:00:00", "SETTLEMENT_PERIOD": 3, "ND": 30000, "TSD": "31000",
          "EMBEDDED_SOLAR_GENERATION": 0, "EMBEDDED_WIND_GENERATION": 1500},
         {"SETTLEMENT_DATE": "01-Jan-2010", "SETTLEMENT_PERIOD": "1", "ND": 40000},
+        {"SETTLEMENT_DATE": "01-Jan-23", "SETTLEMENT_PERIOD": "2", "ND": 41000},
         {"SETTLEMENT_DATE": None, "SETTLEMENT_PERIOD": 1},
     ]
     rows = bf.neso_historic_rows(recs)
-    assert len(rows) == 2
+    assert len(rows) == 3 and rows[2][0] == date(2023, 1, 1)
     cols = ("nd", "tsd", "england_wales_demand", "embedded_wind_generation", "embedded_wind_capacity",
             "embedded_solar_generation", "embedded_solar_capacity", "non_bm_stor", "pump_storage_pumping", "scottish_transfer")
     first = dict(zip(("settlement_date", "settlement_period", *cols), rows[0]))

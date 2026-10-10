@@ -155,7 +155,12 @@ def _day(value) -> date:
     try:
         return date.fromisoformat(s[:10])
     except ValueError:
-        return datetime.strptime(s, "%d-%b-%Y").date()
+        for fmt in ("%d-%b-%Y", "%d-%b-%y"):    # NESO files use either a 4- or 2-digit year
+            try:
+                return datetime.strptime(s, fmt).date()
+            except ValueError:
+                continue
+        raise
 
 
 def neso_historic_rows(records: list[dict]) -> list[tuple]:
