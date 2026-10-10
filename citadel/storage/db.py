@@ -13,6 +13,8 @@ from pathlib import Path
 import asyncpg
 
 SCHEMA_PATH = Path(__file__).with_name("schema.sql")
+# Demand forecaster tables live apart so production never gets them unless asked (see create_pool).
+DEMAND_SCHEMA_PATH = Path(__file__).with_name("schema_demand.sql")
 
 
 @dataclass(frozen=True)
@@ -58,10 +60,14 @@ class SettlementPriceRow:
     net_imbalance_volume: float | None
 
 
-async def create_pool(database_url: str) -> asyncpg.Pool:
+async def create_pool(database_url: str, demand_schema: bool = False) -> asyncpg.Pool:
+    """`demand_schema` also creates the demand forecaster tables; it is off by default so only an
+    environment that opts in (DEMAND_FORECASTER_ENABLED, or the backfill command) gets them."""
     pool = await asyncpg.create_pool(database_url, min_size=1, max_size=10)
     async with pool.acquire() as conn:
         await conn.execute(SCHEMA_PATH.read_text())
+        if demand_schema:
+            await conn.execute(DEMAND_SCHEMA_PATH.read_text())
     return pool
 
 
@@ -879,3 +885,119 @@ async def trip_telemetry_for_units(pool: asyncpg.Pool, units: list[str], start: 
         "SELECT bm_unit, spot_time, fpn, mel, mil, adjusted_fpn FROM trip_telemetry "
         "WHERE bm_unit = ANY($1::text[]) AND spot_time >= $2 AND spot_time <= $3 ORDER BY bm_unit, spot_time",
         units, start, end)
+
+
+# --- Demand forecaster history (see ingest/demand_backfill.py) -------------------------------
+
+_BATCH = 5000
+
+
+async def _executemany_batched(pool: asyncpg.Pool, sql: str, rows: list[tuple]) -> int:
+    for i in range(0, len(rows), _BATCH):
+        await pool.executemany(sql, rows[i:i + _BATCH])
+    return len(rows)
+
+
+async def upsert_demand_vintages(pool: asyncpg.Pool, rows: list[tuple]) -> int:
+    """rows: (dataset, target_start, lead_min, publish_time, staleness_min, value). A stored vintage is
+    only replaced by a fresher one, so two chunks offering the same slot keep the best."""
+    return await _executemany_batched(pool, """
+        INSERT INTO demand_forecast_vintages (dataset, target_start, lead_min, publish_time, staleness_min, value)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        ON CONFLICT (dataset, target_start, lead_min) DO UPDATE SET
+            publish_time = excluded.publish_time, staleness_min = excluded.staleness_min, value = excluded.value
+        WHERE excluded.staleness_min < demand_forecast_vintages.staleness_min
+        """, rows)
+
+
+async def upsert_demand_embedded_vintages(pool: asyncpg.Pool, rows: list[tuple]) -> int:
+    """rows: (target_start, lead_min, publish_time, staleness_min, wind_fc, wind_cap, solar_fc, solar_cap)."""
+    return await _executemany_batched(pool, """
+        INSERT INTO demand_embedded_vintages
+            (target_start, lead_min, publish_time, staleness_min, wind_forecast, wind_capacity, solar_forecast, solar_capacity)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        ON CONFLICT (target_start, lead_min) DO UPDATE SET
+            publish_time = excluded.publish_time, staleness_min = excluded.staleness_min,
+            wind_forecast = excluded.wind_forecast, wind_capacity = excluded.wind_capacity,
+            solar_forecast = excluded.solar_forecast, solar_capacity = excluded.solar_capacity
+        WHERE excluded.staleness_min < demand_embedded_vintages.staleness_min
+        """, rows)
+
+
+async def upsert_demand_outturn(pool: asyncpg.Pool, rows: list[tuple]) -> int:
+    """rows: (target_start, settlement_date, settlement_period, indo, itsdo)."""
+    return await _executemany_batched(pool, """
+        INSERT INTO demand_outturn (target_start, settlement_date, settlement_period, indo, itsdo)
+        VALUES ($1, $2, $3, $4, $5)
+        ON CONFLICT (target_start) DO UPDATE SET
+            settlement_date = excluded.settlement_date, settlement_period = excluded.settlement_period,
+            indo = excluded.indo, itsdo = excluded.itsdo
+        """, rows)
+
+
+async def upsert_demand_fuelinst(pool: asyncpg.Pool, rows: list[tuple]) -> int:
+    """rows: (start_time, total_mw, by_fuel_json_text)."""
+    return await _executemany_batched(pool, """
+        INSERT INTO demand_fuelinst_5min (start_time, total_mw, by_fuel)
+        VALUES ($1, $2, $3::jsonb)
+        ON CONFLICT (start_time) DO UPDATE SET total_mw = excluded.total_mw, by_fuel = excluded.by_fuel
+        """, rows)
+
+
+_NESO_HISTORIC_COLS = ("nd", "tsd", "england_wales_demand", "embedded_wind_generation", "embedded_wind_capacity",
+                       "embedded_solar_generation", "embedded_solar_capacity", "non_bm_stor", "pump_storage_pumping",
+                       "scottish_transfer")
+
+
+async def upsert_demand_neso_historic(pool: asyncpg.Pool, rows: list[tuple]) -> int:
+    """rows: (settlement_date, settlement_period, *_NESO_HISTORIC_COLS)."""
+    cols = ", ".join(_NESO_HISTORIC_COLS)
+    ph = ", ".join(f"${i}" for i in range(3, 3 + len(_NESO_HISTORIC_COLS)))
+    sets = ", ".join(f"{c} = excluded.{c}" for c in _NESO_HISTORIC_COLS)
+    return await _executemany_batched(pool, f"""
+        INSERT INTO demand_neso_historic (settlement_date, settlement_period, {cols})
+        VALUES ($1, $2, {ph})
+        ON CONFLICT (settlement_date, settlement_period) DO UPDATE SET {sets}
+        """, rows)  # noqa: S608 -- column names are module constants
+
+
+async def upsert_demand_pv_live(pool: asyncpg.Pool, rows: list[tuple]) -> int:
+    """rows: (ts, pv_live, pv_lower, pv_upper)."""
+    return await _executemany_batched(pool, """
+        INSERT INTO demand_pv_live (ts, pv_live, pv_lower, pv_upper) VALUES ($1, $2, $3, $4)
+        ON CONFLICT (ts) DO UPDATE SET pv_live = excluded.pv_live, pv_lower = excluded.pv_lower, pv_upper = excluded.pv_upper
+        """, rows)
+
+
+async def upsert_demand_weather(pool: asyncpg.Pool, rows: list[tuple]) -> int:
+    """rows: (point, ts, temperature_2m, cloud_cover, shortwave_radiation, wind_speed_100m)."""
+    return await _executemany_batched(pool, """
+        INSERT INTO demand_weather (point, ts, temperature_2m, cloud_cover, shortwave_radiation, wind_speed_100m)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        ON CONFLICT (point, ts) DO UPDATE SET
+            temperature_2m = excluded.temperature_2m, cloud_cover = excluded.cloud_cover,
+            shortwave_radiation = excluded.shortwave_radiation, wind_speed_100m = excluded.wind_speed_100m
+        """, rows)
+
+
+async def upsert_demand_calendar(pool: asyncpg.Pool, rows: list[tuple]) -> int:
+    """rows: (day, region, title)."""
+    return await _executemany_batched(pool, """
+        INSERT INTO demand_calendar (day, region, title) VALUES ($1, $2, $3)
+        ON CONFLICT (day, region) DO UPDATE SET title = excluded.title
+        """, rows)
+
+
+async def log_demand_backfill(pool: asyncpg.Pool, dataset: str, chunk_start: date, chunk_end: date, row_count: int) -> None:
+    await pool.execute("""
+        INSERT INTO demand_backfill_log (dataset, chunk_start, chunk_end, row_count, completed_at)
+        VALUES ($1, $2, $3, $4, now())
+        ON CONFLICT (dataset, chunk_start) DO UPDATE SET
+            chunk_end = excluded.chunk_end, row_count = excluded.row_count, completed_at = excluded.completed_at
+        """, dataset, chunk_start, chunk_end, row_count)
+
+
+async def demand_backfill_done(pool: asyncpg.Pool) -> dict[tuple[str, date], date]:
+    """{(dataset, chunk_start): chunk_end} for every chunk that finished."""
+    rows = await pool.fetch("SELECT dataset, chunk_start, chunk_end FROM demand_backfill_log")
+    return {(r["dataset"], r["chunk_start"]): r["chunk_end"] for r in rows}

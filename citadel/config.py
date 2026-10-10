@@ -106,6 +106,8 @@ class Settings(BaseSettings):
     # extra pandas pass inside every FPN recompute, so it only runs where
     # enabled. Enabled in .env.dev first.
     bm_stack_enabled: bool = False
+    # Dev-only: create the demand forecaster tables (storage/schema_demand.sql) at startup. Never set in prod.
+    demand_forecaster_enabled: bool = False
 
     # Web hardening (api/security.py). /docs, /redoc and /openapi.json list every endpoint, so they
     # stay off unless this is set (dev only). Rate limit is per client address on /api/*; websocket

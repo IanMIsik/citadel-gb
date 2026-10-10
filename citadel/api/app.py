@@ -67,7 +67,7 @@ def _clean_record(record) -> dict:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     check_db_credentials(settings.database_url)
-    pool = await db.create_pool(settings.database_url)
+    pool = await db.create_pool(settings.database_url, demand_schema=settings.demand_forecaster_enabled)
     app.state.pool = pool
 
     async with httpx.AsyncClient() as client:
