@@ -42,6 +42,16 @@ def main() -> None:
     evaluate.add_argument("--validate-live", action="store_true",
                           help="also compare the replica of the live misco_* maths with fpn_aggregated")
 
+    train = sub.add_parser(
+        "train-demand-model",
+        help="Walk-forward test of the demand-error model against the baselines, then fit and save the final model")
+    train.add_argument("--years", default="2024,2025,2026", help="test years (each is predicted by a model trained on earlier data)")
+    train.add_argument("--rounds", type=int, default=400, help="boosting rounds per quantile model")
+    train.add_argument("--csv", default=None)
+    train.add_argument("--html", default=None)
+    train.add_argument("--save-dir", default="data/models")
+    train.add_argument("--no-final", action="store_true", help="skip fitting and saving the all-data model")
+
     args = parser.parse_args()
     if args.command == "serve":
         uvicorn.run("citadel.api.app:app", host=args.host, port=args.port, reload=args.reload)
@@ -49,6 +59,10 @@ def main() -> None:
         asyncio.run(_backfill_demand(args))
     elif args.command == "eval-demand-baseline":
         asyncio.run(_eval_demand_baseline(args))
+    elif args.command == "train-demand-model":
+        from citadel.demand_cli import train_demand_model
+
+        asyncio.run(train_demand_model(args))
 
 
 async def _eval_demand_baseline(args: argparse.Namespace) -> None:

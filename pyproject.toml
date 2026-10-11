@@ -31,6 +31,8 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "pytest-asyncio>=0.24"]
+# Demand-error model (citadel train-demand-model); never imported by the app, so the Docker/AWS build skips it.
+forecast = ["lightgbm>=4.5"]
 
 [project.scripts]
 citadel = "citadel.cli:main"

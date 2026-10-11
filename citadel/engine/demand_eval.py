@@ -220,7 +220,7 @@ async def load_frame(pool, start: datetime | None = None, end: datetime | None =
 
 _REPORT_TEMPLATE = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Demand baseline</title>
+<title>__PAGE__</title>
 <style>
 :root{--bg:#fff;--fg:#1c2330;--muted:#5b6575;--line:#d9dee7;--card:#f6f8fb;--accent:#2f6fed}
 @media (prefers-color-scheme:dark){:root{--bg:#10141b;--fg:#e6eaf2;--muted:#9aa5b8;--line:#2a3140;--card:#171c26;--accent:#6ea0ff}}
@@ -234,7 +234,7 @@ canvas{max-height:360px}table{border-collapse:collapse;width:100%;font-variant-n
 th,td{padding:5px 8px;border-bottom:1px solid var(--line);text-align:right}th:first-child,td:first-child,th:nth-child(2),td:nth-child(2){text-align:left}
 .good{color:#1a8f4c}.bad{color:#c0392b}small{color:var(--muted)}
 </style></head><body><main>
-<h1>Published NDF vs outturn: how wrong, and what simple corrections fix</h1>
+<h1>__HEADING__</h1>
 <p class="sub">__RANGE__. Error = INDO minus the NDF that was the latest published at least <i>lead</i> minutes before the period.
 Lower is better. Corrections use only periods already published at decision time.</p>
 <div class="bar" id="period"></div><div class="bar" id="metric"></div>
@@ -245,7 +245,7 @@ Lower is better. Corrections use only periods already published at decision time
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script>
 const DATA = __DATA__;
-const METHODS = __METHODS__, LABEL = {ndf_as_published:"NDF as published",persist_last:"Last period's error",mean_last_6:"Mean of last 6",ewm_hl4:"Fading average",same_sp_28d:"Same period, 28 days"};
+const METHODS = __METHODS__, LABEL = __LABELS__;
 const COLORS = ["#8a94a6","#2f6fed","#e08a00","#16a085","#b052d6"];
 let period = "all", metric = "mae", chart;
 function btn(parent, items, current, on){const el=document.getElementById(parent);el.innerHTML="";items.forEach(([k,t])=>{const b=document.createElement("button");b.textContent=t;b.className=k===current?"on":"";b.onclick=()=>{on(k);render()};el.appendChild(b)})}
@@ -266,12 +266,23 @@ render();
 </script></main></body></html>"""
 
 
-def report_html(all_scores: pd.DataFrame, recent_scores: pd.DataFrame, date_range: str) -> str:
-    """One self-contained page (Chart.js from a CDN): a bar chart plus the table, for all history and the last 12 months."""
+DEFAULT_LABELS = {"ndf_as_published": "NDF as published", "persist_last": "Last period's error", "mean_last_6": "Mean of last 6",
+                  "ewm_hl4": "Fading average", "same_sp_28d": "Same period, 28 days"}
+DEFAULT_HEADING = "Published NDF vs outturn: how wrong, and what simple corrections fix"
+
+
+def report_html(all_scores: pd.DataFrame, recent_scores: pd.DataFrame, date_range: str, methods: Iterable[str] = METHODS,
+                labels: dict[str, str] | None = None, title: str | None = None) -> str:
+    """One self-contained page (Chart.js from a CDN): a bar chart plus the table, for all history and the
+    last 12 months. `methods`/`labels` choose and name the rows shown."""
+    methods = list(methods)
+
     def records(df: pd.DataFrame) -> list[dict]:
         keep = ["lead_min", "method", "n", "mae", "rmse", "bias", "mae_vs_ndf_pct"]
-        return json.loads(df[keep].to_json(orient="records"))
+        return json.loads(df[df["method"].isin(methods)][keep].to_json(orient="records"))
 
-    data = json.dumps({"all": records(all_scores), "recent": records(recent_scores)}).replace("</", "<\/")
-    return (_REPORT_TEMPLATE.replace("__DATA__", data).replace("__METHODS__", json.dumps(list(METHODS)))
-            .replace("__RANGE__", date_range))
+    data = json.dumps({"all": records(all_scores), "recent": records(recent_scores)}).replace("</", "<\\/")
+    heading = title or DEFAULT_HEADING
+    return (_REPORT_TEMPLATE.replace("__DATA__", data).replace("__METHODS__", json.dumps(methods))
+            .replace("__LABELS__", json.dumps({**DEFAULT_LABELS, **(labels or {})}))
+            .replace("__PAGE__", heading).replace("__HEADING__", heading).replace("__RANGE__", date_range))
