@@ -17,3 +17,4 @@ __pycache__/
 # AWS deployment: secrets and generated config
 /.env.aws
 /deploy/aws/Caddyfile
+/.dev-login

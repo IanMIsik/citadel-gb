@@ -31,6 +31,9 @@ from ..ingest import gbpw_import, misco_fuel_type_reference
 from ..ingest.elexon_rest import fetch_bmu_reference
 from ..settlement import current_period, rolling_window, sp_start_utc, utc_to_settlement, window_around
 from ..storage import db
+from ..auth.middleware import AuthMiddleware
+from ..auth.routes import router as auth_router
+from ..auth.store import AuthStore
 from .broadcast import Broadcaster
 from .security import GuardMiddleware, SecurityHeadersMiddleware, check_db_credentials
 from .exploded_boalf_broadcast import ExplodedBoalfBroadcaster
@@ -69,6 +72,9 @@ async def lifespan(app: FastAPI):
     check_db_credentials(settings.database_url)
     pool = await db.create_pool(settings.database_url, demand_schema=settings.demand_forecaster_enabled)
     app.state.pool = pool
+    app.state.auth_store = AuthStore(pool)
+    if settings.auth_enabled and await app.state.auth_store.count_users() == 0:
+        logger.warning("AUTH_ENABLED is on but there are no users: nobody can sign in. Create one: citadel user add <email> --role admin")
 
     async with httpx.AsyncClient() as client:
         try:
@@ -199,10 +205,14 @@ _docs = "/docs" if settings.api_docs_enabled else None
 app = FastAPI(title="Citadel Pricing Stack", lifespan=lifespan, docs_url=_docs,
               redoc_url="/redoc" if settings.api_docs_enabled else None,
               openapi_url="/openapi.json" if settings.api_docs_enabled else None)
-# Added innermost-first: headers wrap everything, including the guard's 429 responses.
+# Added innermost-first: headers wrap everything, including the guard's 429 responses, and the rate
+# limit sits outside the login gate so a flood of unauthenticated requests is throttled too.
+app.add_middleware(AuthMiddleware, enabled=settings.auth_enabled, cookie_name=settings.auth_cookie_name,
+                   idle_seconds=settings.auth_idle_minutes * 60)
 app.add_middleware(GuardMiddleware, requests_per_minute=settings.rate_limit_per_minute,
                    ws_max_per_ip=settings.ws_max_per_ip)
 app.add_middleware(SecurityHeadersMiddleware)
+app.include_router(auth_router)
 if settings.demand_forecaster_enabled:                      # dev only: on prod this route does not exist
     from citadel.api.demand_forecast import router as demand_forecast_router
     app.include_router(demand_forecast_router)

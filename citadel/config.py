@@ -113,6 +113,17 @@ class Settings(BaseSettings):
     # stay off unless this is set (dev only). Rate limit is per client address on /api/*; websocket
     # cap is concurrent sockets per client address. 0 turns a limit off.
     api_docs_enabled: bool = False
+
+    # Login (citadel/auth). Off by default: nothing changes until AUTH_ENABLED=true and a user exists
+    # (`citadel user add`). Sessions end after `auth_idle_minutes` without use or `auth_session_hours` in
+    # all; `auth_max_failed_attempts` wrong passwords lock the account for `auth_lock_minutes`.
+    auth_enabled: bool = False
+    auth_cookie_name: str = "citadel_session"
+    auth_idle_minutes: int = 30
+    auth_session_hours: int = 12
+    auth_max_failed_attempts: int = 5
+    auth_lock_minutes: int = 15
+    auth_login_attempts_per_5min: int = 10
     rate_limit_per_minute: int = 600
     ws_max_per_ip: int = 20
 

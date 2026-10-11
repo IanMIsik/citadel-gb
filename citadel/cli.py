@@ -78,11 +78,17 @@ def main() -> None:
         help="How the logged live demand-error predictions have done against what actually happened")
     track.add_argument("--days", type=int, default=14)
 
+    from citadel.auth import cli as auth_cli
+
+    auth_cli.add_subparsers(sub)
+
     args = parser.parse_args()
     if args.command == "serve":
         uvicorn.run("citadel.api.app:app", host=args.host, port=args.port, reload=args.reload)
     elif args.command == "backfill-demand":
         asyncio.run(_backfill_demand(args))
+    elif args.command == "user":
+        asyncio.run(auth_cli.run(args))
     elif args.command == "eval-demand-baseline":
         asyncio.run(_eval_demand_baseline(args))
     elif args.command == "calibrate-demand-band":

@@ -1006,3 +1006,12 @@ td[data-heat="interconnector_ng"] {
   cursor: pointer;
 }
 #trip-audio-banner:hover { background: #4d3608; }
+
+/* Signed-in user and Sign out, added to the header by auth.js when login is on */
+.auth-box { display: inline-flex; align-items: center; gap: 0.6rem; margin-left: auto; font-size: 0.85rem; }
+.auth-who { color: #9aa7b6; }
+.auth-out {
+  padding: 0.25rem 0.7rem; border: 1px solid #475569; border-radius: 5px; background: transparent;
+  color: #d6d6d6; font: inherit; cursor: pointer;
+}
+.auth-out:hover { background: #1e293b; }
