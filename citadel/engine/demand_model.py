@@ -11,11 +11,13 @@ Needs LightGBM (`pip install lightgbm`, the `forecast` extra); the app itself ne
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
+from citadel.engine import demand_eval as ev
 from citadel.engine import demand_features as feat
 
 QUANTILES = (0.1, 0.5, 0.9)
@@ -146,3 +148,85 @@ async def load_base(pool, start=None, end=None) -> pd.DataFrame:
     hol = await q("SELECT day FROM demand_calendar WHERE region = 'england-and-wales'")
     return feat.build_base(ndf=ndf, outturn=outturn, embedded=embedded, windfor=windfor, pv_live=pv, fuel5=fuel,
                            weather=weather, holidays=hol["day"].tolist() if not hol.empty else [])
+
+
+# ---------------------------------------------------------------------------------------------
+# Making the 10-90% band honest (conformalised quantile regression)
+# ---------------------------------------------------------------------------------------------
+#
+# The raw band from independently trained quantile models caught only ~67% of actual errors instead of 80%.
+# The fix: look at how far outside the band recent errors fell (a "conformity score") and widen the band by
+# that amount. Scores come only from periods whose outcome was already published when the forecast is made.
+
+DEFAULT_ALPHA = 0.2           # 1 - alpha = the coverage the 10-90 band should achieve
+DEFAULT_WINDOW_DAYS = 60
+MIN_ROLLING_PERIODS = 720     # 15 days of scores before a rolling offset is trusted
+
+
+def conformity(p: pd.DataFrame) -> pd.Series:
+    """How far the outcome fell outside [q10, q90]: negative when inside (by how far in), positive when outside."""
+    return np.maximum(p["q10"] - p["y"], p["y"] - p["q90"])
+
+
+def static_offsets(calibration: pd.DataFrame, alpha: float = DEFAULT_ALPHA) -> pd.Series:
+    """One widening (MW, per lead) from a pool of already-scored out-of-sample predictions."""
+    out = {}
+    for lead, g in calibration.dropna(subset=["y", "q10", "q90"]).groupby("lead_min"):
+        s = conformity(g).to_numpy()
+        n = len(s)
+        level = min(1.0, math.ceil((n + 1) * (1 - alpha)) / n)
+        out[int(lead)] = float(np.quantile(s, level, method="higher"))
+    return pd.Series(out, name="offset_mw")
+
+
+def rolling_offsets(p: pd.DataFrame, alpha: float = DEFAULT_ALPHA, window_days: int = DEFAULT_WINDOW_DAYS,
+                    publish_lag_min: int = ev.DEFAULT_PUBLISH_LAG_MIN) -> pd.Series:
+    """Per prediction row: the widening implied by the last `window_days` of scores that were already
+    published at decision time (a period counts once it has ended and its INDO is out, as in demand_eval)."""
+    pieces = []
+    for lead, g in p.groupby("lead_min"):
+        s = conformity(g).sort_index()
+        full = s.reindex(pd.date_range(s.index.min(), s.index.max(), freq="30min", tz="UTC"))
+        known = full.shift(ev.known_steps(int(lead), publish_lag_min))
+        off = known.rolling(window_days * 48, min_periods=MIN_ROLLING_PERIODS).quantile(1 - alpha, interpolation="higher")
+        pieces.append(pd.DataFrame({"lead_min": int(lead), "offset": off.reindex(g.index)}, index=g.index))
+    return pd.concat(pieces).reset_index().set_index(["target_start", "lead_min"])["offset"] if pieces else pd.Series(dtype=float)
+
+
+def calibrated_band(p: pd.DataFrame, alpha: float = DEFAULT_ALPHA, window_days: int = DEFAULT_WINDOW_DAYS) -> pd.DataFrame:
+    """Adds q10_static/q90_static (offsets learned only from earlier folds) and q10_roll/q90_roll (trailing
+    window), both leaving rows without enough history on the raw band."""
+    p = p.sort_index().copy()
+    p["q10_static"], p["q90_static"] = p["q10"], p["q90"]
+    folds = sorted(p["fold"].unique())
+    for i, f in enumerate(folds):
+        if i == 0:
+            continue
+        off = static_offsets(p[p["fold"].isin(folds[:i])], alpha)
+        mask = p["fold"] == f
+        shift = p.loc[mask, "lead_min"].map(off).fillna(0.0)
+        p.loc[mask, "q10_static"] = p.loc[mask, "q10"] - shift
+        p.loc[mask, "q90_static"] = p.loc[mask, "q90"] + shift
+    roll = rolling_offsets(p, alpha, window_days)
+    key = pd.MultiIndex.from_arrays([p.index, p["lead_min"]])
+    off_roll = roll.reindex(key).to_numpy()
+    p["roll_offset"] = off_roll
+    p["q10_roll"] = np.where(np.isnan(off_roll), p["q10"], p["q10"] - off_roll)
+    p["q90_roll"] = np.where(np.isnan(off_roll), p["q90"], p["q90"] + off_roll)
+    return p
+
+
+def band_summary(p: pd.DataFrame, by: list[str] | None = None, bands: tuple[str, ...] = ("raw", "static", "roll")) -> pd.DataFrame:
+    """Coverage (target 0.80), the share missed below/above (each should be ~0.10), and the mean width in MW."""
+    names = {"raw": ("q10", "q90"), "static": ("q10_static", "q90_static"), "roll": ("q10_roll", "q90_roll")}
+    keys = by or ["lead_min"]
+    rows = []
+    for key, g in p.dropna(subset=["y"]).groupby(keys):
+        key = key if isinstance(key, tuple) else (key,)
+        for band in bands:
+            lo, hi = names[band]
+            rows.append({**dict(zip(keys, key)), "band": band, "n": len(g),
+                         "coverage": float(((g["y"] >= g[lo]) & (g["y"] <= g[hi])).mean()),
+                         "below": float((g["y"] < g[lo]).mean()), "above": float((g["y"] > g[hi]).mean()),
+                         "width_mw": float((g[hi] - g[lo]).mean())})
+    return pd.DataFrame(rows)

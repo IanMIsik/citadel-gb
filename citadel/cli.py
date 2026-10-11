@@ -52,6 +52,15 @@ def main() -> None:
     train.add_argument("--save-dir", default="data/models")
     train.add_argument("--no-final", action="store_true", help="skip fitting and saving the all-data model")
 
+    band = sub.add_parser(
+        "calibrate-demand-band",
+        help="Recalibrate the model's 10-90% band from a saved predictions CSV and show how well it holds")
+    band.add_argument("--predictions", default="data/demand_model_predictions.csv")
+    band.add_argument("--alpha", type=float, default=0.2, help="1 - the coverage the band should have (0.2 = 80%%)")
+    band.add_argument("--window-days", type=int, default=60)
+    band.add_argument("--csv", default=None)
+    band.add_argument("--html", default=None)
+
     args = parser.parse_args()
     if args.command == "serve":
         uvicorn.run("citadel.api.app:app", host=args.host, port=args.port, reload=args.reload)
@@ -59,6 +68,10 @@ def main() -> None:
         asyncio.run(_backfill_demand(args))
     elif args.command == "eval-demand-baseline":
         asyncio.run(_eval_demand_baseline(args))
+    elif args.command == "calibrate-demand-band":
+        from citadel.demand_cli import calibrate_demand_band
+
+        asyncio.run(calibrate_demand_band(args))
     elif args.command == "train-demand-model":
         from citadel.demand_cli import train_demand_model
 

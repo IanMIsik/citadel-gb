@@ -59,6 +59,10 @@ async def train_demand_model(args: argparse.Namespace) -> None:
         print(f"\nWhat the model leans on (median model, test year {last_year}, share of gain):")
         print(imp.to_string(index=False))
 
+        preds = demand_model.calibrated_band(preds)
+        print("\nShare of actual errors inside the 10-90% band after calibration (target 0.80), held-out years:")
+        print_band_tables(demand_model, preds)
+
         if args.csv:
             preds.reset_index().to_csv(args.csv, index=False)
             print(f"\nwrote {len(preds):,} predictions to {args.csv}")
@@ -75,8 +79,71 @@ async def train_demand_model(args: argparse.Namespace) -> None:
         if not args.no_final:
             started = time.time()
             final = demand_model.fit_quantiles(ds, columns, params)
+            offsets = demand_model.static_offsets(preds)
             paths = demand_model.save_models(final, columns, args.save_dir, {
-                "trained_through": str(ds.index.max()), "rows": len(ds), "n_estimators": args.rounds})
+                "trained_through": str(ds.index.max()), "rows": len(ds), "n_estimators": args.rounds,
+                "band": {"alpha": demand_model.DEFAULT_ALPHA, "window_days": demand_model.DEFAULT_WINDOW_DAYS,
+                         "static_offsets_mw": {str(k): v for k, v in offsets.items()}}})
             print(f"final model (all data) saved to {paths[0].parent} in {time.time() - started:.0f}s")
     finally:
         await pool.close()
+
+
+def print_band_tables(demand_model, cal: pd.DataFrame) -> None:
+    test = cal[cal["fold"] >= sorted(cal["fold"].unique())[min(1, len(cal["fold"].unique()) - 1)]]
+    summary = demand_model.band_summary(test)
+    print(summary.pivot(index="lead_min", columns="band", values="coverage").round(3).to_string())
+    print("\nMean band width in MW (narrower is better, at the same coverage):")
+    print(summary.pivot(index="lead_min", columns="band", values="width_mw").round(0).to_string())
+
+
+async def calibrate_demand_band(args: argparse.Namespace) -> None:
+    """Recalibrate the band from a saved predictions CSV (no database needed)."""
+    from citadel.engine import demand_model
+
+    pd.set_option("display.width", 200)
+    p = pd.read_csv(args.predictions, parse_dates=["target_start"]).set_index("target_start")
+    p.index = pd.to_datetime(p.index, utc=True)
+    cal = demand_model.calibrated_band(p, args.alpha, args.window_days)
+    print(f"{len(cal):,} predictions, test years {sorted(cal['fold'].unique())}\n")
+    print_band_tables(demand_model, cal)
+    summary = demand_model.band_summary(cal[cal["fold"] >= sorted(cal["fold"].unique())[min(1, len(cal["fold"].unique()) - 1)]])
+    if args.csv:
+        cal.reset_index().to_csv(args.csv, index=False)
+        print(f"\nwrote {args.csv}")
+    if args.html:
+        Path(args.html).write_text(band_report_html(summary, args.alpha, args.window_days), encoding="utf-8")
+        print(f"wrote report page {args.html}")
+
+
+_BAND_PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Demand band calibration</title><style>
+:root{--bg:#fff;--fg:#1c2330;--muted:#5b6575;--line:#d9dee7;--card:#f6f8fb}
+@media (prefers-color-scheme:dark){:root{--bg:#10141b;--fg:#e6eaf2;--muted:#9aa5b8;--line:#2a3140;--card:#171c26}}
+body{margin:0;padding:24px 16px;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,sans-serif}main{max-width:980px;margin:0 auto}
+h1{font-size:22px;margin:0 0 4px}p.sub{color:var(--muted);margin:0 0 16px}.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:14px;margin:0 0 18px}
+table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}th,td{padding:5px 8px;border-bottom:1px solid var(--line);text-align:right}th:first-child,td:first-child{text-align:left}
+</style></head><body><main><h1>Does the 10-90% band hold 80% of outcomes?</h1>
+<p class="sub">Held-out years only. "Raw" is the model's own band; "Rolling" widens it by how far recent, already-published errors fell outside
+(last __WINDOW__ days, per lead time); "Static" uses the previous test years. The dashed line is the 80% target.</p>
+<div class="card"><canvas id="cov" role="img" aria-label="Coverage by lead time for each band"></canvas></div>
+<div class="card"><table id="tbl"></table></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script>
+const ROWS = __ROWS__, BANDS = [["raw","Raw","#8a94a6"],["static","Static","#e08a00"],["roll","Rolling","#2f6fed"]];
+const leads = [...new Set(ROWS.map(r => r.lead_min))].sort((a, b) => a - b);
+const get = (b, l, k) => (ROWS.find(r => r.band === b && r.lead_min === l) || {})[k];
+new Chart(document.getElementById("cov"), {type: "bar", data: {labels: leads.map(l => l === 0 ? "at start" : l < 60 ? l + " min" : (l / 60) + " h"),
+  datasets: BANDS.map(([b, t, c]) => ({label: t, backgroundColor: c, data: leads.map(l => get(b, l, "coverage"))})).concat(
+    [{type: "line", label: "Target", borderColor: "#c0392b", borderDash: [6, 4], pointRadius: 0, data: leads.map(() => 1 - __ALPHA__)}])},
+  options: {scales: {y: {min: 0.5, max: 1, title: {display: true, text: "share of outcomes inside the band"}}}}});
+document.getElementById("tbl").innerHTML = "<tr><th>Lead</th>" + BANDS.map(([b, t]) => "<th>" + t + " coverage</th><th>" + t + " width MW</th>").join("") + "</tr>" +
+  leads.map(l => "<tr><td>" + l + " min</td>" + BANDS.map(([b]) => "<td>" + (100 * get(b, l, "coverage")).toFixed(1) + "%</td><td>" + Math.round(get(b, l, "width_mw")).toLocaleString() + "</td>").join("") + "</tr>").join("");
+</script></main></body></html>"""
+
+
+def band_report_html(summary: pd.DataFrame, alpha: float, window_days: int) -> str:
+    import json
+
+    rows = json.loads(summary[["lead_min", "band", "coverage", "width_mw"]].to_json(orient="records"))
+    return (_BAND_PAGE.replace("__ROWS__", json.dumps(rows)).replace("__ALPHA__", str(alpha)).replace("__WINDOW__", str(window_days)))
