@@ -134,10 +134,11 @@ def save_models(models: dict[float, object], columns: list[str], directory: str 
 WEATHER_TABLES = ("demand_weather", "demand_weather_day1")
 
 
-async def load_base(pool, start=None, end=None, weather_table: str | None = "demand_weather") -> pd.DataFrame:
+async def load_base(pool, start=None, end=None, weather_table: str | None = "demand_weather",
+                    weather_override: pd.DataFrame | None = None) -> pd.DataFrame:
     """Read the demand_* tables and join them into the half-hourly base frame. `weather_table` picks the weather
     source: "demand_weather" (re-analysed, close to hindsight), "demand_weather_day1" (the forecast issued a day
-    earlier, honest but stale) or None (no weather features)."""
+    earlier, honest but stale) or None (no weather features); `weather_override` supplies a ready-made frame instead (the live predictor mixes re-analysis and snapshots)."""
     if weather_table not in (None, *WEATHER_TABLES):
         raise ValueError(f"weather_table must be one of {WEATHER_TABLES} or None")
     async def q(sql: str, *args) -> pd.DataFrame:
@@ -152,7 +153,9 @@ async def load_base(pool, start=None, end=None, weather_table: str | None = "dem
     pv = await q("SELECT ts, pv_live FROM demand_pv_live WHERE true " + rng.format(col="ts"), start, end)
     fuel = await q("SELECT start_time, total_mw, (by_fuel->>'WIND')::float8 AS wind_mw FROM demand_fuelinst_5min WHERE true " + rng.format(col="start_time"), start, end)
     weather = pd.DataFrame()
-    if weather_table:
+    if weather_override is not None:
+        weather = weather_override
+    elif weather_table:
         weather = await q(f"SELECT point, ts, temperature_2m, cloud_cover, shortwave_radiation, wind_speed_100m FROM {weather_table} WHERE true "  # noqa: S608
                           + rng.format(col="ts"), start, end)
     hol = await q("SELECT day FROM demand_calendar WHERE region = 'england-and-wales'")

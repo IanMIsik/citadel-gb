@@ -203,6 +203,9 @@ app = FastAPI(title="Citadel Pricing Stack", lifespan=lifespan, docs_url=_docs,
 app.add_middleware(GuardMiddleware, requests_per_minute=settings.rate_limit_per_minute,
                    ws_max_per_ip=settings.ws_max_per_ip)
 app.add_middleware(SecurityHeadersMiddleware)
+if settings.demand_forecaster_enabled:                      # dev only: on prod this route does not exist
+    from citadel.api.demand_forecast import router as demand_forecast_router
+    app.include_router(demand_forecast_router)
 
 
 @app.exception_handler(Exception)
