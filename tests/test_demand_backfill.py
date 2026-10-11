@@ -230,9 +230,10 @@ def _create(monkeypatch, **kwargs):
 
 
 def test_demand_tables_are_only_created_when_asked(monkeypatch):
-    plain = _create(monkeypatch)
+    schema_only = lambda log: [sql for sql in log if "advisory" not in sql]    # noqa: E731 -- ignore the lock statements
+    plain = schema_only(_create(monkeypatch))
     assert len(plain) == 1 and "demand_forecast_vintages" not in plain[0]     # production path: base schema only
-    dev = _create(monkeypatch, demand_schema=True)
+    dev = schema_only(_create(monkeypatch, demand_schema=True))
     assert len(dev) == 2 and "demand_forecast_vintages" in dev[1]
 
 

@@ -15,6 +15,7 @@ import asyncpg
 SCHEMA_PATH = Path(__file__).with_name("schema.sql")
 # Demand forecaster tables live apart so production never gets them unless asked (see create_pool).
 DEMAND_SCHEMA_PATH = Path(__file__).with_name("schema_demand.sql")
+SCHEMA_LOCK_KEY = 7_461_001   # arbitrary constant shared by every process that applies the schema
 
 
 @dataclass(frozen=True)
@@ -65,9 +66,15 @@ async def create_pool(database_url: str, demand_schema: bool = False) -> asyncpg
     environment that opts in (DEMAND_FORECASTER_ENABLED, or the backfill command) gets them."""
     pool = await asyncpg.create_pool(database_url, min_size=1, max_size=10)
     async with pool.acquire() as conn:
-        await conn.execute(SCHEMA_PATH.read_text())
-        if demand_schema:
-            await conn.execute(DEMAND_SCHEMA_PATH.read_text())
+        # Two processes starting together (a server restart and a scheduled job, say) would otherwise race on
+        # CREATE TABLE IF NOT EXISTS and one would fail; the lock makes the second wait and find the tables there.
+        await conn.execute(f"SELECT pg_advisory_lock({SCHEMA_LOCK_KEY})")
+        try:
+            await conn.execute(SCHEMA_PATH.read_text())
+            if demand_schema:
+                await conn.execute(DEMAND_SCHEMA_PATH.read_text())
+        finally:
+            await conn.execute(f"SELECT pg_advisory_unlock({SCHEMA_LOCK_KEY})")
     return pool
 
 
@@ -1021,3 +1028,36 @@ async def upsert_demand_weather_forecasts(pool: asyncpg.Pool, rows: list[tuple])
         VALUES ($1, $2, $3, $4, $5, $6, $7)
         ON CONFLICT (issued_at, point, ts) DO NOTHING
         """, rows)
+
+
+async def log_demand_predictions(pool: asyncpg.Pool, rows: list[tuple]) -> int:
+    """rows: (target_start, lead_min, predicted_at, lead_at_prediction_min, ndf, pred_error, raw_low, raw_high,
+    pred_low, pred_high, model_trained_through). An existing (target_start, lead_min) is left exactly as first logged."""
+    return await _executemany_batched(pool, """
+        INSERT INTO demand_prediction_log
+            (target_start, lead_min, predicted_at, lead_at_prediction_min, ndf, pred_error, raw_low, raw_high, pred_low, pred_high,
+             model_trained_through)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        ON CONFLICT (target_start, lead_min) DO NOTHING
+        """, rows)
+
+
+async def score_demand_predictions(pool: asyncpg.Pool) -> str:
+    """Fill actual_error (INDO - the NDF the prediction was relative to) for logged predictions whose INDO is now out."""
+    return await pool.execute("""
+        UPDATE demand_prediction_log l
+        SET actual_error = o.indo - l.ndf, scored_at = now()
+        FROM demand_outturn o
+        WHERE o.target_start = l.target_start AND l.actual_error IS NULL AND o.indo > 0
+        """)
+
+
+async def demand_prediction_scores(pool: asyncpg.Pool, since: datetime) -> list[asyncpg.Record]:
+    """Scored predictions made since `since`."""
+    return await pool.fetch("""
+        SELECT target_start, lead_min, predicted_at, lead_at_prediction_min, ndf, pred_error, raw_low, raw_high, pred_low, pred_high,
+               actual_error
+        FROM demand_prediction_log
+        WHERE actual_error IS NOT NULL AND predicted_at >= $1
+        ORDER BY target_start
+        """, since)

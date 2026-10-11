@@ -118,6 +118,28 @@ CREATE TABLE IF NOT EXISTS demand_weather_forecasts (
     PRIMARY KEY (issued_at, point, ts)
 );
 
+-- Every live prediction the FPN page's predictor makes, kept for tracking. One row per (period, lead bucket), written
+-- the first time that pair is predicted and never changed afterwards (so it records what was really predicted);
+-- actual_error is filled in once INDO is published. lead_at_prediction_min is how far ahead of the period's start the
+-- prediction was made (negative = made after the period began).
+CREATE TABLE IF NOT EXISTS demand_prediction_log (
+    target_start            TIMESTAMPTZ NOT NULL,
+    lead_min                INTEGER NOT NULL,
+    predicted_at            TIMESTAMPTZ NOT NULL,
+    lead_at_prediction_min  DOUBLE PRECISION NOT NULL,
+    ndf                     DOUBLE PRECISION NOT NULL,
+    pred_error              DOUBLE PRECISION,
+    raw_low                 DOUBLE PRECISION,
+    raw_high                DOUBLE PRECISION,
+    pred_low                DOUBLE PRECISION,
+    pred_high               DOUBLE PRECISION,
+    model_trained_through   TEXT,
+    actual_error            DOUBLE PRECISION,
+    scored_at               TIMESTAMPTZ,
+    PRIMARY KEY (target_start, lead_min)
+);
+CREATE INDEX IF NOT EXISTS idx_demand_prediction_log_predicted_at ON demand_prediction_log (predicted_at);
+
 CREATE TABLE IF NOT EXISTS demand_calendar (
     day     DATE NOT NULL,
     region  TEXT NOT NULL,

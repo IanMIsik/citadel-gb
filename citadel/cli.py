@@ -73,6 +73,11 @@ def main() -> None:
     weather.add_argument("--years", default="2025,2026")
     weather.add_argument("--rounds", type=int, default=200)
 
+    track = sub.add_parser(
+        "demand-prediction-tracking",
+        help="How the logged live demand-error predictions have done against what actually happened")
+    track.add_argument("--days", type=int, default=14)
+
     args = parser.parse_args()
     if args.command == "serve":
         uvicorn.run("citadel.api.app:app", host=args.host, port=args.port, reload=args.reload)
@@ -92,6 +97,10 @@ def main() -> None:
         from citadel.demand_cli import eval_demand_weather
 
         asyncio.run(eval_demand_weather(args))
+    elif args.command == "demand-prediction-tracking":
+        from citadel.demand_cli import demand_prediction_tracking
+
+        asyncio.run(demand_prediction_tracking(args))
     elif args.command == "train-demand-model":
         from citadel.demand_cli import train_demand_model
 

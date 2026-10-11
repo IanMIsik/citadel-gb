@@ -17,7 +17,7 @@ import json
 import logging
 import math
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -25,7 +25,8 @@ import numpy as np
 import pandas as pd
 
 from citadel.engine import demand_features as feat
-from citadel.engine import demand_model
+from citadel.engine import demand_model, demand_tracking
+from citadel.storage import db
 from citadel.settlement import utc_to_settlement
 
 logger = logging.getLogger(__name__)
@@ -34,6 +35,7 @@ LEADS = (0, 30, 60, 120, 240, 480, 720, 1080)
 LOOK_BACK = timedelta(hours=3)
 LOOK_AHEAD = timedelta(hours=18, minutes=30)
 HISTORY_DAYS = 16
+LIVE_BAND_DAYS = 60
 DEFAULT_MODEL_DIR = "data/models"
 DEFAULT_REFRESH_SECONDS = 300
 OFFICIAL_DATASETS = ["ndf", "windfor", "outturn", "fuelinst", "pv_live"]
@@ -104,6 +106,7 @@ def predict_periods(base: pd.DataFrame, model: LoadedModel, now: datetime, leads
             records.append({
                 "settlement_date": sd.isoformat(), "settlement_period": int(sp), "start": start.isoformat(), "lead_used_min": int(lead),
                 "ndf": ndf, "pred_error": _finite(q50), "pred_error_low": _finite(q10), "pred_error_high": _finite(q90),
+                "raw_low": _finite(arr[i, 0]), "raw_high": _finite(arr[i, 2]), "band_widen_mw": _finite(widen),
                 "pred_demand": _finite(ndf + q50),
                 "actual_error": _finite(float(indo) - ndf) if indo is not None and not pd.isna(indo) and indo > 0 else None,
             })
@@ -144,11 +147,17 @@ class DemandPredictor:
                               "error": f"{e}. Train one with: citadel train-demand-model"}
                 return
         await self._ingest(now)
+        # Fill in the outcome of earlier logged predictions, then let the live log set the band where it has enough history.
+        await db.score_demand_predictions(self.pool)
+        scores = demand_tracking.scores_frame(await db.demand_prediction_scores(self.pool, now - timedelta(days=LIVE_BAND_DAYS)))
+        live_offsets = demand_tracking.logged_offsets(scores)
+        model = replace(self.model, offsets={**self.model.offsets, **live_offsets})
         base = await demand_model.load_base(self.pool, now - timedelta(days=HISTORY_DAYS), now + timedelta(days=2),
                                             weather_override=await self._weather(now))
-        periods = await asyncio.to_thread(predict_periods, base, self.model, now)
+        periods = await asyncio.to_thread(predict_periods, base, model, now)
+        await db.log_demand_predictions(self.pool, demand_tracking.log_rows(periods, now, self.model.trained_through))
         self.state = {"enabled": True, "status": "ok", "computed_at": now.isoformat(), "model_trained_through": self.model.trained_through,
-                      "periods": periods}
+                      "band_from_live_log_leads": sorted(live_offsets), "periods": periods}
 
     async def _ingest(self, now: datetime) -> None:
         """Keep the demand_* tables fresh: official vintages every cycle, the weather snapshot hourly, NESO issues every 15 min."""

@@ -205,3 +205,31 @@ async def eval_demand_weather(args: argparse.Namespace) -> None:
         print(pd.DataFrame(table).to_string())
     finally:
         await pool.close()
+
+
+async def demand_prediction_tracking(args: argparse.Namespace) -> None:
+    """Score the logged live predictions (made while the dev server was running) against the outturn."""
+    from datetime import datetime, timedelta, timezone
+
+    from citadel.config import settings
+    from citadel.engine import demand_tracking
+    from citadel.storage import db
+
+    pd.set_option("display.width", 200, "display.float_format", lambda v: f"{v:,.1f}")
+    pool = await db.create_pool(settings.database_url, demand_schema=True)
+    try:
+        await db.score_demand_predictions(pool)
+        total = await pool.fetchval("SELECT count(*) FROM demand_prediction_log")
+        first = await pool.fetchval("SELECT min(predicted_at) FROM demand_prediction_log")
+        scores = demand_tracking.scores_frame(await db.demand_prediction_scores(pool, datetime.now(timezone.utc) - timedelta(days=args.days)))
+        summary = demand_tracking.tracking_summary(scores)
+        print(f"{total:,} predictions logged" + (f" since {first:%Y-%m-%d %H:%M}Z" if first else "") +
+              f"; {int(summary['n'].sum()) if len(summary) else 0:,} live ones scored in the last {args.days} days")
+        if summary.empty:
+            print("Nothing scored yet: predictions are logged while the dev server runs and scored once INDO is published (about 30 minutes after a period).")
+            return
+        print()
+        print("Per lead (MW; model_mae vs ndf_mae: smaller is better; coverage should be about 0.80):")
+        print(summary.to_string(index=False))
+    finally:
+        await pool.close()
