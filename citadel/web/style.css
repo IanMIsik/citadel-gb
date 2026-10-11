@@ -992,20 +992,6 @@ td[data-heat="interconnector_ng"] {
 .sp-row:hover .sp-only, .sp-row.sp-focused .sp-only { visibility: visible; }
 .natgrid-rule { font-size: 11px; color: var(--muted); margin: 0 0 10px; line-height: 1.5; }
 
-#trip-audio-banner {
-  position: fixed;
-  right: 16px;
-  bottom: 16px;
-  z-index: 1000;
-  padding: 0.55rem 0.9rem;
-  border: 1px solid #f59e0b;
-  border-radius: 6px;
-  background: #3b2a06;
-  color: #fde68a;
-  font: inherit;
-  cursor: pointer;
-}
-#trip-audio-banner:hover { background: #4d3608; }
 
 /* Signed-in user and Sign out, added to the header by auth.js when login is on */
 .auth-box { display: inline-flex; align-items: center; gap: 0.6rem; margin-left: auto; font-size: 0.85rem; }

@@ -4,43 +4,25 @@
 // engine/fpn_runner.py's _remit_poll_loop for the REMIT match/revision/resolved follow-ups the
 // same toast is updated in place with.
 //
-// Browsers only let a page make sound after the person has clicked or pressed a key on it at
-// least once since it loaded. A tab left open untouched is therefore silent when a trip arrives,
-// so one AudioContext is shared, resumed on the first interaction, and a small banner asks for
-// that click for as long as the context is still suspended.
+// Browsers only let a page make sound after the person has clicked or pressed a key on it at least once
+// since it loaded, so one AudioContext is shared and quietly resumed on the first interaction. There is
+// no on-screen prompt for it.
 
 let tripAudioCtx = null;
 
 function tripAudio() {
   if (!tripAudioCtx) {
     try { tripAudioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { return null; }
-    tripAudioCtx.onstatechange = updateAudioBanner;
   }
   return tripAudioCtx;
 }
 
-function updateAudioBanner() {
-  const ctx = tripAudio();
-  let el = document.getElementById("trip-audio-banner");
-  if (!ctx || ctx.state === "running") { if (el) el.remove(); return; }
-  if (el) return;
-  el = document.createElement("button");
-  el.id = "trip-audio-banner";
-  el.type = "button";
-  el.textContent = "🔔 Click here once to enable trip alert sounds";
-  el.addEventListener("click", () => { unlockTripAudio(); playRecoveryChime(); });
-  document.body.appendChild(el);
-}
-
 function unlockTripAudio() {
   const ctx = tripAudio();
-  if (ctx && ctx.state === "suspended") ctx.resume().then(updateAudioBanner, () => {});
-  updateAudioBanner();
+  if (ctx && ctx.state === "suspended") ctx.resume().catch(() => {});
 }
 
 ["pointerdown", "keydown", "touchstart"].forEach((evt) => document.addEventListener(evt, unlockTripAudio, { passive: true }));
-document.addEventListener("DOMContentLoaded", updateAudioBanner);
-if (document.readyState !== "loading") updateAudioBanner();
 
 function playTones(tones, type, peak, length) {
   const ctx = tripAudio();
