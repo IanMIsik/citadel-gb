@@ -21,6 +21,7 @@ page computes, so the same maths can be run over history and checked against the
 
 from __future__ import annotations
 
+import json
 import math
 from collections.abc import Iterable
 from datetime import datetime
@@ -211,3 +212,66 @@ async def load_frame(pool, start: datetime | None = None, end: datetime | None =
         "WHERE ($1::timestamptz IS NULL OR target_start >= $1) AND ($2::timestamptz IS NULL OR target_start < $2)", start, end)
     return build_error_frame(pd.DataFrame([dict(r) for r in vint], columns=["target_start", "lead_min", "value"]),
                              pd.DataFrame([dict(r) for r in out], columns=["target_start", "indo"]))
+
+
+# ---------------------------------------------------------------------------------------------
+# A page to look at the results
+# ---------------------------------------------------------------------------------------------
+
+_REPORT_TEMPLATE = """<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Demand baseline</title>
+<style>
+:root{--bg:#fff;--fg:#1c2330;--muted:#5b6575;--line:#d9dee7;--card:#f6f8fb;--accent:#2f6fed}
+@media (prefers-color-scheme:dark){:root{--bg:#10141b;--fg:#e6eaf2;--muted:#9aa5b8;--line:#2a3140;--card:#171c26;--accent:#6ea0ff}}
+body{margin:0;padding:24px 16px;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,sans-serif}
+main{max-width:980px;margin:0 auto}h1{font-size:22px;margin:0 0 4px}p.sub{color:var(--muted);margin:0 0 18px}
+.bar{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 14px}
+button{background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:6px 12px;cursor:pointer;font:inherit}
+button.on{background:var(--accent);border-color:var(--accent);color:#fff}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:14px;margin:0 0 18px}
+canvas{max-height:360px}table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}
+th,td{padding:5px 8px;border-bottom:1px solid var(--line);text-align:right}th:first-child,td:first-child,th:nth-child(2),td:nth-child(2){text-align:left}
+.good{color:#1a8f4c}.bad{color:#c0392b}small{color:var(--muted)}
+</style></head><body><main>
+<h1>Published NDF vs outturn: how wrong, and what simple corrections fix</h1>
+<p class="sub">__RANGE__. Error = INDO minus the NDF that was the latest published at least <i>lead</i> minutes before the period.
+Lower is better. Corrections use only periods already published at decision time.</p>
+<div class="bar" id="period"></div><div class="bar" id="metric"></div>
+<div class="card"><canvas id="chart" role="img" aria-label="Error in MW by lead time for each method"></canvas></div>
+<div class="card"><table id="tbl"></table></div>
+<p><small>MW; n = periods scored per row. "vs NDF" = change in mean absolute error against the published NDF at that lead
+(negative is better). Published NDF and INDO already include embedded wind and solar.</small></p>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script>
+const DATA = __DATA__;
+const METHODS = __METHODS__, LABEL = {ndf_as_published:"NDF as published",persist_last:"Last period's error",mean_last_6:"Mean of last 6",ewm_hl4:"Fading average",same_sp_28d:"Same period, 28 days"};
+const COLORS = ["#8a94a6","#2f6fed","#e08a00","#16a085","#b052d6"];
+let period = "all", metric = "mae", chart;
+function btn(parent, items, current, on){const el=document.getElementById(parent);el.innerHTML="";items.forEach(([k,t])=>{const b=document.createElement("button");b.textContent=t;b.className=k===current?"on":"";b.onclick=()=>{on(k);render()};el.appendChild(b)})}
+function render(){
+  btn("period",[["all","All history"],["recent","Last 12 months"]],period,k=>period=k);
+  btn("metric",[["mae","Mean absolute error"],["rmse","RMSE"],["bias","Bias"]],metric,k=>metric=k);
+  const rows=DATA[period], leads=[...new Set(rows.map(r=>r.lead_min))].sort((a,b)=>a-b);
+  const ds=METHODS.map((m,i)=>({label:LABEL[m],backgroundColor:COLORS[i],data:leads.map(l=>{const r=rows.find(x=>x.lead_min===l&&x.method===m);return r?r[metric]:null})}));
+  if(chart)chart.destroy();
+  chart=new Chart(document.getElementById("chart"),{type:"bar",data:{labels:leads.map(l=>l===0?"at start":l<60?l+" min":(l/60)+" h"),datasets:ds},
+    options:{responsive:true,scales:{y:{title:{display:true,text:"MW"}},x:{title:{display:true,text:"forecast made this long before the period"}}}}});
+  const t=document.getElementById("tbl");
+  t.innerHTML="<tr><th>Lead</th><th>Method</th><th>n</th><th>MAE</th><th>RMSE</th><th>Bias</th><th>vs NDF</th></tr>"+
+    rows.map(r=>{const c=r.mae_vs_ndf_pct;const cls=r.method==="ndf_as_published"?"":(c<0?"good":"bad");
+      return `<tr><td>${r.lead_min} min</td><td>${LABEL[r.method]}</td><td>${r.n.toLocaleString()}</td><td>${r.mae.toFixed(0)}</td><td>${r.rmse.toFixed(0)}</td><td>${r.bias.toFixed(0)}</td><td class="${cls}">${r.method==="ndf_as_published"?"":(c>0?"+":"")+c.toFixed(1)+"%"}</td></tr>`}).join("");
+}
+render();
+</script></main></body></html>"""
+
+
+def report_html(all_scores: pd.DataFrame, recent_scores: pd.DataFrame, date_range: str) -> str:
+    """One self-contained page (Chart.js from a CDN): a bar chart plus the table, for all history and the last 12 months."""
+    def records(df: pd.DataFrame) -> list[dict]:
+        keep = ["lead_min", "method", "n", "mae", "rmse", "bias", "mae_vs_ndf_pct"]
+        return json.loads(df[keep].to_json(orient="records"))
+
+    data = json.dumps({"all": records(all_scores), "recent": records(recent_scores)}).replace("</", "<\/")
+    return (_REPORT_TEMPLATE.replace("__DATA__", data).replace("__METHODS__", json.dumps(list(METHODS)))
+            .replace("__RANGE__", date_range))

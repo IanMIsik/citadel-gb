@@ -94,3 +94,14 @@ def test_compare_with_live_reports_differences():
     assert res.loc["misco_indo", "mean_abs_diff_mw"] == pytest.approx(20.0)
     assert res.loc["misco_indo", "within_50mw_pct"] == pytest.approx(80.0)
     assert res.loc["misco_ndf", "mean_abs_diff_mw"] == 0.0
+
+
+def test_report_html_embeds_both_periods_and_every_method():
+    import json
+    import re
+
+    s = ev.score(ev.evaluation_table(make_frame(bias=100.0, noise=50.0), leads=[0, 240]))
+    page = ev.report_html(s, s, "2025-01-01 to 2025-02-09, 1,920 periods")
+    assert "2025-01-01 to 2025-02-09" in page and "</script>" in page
+    data = json.loads(re.search(r"const DATA = (\{.*?\});\nconst METHODS", page, re.S).group(1))
+    assert set(data) == {"all", "recent"} and {r["method"] for r in data["all"]} == set(ev.METHODS)

@@ -38,6 +38,7 @@ def main() -> None:
     evaluate.add_argument("--from", dest="start", type=date.fromisoformat, default=None)
     evaluate.add_argument("--to", dest="end", type=date.fromisoformat, default=None, help="exclusive")
     evaluate.add_argument("--csv", default=None, help="also write every scored period to this CSV file")
+    evaluate.add_argument("--html", default=None, help="also write a page with a chart and the tables to this file")
     evaluate.add_argument("--validate-live", action="store_true",
                           help="also compare the replica of the live misco_* maths with fpn_aggregated")
 
@@ -73,6 +74,13 @@ async def _eval_demand_baseline(args: argparse.Namespace) -> None:
         recent = table[table["target_start"] >= table["target_start"].max() - pd.Timedelta(days=365)]
         print("\nLast 12 months only:")
         print(demand_eval.score(recent).to_string(index=False))
+        if args.html:
+            from pathlib import Path
+
+            Path(args.html).write_text(demand_eval.report_html(
+                demand_eval.score(table), demand_eval.score(recent),
+                f"{frame.index.min():%Y-%m-%d} to {frame.index.max():%Y-%m-%d}, {frame['indo'].notna().sum():,} periods"), encoding="utf-8")
+            print(f"\nwrote report page {args.html}")
         if args.csv:
             table.to_csv(args.csv, index=False)
             print(f"\nwrote {len(table):,} rows to {args.csv}")
