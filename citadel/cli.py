@@ -61,6 +61,18 @@ def main() -> None:
     band.add_argument("--csv", default=None)
     band.add_argument("--html", default=None)
 
+    snap = sub.add_parser(
+        "snapshot-demand-forecasts",
+        help="Store live forecast snapshots (weather now, plus a refresh of recent NDF/embedded/WINDFOR vintages)")
+    snap.add_argument("--loop-minutes", type=int, default=0, help="repeat every N minutes (0 = once)")
+    snap.add_argument("--embedded-days", type=int, default=1, help="days of NESO embedded issues to re-read each cycle")
+
+    weather = sub.add_parser(
+        "eval-demand-weather",
+        help="How much does weather really help? Same model with hindsight weather, day-ahead forecast weather, and none")
+    weather.add_argument("--years", default="2025,2026")
+    weather.add_argument("--rounds", type=int, default=200)
+
     args = parser.parse_args()
     if args.command == "serve":
         uvicorn.run("citadel.api.app:app", host=args.host, port=args.port, reload=args.reload)
@@ -72,6 +84,14 @@ def main() -> None:
         from citadel.demand_cli import calibrate_demand_band
 
         asyncio.run(calibrate_demand_band(args))
+    elif args.command == "snapshot-demand-forecasts":
+        from citadel.demand_cli import snapshot_demand_forecasts
+
+        asyncio.run(snapshot_demand_forecasts(args))
+    elif args.command == "eval-demand-weather":
+        from citadel.demand_cli import eval_demand_weather
+
+        asyncio.run(eval_demand_weather(args))
     elif args.command == "train-demand-model":
         from citadel.demand_cli import train_demand_model
 

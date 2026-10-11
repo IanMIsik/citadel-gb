@@ -147,3 +147,61 @@ def band_report_html(summary: pd.DataFrame, alpha: float, window_days: int) -> s
 
     rows = json.loads(summary[["lead_min", "band", "coverage", "width_mw"]].to_json(orient="records"))
     return (_BAND_PAGE.replace("__ROWS__", json.dumps(rows)).replace("__ALPHA__", str(alpha)).replace("__WINDOW__", str(window_days)))
+
+
+async def snapshot_demand_forecasts(args: argparse.Namespace) -> None:
+    """One snapshot cycle, or a loop (Ctrl+C to stop). Writes to DATABASE_URL, so run it with CITADEL_ENV_FILE=.env.dev."""
+    import asyncio
+    import logging
+    from datetime import datetime, timezone
+
+    from citadel.config import settings
+    from citadel.ingest import forecast_snapshots
+    from citadel.storage import db
+
+    logging.basicConfig(level=logging.WARNING, format="%(asctime)s %(levelname)s %(message)s")
+    pool = await db.create_pool(settings.database_url, demand_schema=True)
+    try:
+        first = True
+        while True:
+            out = await forecast_snapshots.snapshot_cycle(pool, embedded_days=3 if first else args.embedded_days)
+            first = False
+            print(f"{datetime.now(timezone.utc):%Y-%m-%d %H:%M:%S}Z  {out}", flush=True)
+            if args.loop_minutes <= 0:
+                break
+            await asyncio.sleep(args.loop_minutes * 60)
+    finally:
+        await pool.close()
+
+
+async def eval_demand_weather(args: argparse.Namespace) -> None:
+    """Does weather really help once it is honest? Trains the same median model three ways on the period where the
+    day-ahead weather forecasts exist (from 2024-03-10) and compares walk-forward error."""
+    from datetime import datetime, timezone
+
+    from citadel.config import settings
+    from citadel.engine import demand_features, demand_model
+    from citadel.ingest.demand_backfill import WEATHER_DAY1_FROM
+    from citadel.storage import db
+
+    pd.set_option("display.width", 200, "display.float_format", lambda v: f"{v:,.1f}")
+    years = [int(y) for y in args.years.split(",")]
+    start = datetime(WEATHER_DAY1_FROM.year, WEATHER_DAY1_FROM.month, WEATHER_DAY1_FROM.day, tzinfo=timezone.utc)
+    variants = {"hindsight weather": "demand_weather", "day-ahead forecast weather": "demand_weather_day1", "no weather": None}
+    pool = await db.create_pool(settings.database_url, demand_schema=True)
+    try:
+        table = {}
+        for name, source in variants.items():
+            base = await demand_model.load_base(pool, start=start, weather_table=source)
+            ds = demand_features.build_dataset(base)
+            preds, _ = demand_model.walk_forward(ds, years, {"num_boost_round": args.rounds}, quantiles=(0.5,))
+            g = preds.dropna(subset=["y", "q50"])
+            model_mae = (g["y"] - g["q50"]).abs().groupby(g["lead_min"]).mean()
+            ndf_mae = g["y"].abs().groupby(g["lead_min"]).mean()
+            table[name] = 100.0 * (model_mae / ndf_mae - 1.0)
+            print(f"{name}: {len(g):,} test periods scored", flush=True)
+        print()
+        print(f"Median-model MAE change versus the published NDF, test years {years}, trained from {start:%Y-%m-%d} (more negative is better):")
+        print(pd.DataFrame(table).to_string())
+    finally:
+        await pool.close()

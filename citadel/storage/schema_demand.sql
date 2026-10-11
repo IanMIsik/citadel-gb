@@ -93,6 +93,31 @@ CREATE TABLE IF NOT EXISTS demand_weather (
     PRIMARY KEY (point, ts)
 );
 
+-- The forecast Open-Meteo issued the day before (its "previous day 1" run) for each hour: a real
+-- forecast vintage, available from about March 2024, unlike demand_weather which is closer to hindsight.
+CREATE TABLE IF NOT EXISTS demand_weather_day1 (
+    point                TEXT NOT NULL,
+    ts                   TIMESTAMPTZ NOT NULL,
+    temperature_2m       DOUBLE PRECISION,
+    cloud_cover          DOUBLE PRECISION,
+    shortwave_radiation  DOUBLE PRECISION,
+    wind_speed_100m      DOUBLE PRECISION,
+    PRIMARY KEY (point, ts)
+);
+
+-- Live snapshots of Open-Meteo's forecast, taken by `citadel snapshot-demand-forecasts`: what was actually
+-- forecast at issued_at for each later hour. Over time this is the honest as-of weather for any lead time.
+CREATE TABLE IF NOT EXISTS demand_weather_forecasts (
+    issued_at            TIMESTAMPTZ NOT NULL,
+    point                TEXT NOT NULL,
+    ts                   TIMESTAMPTZ NOT NULL,
+    temperature_2m       DOUBLE PRECISION,
+    cloud_cover          DOUBLE PRECISION,
+    shortwave_radiation  DOUBLE PRECISION,
+    wind_speed_100m      DOUBLE PRECISION,
+    PRIMARY KEY (issued_at, point, ts)
+);
+
 CREATE TABLE IF NOT EXISTS demand_calendar (
     day     DATE NOT NULL,
     region  TEXT NOT NULL,

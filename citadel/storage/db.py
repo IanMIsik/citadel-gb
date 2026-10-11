@@ -1001,3 +1001,23 @@ async def demand_backfill_done(pool: asyncpg.Pool) -> dict[tuple[str, date], dat
     """{(dataset, chunk_start): chunk_end} for every chunk that finished."""
     rows = await pool.fetch("SELECT dataset, chunk_start, chunk_end FROM demand_backfill_log")
     return {(r["dataset"], r["chunk_start"]): r["chunk_end"] for r in rows}
+
+
+async def upsert_demand_weather_day1(pool: asyncpg.Pool, rows: list[tuple]) -> int:
+    """rows: (point, ts, temperature_2m, cloud_cover, shortwave_radiation, wind_speed_100m)."""
+    return await _executemany_batched(pool, """
+        INSERT INTO demand_weather_day1 (point, ts, temperature_2m, cloud_cover, shortwave_radiation, wind_speed_100m)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        ON CONFLICT (point, ts) DO UPDATE SET
+            temperature_2m = excluded.temperature_2m, cloud_cover = excluded.cloud_cover,
+            shortwave_radiation = excluded.shortwave_radiation, wind_speed_100m = excluded.wind_speed_100m
+        """, rows)
+
+
+async def upsert_demand_weather_forecasts(pool: asyncpg.Pool, rows: list[tuple]) -> int:
+    """rows: (issued_at, point, ts, temperature_2m, cloud_cover, shortwave_radiation, wind_speed_100m)."""
+    return await _executemany_batched(pool, """
+        INSERT INTO demand_weather_forecasts (issued_at, point, ts, temperature_2m, cloud_cover, shortwave_radiation, wind_speed_100m)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        ON CONFLICT (issued_at, point, ts) DO NOTHING
+        """, rows)

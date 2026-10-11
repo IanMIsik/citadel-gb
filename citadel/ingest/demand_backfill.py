@@ -50,6 +50,9 @@ NESO_API = "https://api.neso.energy/api/3/action"
 HISTORIC_DEMAND_PACKAGE_ID = "8f2fe0af-871c-488d-8bad-960426f24601"
 EMBEDDED_PACKAGE_ID = "91c0c70e-0ef5-4116-b6fa-7ad084b5e0e8"
 OPEN_METEO = "https://historical-forecast-api.open-meteo.com/v1/forecast"
+OPEN_METEO_PREVIOUS_RUNS = "https://previous-runs-api.open-meteo.com/v1/forecast"
+# Open-Meteo keeps its day-before forecasts (all four variables) from about here.
+WEATHER_DAY1_FROM = date(2024, 3, 10)
 BANK_HOLIDAYS_URL = "https://www.gov.uk/bank-holidays.json"
 
 # Rough population centres, so weather features track where demand actually is.
@@ -65,7 +68,7 @@ WEATHER_VARS = ("temperature_2m", "cloud_cover", "shortwave_radiation", "wind_sp
 # dataset -> (Elexon name, value column, max staleness in minutes). WINDFOR is published only eight times a day.
 VINTAGE_DATASETS = {"ndf": ("NDF", "demand", 60), "tsdf": ("TSDF", "demand", 60), "windfor": ("WINDFOR", "generation", 360)}
 ALL_DATASETS = ("ndf", "tsdf", "windfor", "outturn", "fuelinst", "neso_historic", "embedded_forecast",
-                "pv_live", "weather", "calendar")
+                "pv_live", "weather", "weather_day1", "calendar")
 
 # Days of recent data that are still changing; a chunk reaching into them is never skipped.
 FRESH_DAYS = 2
@@ -190,7 +193,11 @@ class EmbeddedReducer:
                 return
             self.fieldnames = next(csv.reader([lines[0]]))
             lines = lines[1:]
-        for r in csv.DictReader(lines, fieldnames=self.fieldnames):
+        self.feed_records(csv.DictReader(lines, fieldnames=self.fieldnames))
+
+    def feed_records(self, records) -> None:
+        """Same as feed(), for rows that are already dicts (e.g. from NESO's SQL endpoint)."""
+        for r in records:
             try:
                 key = (r["SETTLEMENT_DATE"], r["SETTLEMENT_PERIOD"])
                 target = self._starts.get(key)
@@ -253,6 +260,9 @@ def plan_chunks(dataset: str, start: date, end: date) -> list[Chunk]:
         return [Chunk(dataset, a, b) for a, b in _split(start, end, 30)]
     if dataset == "weather":
         return [Chunk(f"weather:{p}", a, b) for p in WEATHER_POINTS for a, b in _split(start, end, 120)]
+    if dataset == "weather_day1":
+        first = max(start, WEATHER_DAY1_FROM)
+        return [Chunk(f"weather_day1:{p}", a, b) for p in WEATHER_POINTS for a, b in _split(first, end, 120)]
     if dataset in ("neso_historic", "embedded_forecast"):
         return [Chunk(dataset, date(y, 1, 1), date(y, 12, 31)) for y in range(start.year, end.year + 1)]
     if dataset == "calendar":
@@ -366,6 +376,23 @@ async def _store_weather(client, pool, chunk: Chunk) -> int:
     return await db.upsert_demand_weather(pool, weather_rows(point, data["hourly"]))
 
 
+def day1_hourly(hourly: dict) -> dict:
+    """Previous-runs payload (`<var>_previous_day1` keys) -> the plain variable names weather_rows expects."""
+    return {"time": hourly.get("time", []), **{v: hourly.get(f"{v}_previous_day1", []) for v in WEATHER_VARS}}
+
+
+async def _store_weather_day1(client, pool, chunk: Chunk) -> int:
+    point = chunk.dataset.split(":", 1)[1]
+    lat, lon = WEATHER_POINTS[point]
+    end = min(chunk.end, datetime.now(timezone.utc).date() - timedelta(days=1))
+    if end < chunk.start:
+        return 0
+    data = await _get_json(client, OPEN_METEO_PREVIOUS_RUNS, {
+        "latitude": lat, "longitude": lon, "hourly": ",".join(f"{v}_previous_day1" for v in WEATHER_VARS),
+        "start_date": chunk.start.isoformat(), "end_date": end.isoformat(), "timezone": "UTC"})
+    return await db.upsert_demand_weather_day1(pool, weather_rows(point, day1_hourly(data["hourly"])))
+
+
 async def _store_calendar(client, pool, chunk: Chunk) -> int:
     return await db.upsert_demand_calendar(pool, calendar_rows(await _get_json(client, BANK_HOLIDAYS_URL)))
 
@@ -380,6 +407,8 @@ Store = Callable[[httpx.AsyncClient, asyncpg.Pool, Chunk], Awaitable[int]]
 def store_for(dataset: str) -> Store:
     if dataset in VINTAGE_DATASETS:
         return _store_vintages
+    if dataset.startswith("weather_day1:"):
+        return _store_weather_day1
     if dataset.startswith("weather:"):
         return _store_weather
     return {"outturn": _store_outturn, "fuelinst": _store_fuelinst, "neso_historic": _store_neso_historic,

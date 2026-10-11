@@ -131,8 +131,15 @@ def save_models(models: dict[float, object], columns: list[str], directory: str 
 # Loading everything from the database
 # ---------------------------------------------------------------------------------------------
 
-async def load_base(pool, start=None, end=None) -> pd.DataFrame:
-    """Read the demand_* tables and join them into the half-hourly base frame."""
+WEATHER_TABLES = ("demand_weather", "demand_weather_day1")
+
+
+async def load_base(pool, start=None, end=None, weather_table: str | None = "demand_weather") -> pd.DataFrame:
+    """Read the demand_* tables and join them into the half-hourly base frame. `weather_table` picks the weather
+    source: "demand_weather" (re-analysed, close to hindsight), "demand_weather_day1" (the forecast issued a day
+    earlier, honest but stale) or None (no weather features)."""
+    if weather_table not in (None, *WEATHER_TABLES):
+        raise ValueError(f"weather_table must be one of {WEATHER_TABLES} or None")
     async def q(sql: str, *args) -> pd.DataFrame:
         return pd.DataFrame([dict(r) for r in await pool.fetch(sql, *args)])
 
@@ -144,7 +151,10 @@ async def load_base(pool, start=None, end=None) -> pd.DataFrame:
     outturn = await q("SELECT target_start, indo FROM demand_outturn WHERE true " + rng.format(col="target_start"), start, end)
     pv = await q("SELECT ts, pv_live FROM demand_pv_live WHERE true " + rng.format(col="ts"), start, end)
     fuel = await q("SELECT start_time, total_mw, (by_fuel->>'WIND')::float8 AS wind_mw FROM demand_fuelinst_5min WHERE true " + rng.format(col="start_time"), start, end)
-    weather = await q("SELECT point, ts, temperature_2m, cloud_cover, shortwave_radiation, wind_speed_100m FROM demand_weather WHERE true " + rng.format(col="ts"), start, end)
+    weather = pd.DataFrame()
+    if weather_table:
+        weather = await q(f"SELECT point, ts, temperature_2m, cloud_cover, shortwave_radiation, wind_speed_100m FROM {weather_table} WHERE true "  # noqa: S608
+                          + rng.format(col="ts"), start, end)
     hol = await q("SELECT day FROM demand_calendar WHERE region = 'england-and-wales'")
     return feat.build_base(ndf=ndf, outturn=outturn, embedded=embedded, windfor=windfor, pv_live=pv, fuel5=fuel,
                            weather=weather, holidays=hol["day"].tolist() if not hol.empty else [])
