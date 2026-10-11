@@ -1,6 +1,7 @@
 """/login, /api/auth/login, /api/auth/logout, /api/auth/me."""
 from __future__ import annotations
 
+import asyncio
 import time
 from collections import defaultdict, deque
 from datetime import datetime, timedelta, timezone
@@ -65,24 +66,25 @@ async def login(request: Request):
     now = datetime.now(timezone.utc)
     user = await store.get_user_by_email(email)
     if user is None:
-        passwords.verify_password(passwords.DUMMY_HASH, password)          # same time as a real check
+        await asyncio.to_thread(passwords.verify_password, passwords.DUMMY_HASH, password)   # same time as a real check
         await store.audit("login_failed", email=email, ip=ip, detail="unknown user")
         return _no_store(JSONResponse({"detail": GENERIC_FAILURE}, status_code=401))
 
     usable = user["is_active"] and not (user["expires_at"] and user["expires_at"] <= now)
     locked = bool(user["locked_until"] and user["locked_until"] > now)
     if locked or not usable:
-        passwords.verify_password(passwords.DUMMY_HASH, password)
+        await asyncio.to_thread(passwords.verify_password, passwords.DUMMY_HASH, password)
         await store.audit("login_blocked", email=email, user_id=user["id"], ip=ip, detail="locked" if locked else "inactive or expired")
         return _no_store(JSONResponse({"detail": GENERIC_FAILURE}, status_code=401))
 
-    if not passwords.verify_password(user["password_hash"], password):
+    # argon2 is deliberately slow (tens of ms of CPU): do it off the event loop so a login never stalls the live feeds
+    if not await asyncio.to_thread(passwords.verify_password, user["password_hash"], password):
         just_locked = await store.record_failure(user["id"], settings.auth_max_failed_attempts, settings.auth_lock_minutes)
         await store.audit("account_locked" if just_locked else "login_failed", email=email, user_id=user["id"], ip=ip)
         return _no_store(JSONResponse({"detail": GENERIC_FAILURE}, status_code=401))
 
     if passwords.needs_rehash(user["password_hash"]):
-        await store.update_hash(user["id"], passwords.hash_password(password))
+        await store.update_hash(user["id"], await asyncio.to_thread(passwords.hash_password, password))
     await store.record_success(user["id"])
     token = new_token()
     lifetime = timedelta(hours=settings.auth_session_hours)

@@ -18,3 +18,4 @@ __pycache__/
 /.env.aws
 /deploy/aws/Caddyfile
 /.dev-login
+/.prod-login
