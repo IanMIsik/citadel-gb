@@ -146,15 +146,29 @@ def _niv_tag(offer_tags: list[_Tag], bid_tags: list[_Tag]) -> tuple[list[_Tag], 
     )
     ordered = sorted(larger, key=lambda t: expense(t.price, is_offer), reverse=True)  # most expensive first
     survivors = []
-    for t in ordered:
+    i = 0
+    while i < len(ordered):
+        # Actions at exactly the same price are NIV Tagged pro rata, not one after another (Elexon's
+        # published nivAdjustedVolume shrinks every action at a tied price by the same factor). Which of
+        # them survives matters: the survivors set the Replacement Price and the PAR price, and they can
+        # differ in their flag -- removing them in sequence could drop the one unflagged action at a price
+        # that Elexon keeps a share of (SP19 2026-10-12: GBP73 vs 95.64).
+        j = i
+        while j < len(ordered) and ordered[j].price == ordered[i].price:
+            j += 1
+        group = ordered[i:j]
+        group_total = sum(t.vol for t in group)
         if to_remove <= 0:
-            survivors.append(t)
-        elif t.vol <= to_remove:
-            to_remove -= t.vol  # this action is fully NIV Tagged out
+            survivors.extend(group)
+        elif group_total <= to_remove:
+            to_remove -= group_total          # the whole price level is NIV Tagged out
         else:
-            t.vol -= to_remove
+            keep = 1.0 - to_remove / group_total
+            for t in group:
+                t.vol *= keep
             to_remove = 0
-            survivors.append(t)
+            survivors.extend(group)
+        i = j
     return survivors, is_offer
 
 

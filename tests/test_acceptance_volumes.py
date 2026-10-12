@@ -104,3 +104,24 @@ def test_stack_rows_are_cached_per_period_and_recomputed_when_an_input_changes()
     changed = boalf.assign(levelTo=-30.0, levelFrom=-30.0)
     av.acceptance_stack_rows(changed, pn, bod, flags, periods, pd.Timestamp("2026-10-08T10:05:00Z"))
     assert av._PERIOD_CACHE[(datetime(2026, 10, 8).date(), 23)][1] is not cached    # an input moved: recomputed
+
+
+def test_niv_tagging_is_pro_rata_across_actions_at_the_same_price():
+    """SP19 2026-10-12: five bids tied at GBP73, one of them unflagged. Removing them one after another could
+    drop the unflagged one; Elexon shrinks every tied action by the same factor, so a share of it survives
+    and sets the price (73.00), instead of the flagged ones being repriced to the next unflagged level (95.64)."""
+    import pytest
+
+    from citadel.engine.imbalance_price import compute_imbalance_price
+
+    def bid(vol, price, flagged):
+        return {"delta": -vol, "m_orig_price": price, "so_flag": flagged}
+
+    rows = [
+        bid(12.0, 73.0, False), bid(60.0, 73.0, True), bid(30.0, 73.0, True),      # tied at 73; only 12 MWh unflagged
+        bid(80.0, 95.64, False), bid(40.0, 110.0, False),                          # less expensive bids (higher price)
+        {"delta": 50.0, "m_orig_price": 120.0, "so_flag": False},                   # 50 MWh of offers are netted off first
+    ]
+    price, contributions = compute_imbalance_price(rows)
+    assert price == pytest.approx(73.0)      # one after another, the 12 MWh unflagged bid is the first to go: 95.64
+    assert sum(contributions.values()) == pytest.approx(73.0)
