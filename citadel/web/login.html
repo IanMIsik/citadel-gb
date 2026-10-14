@@ -5,21 +5,29 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="robots" content="noindex" />
   <title>Sign in — Citadel</title>
-  <link rel="stylesheet" href="/static/login.css?v=1" />
+  <link rel="stylesheet" href="/static/login.css?v=2" />
 </head>
 <body>
   <main class="login-card">
     <h1>Citadel</h1>
     <p class="login-sub">Sign in to continue</p>
     <form id="login-form" autocomplete="on" novalidate>
-      <label for="email">Email</label>
-      <input id="email" name="email" type="email" autocomplete="username" autocapitalize="none" required autofocus />
-      <label for="password">Password</label>
-      <input id="password" name="password" type="password" autocomplete="current-password" required />
+      <div id="password-block">
+        <label for="email">Email</label>
+        <input id="email" name="email" type="email" autocomplete="username" autocapitalize="none" required autofocus />
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required />
+      </div>
+      <div id="code-block" hidden>
+        <label for="code">Code from your authenticator app</label>
+        <input id="code" name="code" inputmode="text" autocomplete="one-time-code" autocapitalize="none" maxlength="12" placeholder="123456" />
+        <p class="login-note">Lost your phone? Enter one of your recovery codes instead (like <span class="mono">k3f9-x7m2</span>).</p>
+        <button id="code-back" class="login-link" type="button">Use a different account</button>
+      </div>
       <p id="login-error" class="login-error" role="alert" hidden></p>
       <button id="login-submit" type="submit">Sign in</button>
     </form>
   </main>
-  <script src="/static/login.js?v=1"></script>
+  <script src="/static/login.js?v=2"></script>
 </body>
 </html>

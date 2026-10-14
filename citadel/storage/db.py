@@ -576,7 +576,7 @@ FUNDIES_REAL_TIME_COLUMNS = [
     "sell_price_adjustment", "market_index_price", "market_index_volume", "ng_vol",
     "real_ifa_net", "real_ifa2_net", "real_eleclink_net", "real_nl_net", "real_be_net",
     "real_norway_net", "real_dk_net", "real_ew_net", "real_moyle_net", "real_grnl_net",
-    "imbalngc",
+    "imbalngc", "derated_margin", "lolp",
 ]
 
 FUNDIES_DAY_AHEAD_COLUMNS = [
@@ -590,6 +590,7 @@ FUNDIES_DAY_AHEAD_COLUMNS = [
 FUNDIES_ENTSOE_FLOWS_COLUMNS = ["eleclink_net", "uk_ifa_net", "uk_ifa2_net", "uk_nl_net", "uk_be_net", "uk_norway_net", "uk_dk_net"]
 FUNDIES_SEMO_FLOWS_COLUMNS = ["intew_net", "intmoyle_net", "intgrnl_net"]
 FUNDIES_IMBALNGC_COLUMNS = ["imbalngc"]
+FUNDIES_LOLP_COLUMNS = ["derated_margin", "lolp", "publish_time"]
 FUNDIES_EMBEDDED_FORECAST_COLUMNS = ["embedded_wind_forecast", "embedded_solar_forecast"]
 FUNDIES_EPEX_DA_COLUMNS = ["da_price", "da_volume"]
 

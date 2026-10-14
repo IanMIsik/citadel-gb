@@ -28,6 +28,7 @@ dependencies = [
     "beautifulsoup4>=4.12",  # EPEX day-ahead auction page scrape (citadel/ingest/epex.py) --
     # the page is HTML, not a JSON API.
     "argon2-cffi>=23.1",  # password hashing for the web login (citadel/auth)
+    "segno>=1.6",  # QR code for two-factor enrolment (citadel/auth/totp.py); pure Python
 ]
 
 [project.optional-dependencies]

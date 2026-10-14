@@ -280,6 +280,8 @@ CREATE TABLE IF NOT EXISTS fundies_real_time (
     computed_at           TIMESTAMPTZ NOT NULL,
     PRIMARY KEY (settlement_date, settlement_period)
 );
+ALTER TABLE fundies_real_time ADD COLUMN IF NOT EXISTS derated_margin DOUBLE PRECISION;
+ALTER TABLE fundies_real_time ADD COLUMN IF NOT EXISTS lolp DOUBLE PRECISION;
 ALTER TABLE fundies_real_time ADD COLUMN IF NOT EXISTS wind_ot DOUBLE PRECISION;
 ALTER TABLE fundies_real_time ADD COLUMN IF NOT EXISTS shut_volume DOUBLE PRECISION;
 ALTER TABLE fundies_real_time ADD COLUMN IF NOT EXISTS real_ifa_net DOUBLE PRECISION;
@@ -364,6 +366,16 @@ CREATE TABLE IF NOT EXISTS fundies_imbalngc (
     settlement_date   DATE NOT NULL,
     settlement_period INTEGER NOT NULL,
     imbalngc          DOUBLE PRECISION,
+    updated_at        TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (settlement_date, settlement_period)
+);
+
+CREATE TABLE IF NOT EXISTS fundies_lolp (
+    settlement_date   DATE NOT NULL,
+    settlement_period INTEGER NOT NULL,
+    derated_margin    DOUBLE PRECISION,
+    lolp              DOUBLE PRECISION,
+    publish_time      TIMESTAMPTZ,
     updated_at        TIMESTAMPTZ NOT NULL,
     PRIMARY KEY (settlement_date, settlement_period)
 );
@@ -504,3 +516,35 @@ CREATE TABLE IF NOT EXISTS auth_audit (
     detail          TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_auth_audit_at ON auth_audit(at);
+
+-- Auth, phase 2: forced password change, two-factor (TOTP), recovery codes, half-finished logins, demo links.
+ALTER TABLE auth_users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE auth_users ADD COLUMN IF NOT EXISTS totp_secret TEXT;
+ALTER TABLE auth_users ADD COLUMN IF NOT EXISTS totp_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE auth_users ADD COLUMN IF NOT EXISTS totp_last_step BIGINT;
+CREATE TABLE IF NOT EXISTS auth_recovery_codes (
+    id          BIGSERIAL PRIMARY KEY,
+    user_id     BIGINT NOT NULL REFERENCES auth_users(id) ON DELETE CASCADE,
+    code_hash   TEXT NOT NULL,
+    used_at     TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_auth_recovery_user ON auth_recovery_codes(user_id);
+-- Between a correct password and a correct second factor: not a session, only the right to try a code.
+CREATE TABLE IF NOT EXISTS auth_pending (
+    token_hash  TEXT PRIMARY KEY,
+    user_id     BIGINT NOT NULL REFERENCES auth_users(id) ON DELETE CASCADE,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    expires_at  TIMESTAMPTZ NOT NULL,
+    attempts    INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS auth_demo_links (
+    id           BIGSERIAL PRIMARY KEY,
+    token_hash   TEXT NOT NULL UNIQUE,
+    label        TEXT NOT NULL,
+    user_id      BIGINT NOT NULL REFERENCES auth_users(id) ON DELETE CASCADE,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    expires_at   TIMESTAMPTZ NOT NULL,
+    revoked_at   TIMESTAMPTZ,
+    use_count    INTEGER NOT NULL DEFAULT 0,
+    last_used_at TIMESTAMPTZ
+);

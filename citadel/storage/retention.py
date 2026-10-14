@@ -46,6 +46,7 @@ RULES: tuple[Rule, ...] = (
     Rule("fundies_entsoe_flows", "settlement_date", "date", "fundies"),
     Rule("fundies_semo_flows", "settlement_date", "date", "fundies"),
     Rule("fundies_imbalngc", "settlement_date", "date", "fundies"),
+    Rule("fundies_lolp", "settlement_date", "date", "fundies"),
     Rule("fundies_embedded_forecast", "settlement_date", "date", "fundies"),
     Rule("fundies_epex_da", "settlement_date", "date", "fundies"),
 )

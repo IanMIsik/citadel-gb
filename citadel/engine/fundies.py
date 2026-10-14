@@ -256,11 +256,34 @@ def semo_net_flows(ida1_items: list[dict], ida2_items: list[dict]) -> pd.DataFra
 # Real-time table
 # ---------------------------------------------------------------------------
 
+def latest_lolp_rows(rows: list[dict]) -> list[dict]:
+    """Raw Elexon loss-of-load rows (one per period per NESO publish) -> one cache row per period, taking the
+    latest publish (the shortest-horizon, best-informed forecast)."""
+    best: dict[tuple, dict] = {}
+    for r in rows:
+        if r.get("settlementDate") is None or r.get("settlementPeriod") is None:
+            continue
+        key = (r["settlementDate"], int(r["settlementPeriod"]))
+        if key not in best or (r.get("publishTime") or "") > (best[key].get("publishTime") or ""):
+            best[key] = r
+    out = []
+    for (sd, sp), r in best.items():
+        pub = r.get("publishTime")
+        out.append({
+            "settlement_date": date.fromisoformat(sd), "settlement_period": sp,
+            "derated_margin": float(r["deratedMargin"]) if r.get("deratedMargin") is not None else None,
+            "lolp": float(r["lossOfLoadProbability"]) if r.get("lossOfLoadProbability") is not None else None,
+            "publish_time": datetime.fromisoformat(pub.replace("Z", "+00:00")) if pub else None,
+        })
+    return out
+
+
 def build_real_time(
     ndf: list[dict], windfor: list[dict], indo: list[dict], itsdo: list[dict],
     fuelhh: list[dict], bid_stack: list[dict], fuel_ref: pd.DataFrame,
     pv_live: list[dict], system_prices: list[dict], market_index: list[dict],
     neso_trades: list[dict], disbsad: list[dict], imbalngc: list[dict],
+    lolp: list[dict] | None = None,
 ) -> pd.DataFrame:
     """The notebook's `fundies_rt_df`: one outer-merge chain on
     (settlementDate, settlementPeriod), same column set (minus
@@ -330,8 +353,17 @@ def build_real_time(
     else:
         imbalngc_df = pd.DataFrame(columns=["settlementDate", "settlementPeriod", "imbalngc"])
 
+    # De-rated margin (MW) and loss of load probability, from the `fundies_lolp` cache table (already one
+    # row per period -- the latest NESO publish -- see FundiesRunner._refresh_lolp).
+    lolp_df = pd.DataFrame(lolp or [])
+    if not lolp_df.empty:
+        lolp_df = lolp_df.rename(columns={"settlement_date": "settlementDate", "settlement_period": "settlementPeriod"})
+        lolp_df = lolp_df[["settlementDate", "settlementPeriod", "derated_margin", "lolp"]]
+    else:
+        lolp_df = pd.DataFrame(columns=["settlementDate", "settlementPeriod", "derated_margin", "lolp"])
+
     out = latest_ndf
-    for frame in (windfor_df, indo_df, wind_ot, itsdo_df, pv_df, prices_df, mid_df, ng_df, real_ic_df, imbalngc_df):
+    for frame in (windfor_df, indo_df, wind_ot, itsdo_df, pv_df, prices_df, mid_df, ng_df, real_ic_df, imbalngc_df, lolp_df):
         out = pd.merge(out, frame, on=["settlementDate", "settlementPeriod"], how="outer")
     # Defensive backstop: this table's own PK is (settlementDate,
     # settlementPeriod) -- any upstream source that ever slips in more

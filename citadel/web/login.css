@@ -25,3 +25,7 @@ button {
 button:hover:not(:disabled) { background: #1d4ed8; }
 button:disabled { opacity: 0.6; cursor: progress; }
 .login-error { margin: 14px 0 0; padding: 9px 11px; border-radius: 6px; background: #3b1219; color: #fda4af; font-size: 0.9rem; }
+.login-note { margin: 10px 0 0; color: #8b98a8; font-size: 0.85rem; }
+.login-link { margin: 10px 0 0; width: auto; padding: 0; background: none; color: #7cb7ff; font-weight: 400; font-size: 0.85rem; }
+.login-link:hover:not(:disabled) { background: none; text-decoration: underline; }
+.mono { font-family: Consolas, "Courier New", monospace; }

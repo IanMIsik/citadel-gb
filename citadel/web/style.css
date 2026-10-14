@@ -834,7 +834,9 @@ td[data-heat="interconnector_ng"],
 td[data-heat="indo_da_ndf_delta"],
 td[data-heat="fake_wind_ot_da_winfor_delta"],
 td[data-heat="domestic_tight_delta"],
-td[data-heat="spread"] {
+td[data-heat="spread"],
+td[data-heat="margin"],
+td[data-heat="lolp"] {
   background-color: hsla(var(--heat-hue, 0), 70%, 50%, var(--heat-alpha, 0));
 }
 /* Interconnector rows specifically: a darker lightness than the shared
@@ -854,6 +856,12 @@ td[data-heat="interconnector_ng"] {
    ceiling, see fundies.js's computeHeatStyle) -- by request. */
 td[data-heat="interconnector"],
 td[data-heat="interconnector_ng"] {
+  font-weight: 700;
+}
+
+/* A non-zero loss of load probability (fundies.js's `lolp` row): bold white on its amber/orange/red level colour. */
+td[data-alert="1"] {
+  color: #fff;
   font-weight: 700;
 }
 
@@ -995,7 +1003,9 @@ td[data-heat="interconnector_ng"] {
 
 /* Signed-in user and Sign out, added to the header by auth.js when login is on */
 .auth-box { display: inline-flex; align-items: center; gap: 0.6rem; margin-left: auto; font-size: 0.85rem; }
-.auth-who { color: #9aa7b6; }
+.auth-who { color: #9aa7b6; text-decoration: none; }
+.auth-who:hover { color: #e6edf3; text-decoration: underline; }
+.auth-demo { padding: 2px 9px; border: 1px solid #f59e0b; border-radius: 10px; color: #fde68a; background: #2b2108; font-size: 0.8rem; }
 .auth-out {
   padding: 0.25rem 0.7rem; border: 1px solid #475569; border-radius: 5px; background: transparent;
   color: #d6d6d6; font: inherit; cursor: pointer;

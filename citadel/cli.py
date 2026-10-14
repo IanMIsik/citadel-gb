@@ -87,7 +87,7 @@ def main() -> None:
         uvicorn.run("citadel.api.app:app", host=args.host, port=args.port, reload=args.reload)
     elif args.command == "backfill-demand":
         asyncio.run(_backfill_demand(args))
-    elif args.command == "user":
+    elif args.command in ("user", "demo-link"):
         asyncio.run(auth_cli.run(args))
     elif args.command == "eval-demand-baseline":
         asyncio.run(_eval_demand_baseline(args))

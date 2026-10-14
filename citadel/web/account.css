@@ -1,0 +1,53 @@
+/* Shared by the account and admin pages; self-contained so it also works while setup is still required. */
+:root { color-scheme: dark; }
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: #0b0f14; color: #e6edf3;
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+.page { max-width: 760px; margin: 0 auto; padding: 20px 16px 60px; }
+.page.wide { max-width: 1100px; }
+.topbar { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; flex-wrap: wrap; }
+.topbar h1 { margin: 0; font-size: 1.35rem; flex: 1; }
+.topbar a, .linkbtn { color: #7cb7ff; text-decoration: none; background: none; border: 0; font: inherit; cursor: pointer; padding: 0; }
+.topbar a:hover, .linkbtn:hover { text-decoration: underline; }
+.card { border: 1px solid #2a3340; border-radius: 10px; background: #121821; padding: 18px 20px; margin-bottom: 16px; }
+.card h2 { margin: 0 0 4px; font-size: 1.05rem; }
+.hint { color: #8b98a8; font-size: 0.88rem; margin: 2px 0 12px; }
+label { display: block; margin: 12px 0 5px; font-size: 0.85rem; color: #aeb9c7; }
+input, select {
+  width: 100%; padding: 9px 11px; border: 1px solid #334155; border-radius: 6px; background: #0b0f14; color: inherit; font: inherit;
+}
+input:focus, select:focus { outline: 2px solid #3b82f6; outline-offset: 1px; border-color: #3b82f6; }
+button.primary, button.secondary, button.danger {
+  margin-top: 14px; padding: 9px 14px; border: 0; border-radius: 6px; font: inherit; font-weight: 600; cursor: pointer; color: #fff;
+}
+button.primary { background: #2563eb; }
+button.primary:hover:not(:disabled) { background: #1d4ed8; }
+button.secondary { background: #334155; }
+button.secondary:hover:not(:disabled) { background: #3f4f66; }
+button.danger { background: #b4232c; }
+button:disabled { opacity: 0.6; cursor: progress; }
+.msg { margin: 12px 0 0; padding: 9px 11px; border-radius: 6px; font-size: 0.9rem; }
+.msg.error { background: #3b1219; color: #fda4af; }
+.msg.ok { background: #0f2b1d; color: #86efac; }
+.notice { border: 1px solid #f59e0b; background: #2b2108; color: #fde68a; border-radius: 8px; padding: 10px 14px; margin-bottom: 16px; }
+.row { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; }
+.row > * { flex: 1 1 160px; }
+.row > button { flex: 0 0 auto; margin-top: 0; }
+.qr { background: #fff; border-radius: 8px; padding: 6px; width: 200px; height: 200px; display: block; margin: 10px 0; }
+code.secret, .codes { display: block; padding: 10px 12px; border-radius: 6px; background: #0b0f14; border: 1px solid #334155;
+  font: 0.95rem/1.7 Consolas, "Courier New", monospace; word-break: break-all; user-select: all; }
+.codes { columns: 2; }
+table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid #243040; vertical-align: top; }
+th { color: #8b98a8; font-weight: 600; }
+td.actions { white-space: nowrap; }
+td.actions button { margin: 0 4px 0 0; padding: 3px 8px; font-size: 0.8rem; background: #334155; color: #e6edf3; border: 0; border-radius: 4px; cursor: pointer; }
+td.actions button:hover { background: #3f4f66; }
+.tag { display: inline-block; padding: 1px 7px; border-radius: 10px; font-size: 0.75rem; background: #1e293b; color: #cbd5e1; }
+.tag.good { background: #0f2b1d; color: #86efac; }
+.tag.bad { background: #3b1219; color: #fda4af; }
+.tag.warn { background: #2b2108; color: #fde68a; }
+.mono { font-family: Consolas, "Courier New", monospace; }
+.scroll { overflow-x: auto; }

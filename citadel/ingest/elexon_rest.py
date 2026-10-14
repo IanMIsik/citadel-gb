@@ -190,6 +190,14 @@ async def fetch_imbalngc(client: httpx.AsyncClient, from_iso: str, to_iso: str) 
     return await _get(client, f"{BASE}/datasets/IMBALNGC", {"boundary": "N", "publishDateTimeFrom": from_iso, "publishDateTimeTo": to_iso})
 
 
+async def fetch_lolp(client: httpx.AsyncClient, from_iso: str, to_iso: str) -> list[dict]:
+    """Loss of load probability and de-rated margin, one row per (period, publish) -- NESO republishes
+    every half hour for the next 1-12 hours. `from`/`to` bound the DELIVERY time (startTime), not the
+    publish time, so a day-wide window works; engine/fundies.py keeps the latest publish per period.
+    """
+    return await _get(client, f"{BASE}/forecast/system/loss-of-load", {"from": from_iso, "to": to_iso})
+
+
 async def fetch_fou2t14d_nuclear(client: httpx.AsyncClient, publish_date: date) -> list[dict]:
     """Forecast Output Usable, 2-14 days ahead -- filtered server-side to
     NUCLEAR. engine/fundies.py picks the row whose own `forecastDate`

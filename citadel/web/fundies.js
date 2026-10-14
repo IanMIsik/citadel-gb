@@ -77,7 +77,17 @@ const ROWS = [
   { key: "da_price", label: "DA price (£/MWh)", source: "da", native: true, prefix: "£", digits: 1, spacerBefore: true },
   { key: "da_volume", label: "DA Volume (GWh)", source: "da", digits: 1 },
   { key: "imbalngc", label: "imbal_ngc (GW)", source: "rt", rt: true, digits: 1 },
+  // NESO's de-rated margin (MW, shown as GW like the rest) and loss of load probability (0-1, shown as is).
+  // A non-zero LOLP lights its cell red and raises the pop-up below (checkLolpAlerts).
+  { key: "derated_margin", label: "derated margin (GW)", source: "rt", rt: true, heat: "margin", digits: 1 },
+  { key: "lolp", label: "LOLP", source: "rt", rt: true, native: true, lolp: true, heat: "lolp" },
 ];
+
+// Loss of load probability: a plain 0 when it is zero, otherwise as many decimals as it needs to show something.
+function fmtLolp(value) {
+  if (value === 0) return "0";
+  return value < 0.0001 ? value.toExponential(1) : String(parseFloat(value.toFixed(4)));
+}
 
 function fmtCell(value, native, digits, prefix) {
   if (value === null || value === undefined || Number.isNaN(value)) return "";
@@ -138,6 +148,25 @@ const NEGATIVE_HUE = 4; // red
 // interconnector rows (a spread's own typical size varies day to day).
 const SEQUENTIAL_HEAT_TAGS = new Set(["spread"]);
 const SEQUENTIAL_HUE = 38; // amber
+
+// Fixed (not row-relative) scales for the two security-of-supply rows: what matters is the absolute level, not how
+// the day compares with itself. Both reuse the --heat-hue/--heat-alpha overlay the other heat rows use.
+//  - derated margin (GW): red when thin, through orange/amber, to green when comfortable. 15 GW and over is full green;
+//    the thinner it gets the stronger the colour.
+//  - LOLP: faint green at zero, then amber / orange / red as the probability steps up (0.1%, 1%, 5%).
+const ABSOLUTE_HEAT = {
+  margin: (gw) => {
+    if (typeof gw !== "number" || Number.isNaN(gw)) return "";
+    const t = Math.min(Math.max(gw / 15, 0), 1);
+    return `--heat-hue:${Math.round(t * 130)};--heat-alpha:${(0.22 + 0.4 * (1 - t)).toFixed(2)};`;
+  },
+  lolp: (p) => {
+    if (typeof p !== "number" || Number.isNaN(p)) return "";
+    if (p <= 0) return "--heat-hue:140;--heat-alpha:0.16;";
+    const [hue, alpha] = p < 0.001 ? [48, 0.6] : p < 0.01 ? [28, 0.7] : p < 0.05 ? [8, 0.8] : [0, 0.95];
+    return `--heat-hue:${hue};--heat-alpha:${alpha};`;
+  },
+};
 
 function computeHeatStyle(heat, displayValues) {
   const nums = displayValues.filter((v) => typeof v === "number" && !Number.isNaN(v));
@@ -257,13 +286,14 @@ function renderFundiesTable(rtRows, daRows) {
     // min/max percentile basis and any `--value` cap are calibrated
     // against that displayed scale, not the raw MW figure.
     const displayValues = values.map((v) => (Number.isNaN(v) ? v : (cfg.native ? v : v / 1000)));
-    const heatFn = cfg.heat ? computeHeatStyle(cfg.heat, displayValues) : null;
+    const heatFn = cfg.heat ? (ABSOLUTE_HEAT[cfg.heat] || computeHeatStyle(cfg.heat, displayValues)) : null;
     const cells = values.map((v, i) => {
-      const text = fmtCell(v, cfg.native, cfg.digits, cfg.prefix);
+      const text = cfg.lolp ? (Number.isNaN(v) ? "" : fmtLolp(v)) : fmtCell(v, cfg.native, cfg.digits, cfg.prefix);
       const style = heatFn ? heatFn(displayValues[i]) : "";
       const sign = Number.isNaN(v) ? "" : String(v);
       const heatAttr = cfg.heat ? ` data-heat="${cfg.heat}"` : "";
-      return `<td data-name="${cfg.key}"${heatAttr} data-sign="${sign}" style="${style}">${text}</td>`;
+      const alertAttr = cfg.lolp && v > 0 ? ' data-alert="1"' : "";
+      return `<td data-name="${cfg.key}"${heatAttr}${alertAttr} data-sign="${sign}" style="${style}">${text}</td>`;
     }).join("");
     const rowClass = cfg.rt ? ' class="fundies-rt-row"' : "";
     // A blank, borderless spacer row between metric groups (interconnectors,
@@ -277,6 +307,61 @@ function renderFundiesTable(rtRows, daRows) {
   }).join("");
 }
 
+// ---- loss of load probability pop-up -------------------------------------------------------------------------
+// Looks at today and tomorrow (whatever date is on screen) for any period that has not finished yet and has a
+// non-zero LOLP, and raises one pop-up + the alarm whenever a (period, value) not yet announced on this page
+// shows up. Runs after every Fundies update.
+const lolpAnnounced = new Set();
+
+function londonNowParts() {
+  const f = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false });
+  const p = Object.fromEntries(f.formatToParts(new Date()).map((x) => [x.type, x.value]));
+  return { date: `${p.year}-${p.month}-${p.day}`, minutes: (Number(p.hour) % 24) * 60 + Number(p.minute) };
+}
+
+function spClock(sp) {
+  const m = (sp - 1) * 30;
+  return `${String(Math.floor(m / 60)).padStart(2, "0")}:${m % 60 === 0 ? "00" : "30"}`;
+}
+
+function showLolpToast(items) {
+  if (typeof playTripAlarm === "function") playTripAlarm();
+  const lines = items.map((i) =>
+    `<div class="trip-toast-body">${i.date === londonNowParts().date ? "Today" : i.date} SP${i.sp} (${spClock(i.sp)}) &middot; LOLP ${fmtLolp(i.lolp)}` +
+    (i.margin == null ? "" : ` &middot; derated margin ${(i.margin / 1000).toFixed(1)} GW`) + `</div>`).join("");
+  const el = document.createElement("div");
+  el.className = "trip-toast";
+  el.innerHTML = `<button class="trip-toast-close" aria-label="Dismiss">&times;</button>` +
+    `<div class="trip-toast-title">Loss of load probability above zero</div>${lines}`;
+  el.querySelector(".trip-toast-close").addEventListener("click", () => el.remove());
+  const host = typeof tripToastContainer === "function" ? tripToastContainer() : document.body;
+  host.appendChild(el);
+  setTimeout(() => el.remove(), 120000);
+}
+
+async function checkLolpAlerts() {
+  try {
+    const now = londonNowParts();
+    const today = now.date;
+    const tomorrow = addDaysIso(today, 1);
+    const fresh = [];
+    for (const date of [today, tomorrow]) {
+      const rows = (await (await fetch(`/api/fundies/real-time?settlement_date=${date}`)).json()).rows || [];
+      rows.forEach((r) => {
+        if (!(Number(r.lolp) > 0)) return;
+        if (date === today && r.settlement_period * 30 <= now.minutes) return;     // period already over
+        const key = `${date}:${r.settlement_period}:${r.lolp}`;
+        if (lolpAnnounced.has(key)) return;
+        lolpAnnounced.add(key);
+        fresh.push({ date, sp: r.settlement_period, lolp: Number(r.lolp), margin: r.derated_margin });
+      });
+    }
+    if (fresh.length) showLolpToast(fresh.sort((a, b) => a.date.localeCompare(b.date) || a.sp - b.sp));
+  } catch (e) {
+    console.error("LOLP alert check failed", e);
+  }
+}
+
 async function loadAll() {
   renderDateHeader("fundies-date-header");
   renderSpHeader("fundies-sp-header");
@@ -287,6 +372,7 @@ async function loadAll() {
   const rt = (await rtResp.json()).rows || [];
   const da = (await daResp.json()).rows || [];
   renderFundiesTable(rt, da);
+  checkLolpAlerts();
 }
 
 function loadEnvBadge() {

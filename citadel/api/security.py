@@ -69,6 +69,11 @@ class SecurityHeadersMiddleware:
             if message["type"] == "http.response.start":
                 present = {n for n, _ in message.get("headers", [])}
                 extra = [h for h in SECURITY_HEADERS if h[0] not in present]
+                # A page must be re-checked on every visit: its own address never changes, and a stale copy keeps pointing
+                # at old versions of its scripts and stylesheets (so a fix, however well version-tagged, never arrives).
+                content_type = next((v for n, v in message.get("headers", []) if n == b"content-type"), b"")
+                if content_type.startswith(b"text/html") and b"cache-control" not in present:
+                    extra.append((b"cache-control", b"no-cache"))
                 if https:
                     extra.append(HSTS)
                 message = {**message, "headers": list(message.get("headers", [])) + extra}

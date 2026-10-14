@@ -90,3 +90,22 @@ def test_real_app_hides_docs_and_rejects_out_of_range_params():
     assert c.get("/api/stack/2026-10-01/999").status_code == 422
     assert c.get("/api/trips/mel-plan?bm_unit=" + "A" * 500).status_code == 422
     assert c.get("/api/trips/mel-plan?bm_unit=x';drop%20table").status_code == 422
+
+
+def test_html_pages_must_be_revalidated_but_other_responses_are_left_alone():
+    from fastapi.responses import HTMLResponse
+
+    app = _app()
+
+    @app.get("/html")
+    def html():
+        return HTMLResponse("<p>hi</p>")
+
+    @app.get("/html-cached")
+    def html_cached():
+        return HTMLResponse("<p>hi</p>", headers={"Cache-Control": "no-store"})
+
+    c = TestClient(app)
+    assert c.get("/html").headers["cache-control"] == "no-cache"
+    assert c.get("/html-cached").headers["cache-control"] == "no-store"          # an explicit choice is respected
+    assert "cache-control" not in c.get("/page").headers                          # JSON and static files are untouched

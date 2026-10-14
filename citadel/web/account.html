@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="robots" content="noindex" />
+  <title>Account — Citadel</title>
+  <link rel="stylesheet" href="/static/account.css?v=1" />
+</head>
+<body>
+  <main class="page">
+    <div class="topbar">
+      <h1>Account <span id="who" class="hint"></span></h1>
+      <a id="back" href="/">Back to Citadel</a>
+      <button id="signout" class="linkbtn" type="button">Sign out</button>
+    </div>
+
+    <div id="setup-notice" class="notice" hidden></div>
+
+    <section class="card" id="password-card">
+      <h2>Change password</h2>
+      <p class="hint">At least 12 characters. Your other signed-in devices are signed out when you change it.</p>
+      <form id="password-form" autocomplete="off">
+        <label for="current-password">Current password</label>
+        <input id="current-password" type="password" autocomplete="current-password" required />
+        <label for="new-password">New password</label>
+        <input id="new-password" type="password" autocomplete="new-password" required />
+        <label for="confirm-password">New password again</label>
+        <input id="confirm-password" type="password" autocomplete="new-password" required />
+        <button class="primary" type="submit">Change password</button>
+        <p id="password-msg" class="msg" hidden></p>
+      </form>
+    </section>
+
+    <section class="card" id="twofa-card">
+      <h2>Two-factor authentication</h2>
+      <p id="twofa-status" class="hint"></p>
+      <div id="twofa-off" hidden>
+        <p class="hint">Use an authenticator app (Google Authenticator, Microsoft Authenticator, 1Password, Authy...) to get a code each time you sign in.</p>
+        <button id="twofa-start" class="primary" type="button">Set up two-factor</button>
+      </div>
+      <div id="twofa-setup" hidden>
+        <p class="hint">1. Scan this code with your authenticator app, or type the key in by hand.</p>
+        <img id="twofa-qr" class="qr" alt="QR code for your authenticator app" />
+        <code id="twofa-secret" class="secret"></code>
+        <p class="hint" style="margin-top:12px">2. Enter the 6-digit code the app now shows.</p>
+        <div class="row">
+          <input id="twofa-code" inputmode="numeric" autocomplete="one-time-code" maxlength="8" placeholder="123456" />
+          <button id="twofa-confirm" class="primary" type="button">Turn on</button>
+        </div>
+      </div>
+      <div id="twofa-codes" hidden>
+        <p class="msg ok">Two-factor is on. Save these recovery codes somewhere safe: each works once if you lose your phone. They are not shown again.</p>
+        <code id="twofa-codes-list" class="codes"></code>
+        <button id="twofa-codes-done" class="secondary" type="button">I have saved them</button>
+      </div>
+      <div id="twofa-on" hidden>
+        <p class="hint">Recovery codes left: <strong id="codes-left">-</strong></p>
+        <div class="row">
+          <input id="regen-password" type="password" autocomplete="current-password" placeholder="Your password" />
+          <button id="regen-codes" class="secondary" type="button">Make new recovery codes</button>
+        </div>
+        <div id="twofa-disable-block" hidden>
+          <p class="hint" style="margin-top:16px">Turn two-factor off (needs your password and a current code).</p>
+          <div class="row">
+            <input id="disable-password" type="password" autocomplete="current-password" placeholder="Your password" />
+            <input id="disable-code" inputmode="numeric" maxlength="8" placeholder="Code" />
+            <button id="twofa-disable" class="danger" type="button">Turn off</button>
+          </div>
+        </div>
+      </div>
+      <p id="twofa-msg" class="msg" hidden></p>
+    </section>
+  </main>
+  <script src="/static/account.js?v=1"></script>
+</body>
+</html>

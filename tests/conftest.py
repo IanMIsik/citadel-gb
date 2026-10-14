@@ -8,3 +8,4 @@ so pin it off here, before any test module imports the app; the auth tests switc
 import os
 
 os.environ["AUTH_ENABLED"] = "false"
+os.environ["AUTH_2FA_REQUIRED_ROLES"] = "admin,client"      # the real default, whatever a local .env sets

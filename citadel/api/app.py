@@ -33,6 +33,7 @@ from ..settlement import current_period, rolling_window, sp_start_utc, utc_to_se
 from ..storage import db
 from ..auth.middleware import AuthMiddleware
 from ..auth.routes import router as auth_router
+from ..auth import service as auth_service
 from ..auth.store import AuthStore
 from .broadcast import Broadcaster
 from .security import GuardMiddleware, SecurityHeadersMiddleware, check_db_credentials
@@ -208,7 +209,8 @@ app = FastAPI(title="Citadel Pricing Stack", lifespan=lifespan, docs_url=_docs,
 # Added innermost-first: headers wrap everything, including the guard's 429 responses, and the rate
 # limit sits outside the login gate so a flood of unauthenticated requests is throttled too.
 app.add_middleware(AuthMiddleware, enabled=settings.auth_enabled, cookie_name=settings.auth_cookie_name,
-                   idle_seconds=settings.auth_idle_minutes * 60)
+                   idle_seconds=settings.auth_idle_minutes * 60,
+                   require_2fa_roles=auth_service.two_factor_roles(settings.auth_2fa_required_roles))
 app.add_middleware(GuardMiddleware, requests_per_minute=settings.rate_limit_per_minute,
                    ws_max_per_ip=settings.ws_max_per_ip)
 app.add_middleware(SecurityHeadersMiddleware)

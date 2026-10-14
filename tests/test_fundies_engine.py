@@ -300,3 +300,32 @@ def test_upcoming_trades_become_blocks_that_keep_their_id_and_convert_mwh_to_mw(
     gap = [{"ID": "ES3", "Date": "2026-10-05", "SP": 33, "Volume": 10.0, "Price": 100.0}, {"ID": "ES3", "Date": "2026-10-05", "SP": 35, "Volume": 10.0, "Price": 100.0}]
     assert len(upcoming_rows_to_blocks(gap)) == 2
     assert upcoming_rows_to_blocks([{"ID": "ES4", "Date": "2026-10-05", "SP": 36}]) == []               # no volume or price: dropped
+
+
+def test_latest_lolp_rows_keep_the_newest_publish_per_period():
+    from datetime import date
+
+    from citadel.engine.fundies import latest_lolp_rows
+
+    raw = [
+        {"publishTime": "2026-10-14T06:04:00Z", "settlementDate": "2026-10-14", "settlementPeriod": 20, "lossOfLoadProbability": 0.0, "deratedMargin": 5000.0},
+        {"publishTime": "2026-10-14T07:04:00Z", "settlementDate": "2026-10-14", "settlementPeriod": 20, "lossOfLoadProbability": 0.012, "deratedMargin": 900.0},
+        {"publishTime": "2026-10-14T05:04:00Z", "settlementDate": "2026-10-14", "settlementPeriod": 21, "lossOfLoadProbability": 0.0, "deratedMargin": 4000.0},
+    ]
+    rows = {r["settlement_period"]: r for r in latest_lolp_rows(raw)}
+    assert set(rows) == {20, 21}
+    assert rows[20]["lolp"] == 0.012 and rows[20]["derated_margin"] == 900.0 and rows[20]["settlement_date"] == date(2026, 10, 14)
+    assert rows[21]["lolp"] == 0.0
+
+
+def test_build_real_time_carries_derated_margin_and_lolp_through():
+    from datetime import date
+
+    from citadel.engine.fundies import build_real_time
+
+    ndf = [{"settlementDate": "2026-10-14", "settlementPeriod": 20, "demand": 30000, "publishTime": "2026-10-14T06:00:00Z"}]
+    lolp = [{"settlement_date": date(2026, 10, 14), "settlement_period": 20, "derated_margin": 900.0, "lolp": 0.012}]
+    out = build_real_time(ndf, [], [], [], [], [], pd.DataFrame(), [], [], [], [], [], [], lolp)
+    row = out[out["settlementPeriod"] == 20].iloc[0]
+    assert row["derated_margin"] == 900.0 and row["lolp"] == 0.012
+    assert "lolp" in build_real_time(ndf, [], [], [], [], [], pd.DataFrame(), [], [], [], [], [], []).columns   # optional argument

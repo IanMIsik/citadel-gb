@@ -119,11 +119,16 @@ class Settings(BaseSettings):
     # all; `auth_max_failed_attempts` wrong passwords lock the account for `auth_lock_minutes`.
     auth_enabled: bool = False
     auth_cookie_name: str = "citadel_session"
-    auth_idle_minutes: int = 30
+    auth_idle_minutes: int = 60
     auth_session_hours: int = 12
     auth_max_failed_attempts: int = 5
     auth_lock_minutes: int = 15
     auth_login_attempts_per_5min: int = 10
+    # Roles that must set up two-factor (an authenticator app) before they can use anything else.
+    auth_2fa_required_roles: str = "admin,client"
+    auth_pending_minutes: int = 5            # time allowed to enter the second factor after the password
+    auth_demo_session_hours: int = 2         # a demo link signs in for this long, whatever the link's own expiry
+    public_base_url: str = ""                # e.g. https://citadel.example.com; used to print demo links
     rate_limit_per_minute: int = 600
     ws_max_per_ip: int = 20
 

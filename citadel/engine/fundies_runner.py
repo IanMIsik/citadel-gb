@@ -69,6 +69,7 @@ FUNDIES_REFRESH_INTERVALS = {
     "market_index": 60,
     "natgrid": 60,
     "imbalngc": 120,
+    "lolp": 120,
     "entsoe": 60,
     "semo": 120,
     "embedded_forecast": 300,
@@ -285,6 +286,14 @@ class FundiesRunner:
         await db.upsert_fundies_cache(self.pool, "fundies_imbalngc", db.FUNDIES_IMBALNGC_COLUMNS, cache_rows)
         self._dirty.set()
 
+    async def _refresh_lolp(self) -> None:
+        """Derated margin + LOLP for yesterday through tomorrow, latest NESO publish per period."""
+        frm, to = _yesterday_to_tomorrow_window()
+        rows = await elexon_rest.fetch_lolp(self._http, frm, to)
+        cache_rows = fundies_engine.latest_lolp_rows(rows)
+        await db.upsert_fundies_cache(self.pool, "fundies_lolp", db.FUNDIES_LOLP_COLUMNS, cache_rows)
+        self._dirty.set()
+
     async def _refresh_nuclear(self) -> None:
         cur = current_period()
         publish_date = cur.settlement_date - timedelta(days=3)
@@ -440,6 +449,7 @@ class FundiesRunner:
         entsoe_rows = await db.fundies_cache_rows(self.pool, "fundies_entsoe_flows", dates)
         semo_rows = await db.fundies_cache_rows(self.pool, "fundies_semo_flows", dates)
         imbalngc_rows = await db.fundies_cache_rows(self.pool, "fundies_imbalngc", dates)
+        lolp_rows = await db.fundies_cache_rows(self.pool, "fundies_lolp", dates)
         embedded_rows = await db.fundies_cache_rows(self.pool, "fundies_embedded_forecast", dates)
         epex_rows = await db.fundies_cache_rows(self.pool, "fundies_epex_da", dates)
 
@@ -449,6 +459,7 @@ class FundiesRunner:
             dict(self.buffers), self.nuclear_output_usable, fuel_ref,
             [dict(r) for r in entsoe_rows], [dict(r) for r in semo_rows],
             [dict(r) for r in imbalngc_rows], [dict(r) for r in embedded_rows], [dict(r) for r in epex_rows],
+            [dict(r) for r in lolp_rows],
         )
         if real_time.empty and day_ahead.empty:
             return
@@ -506,7 +517,7 @@ class FundiesRunner:
 def _compute_fundies(
     buffers: dict, nuclear_output_usable, fuel_ref: pd.DataFrame,
     entsoe_rows: list[dict], semo_rows: list[dict], imbalngc_rows: list[dict],
-    embedded_rows: list[dict], epex_rows: list[dict],
+    embedded_rows: list[dict], epex_rows: list[dict], lolp_rows: list[dict] | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Runs in the shared ProcessPoolExecutor -- module-level (not a
     method) so it's picklable, same reasoning as fpn_runner.py calling
@@ -519,7 +530,7 @@ def _compute_fundies(
         buffers["ndf"], buffers["windfor"], buffers["indo"], buffers["itsdo"],
         buffers["fuelhh"], buffers["bid_stack"], fuel_ref,
         buffers["pv_live"], buffers["system_prices"], buffers["market_index"],
-        buffers["neso_trades"], buffers["disbsad"], imbalngc_rows,
+        buffers["neso_trades"], buffers["disbsad"], imbalngc_rows, lolp_rows,
     )
     windfor_df = fundies_engine.build_windfor_frame(buffers["windfor"], "latestwindfor")
     latest_ndf_df = fundies_engine._latest_publish_per_period(buffers["ndf"], "settlementDate", "settlementPeriod", "demand", "latest_ndf")

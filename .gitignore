@@ -19,3 +19,4 @@ __pycache__/
 /deploy/aws/Caddyfile
 /.dev-login
 /.prod-login
+/.e2e-login
