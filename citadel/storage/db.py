@@ -185,7 +185,7 @@ async def replace_period_rows(pool: asyncpg.Pool, sd: date, sp: int, rows: list[
     return len(rows)
 
 
-async def pricing_stack_delta_by_bm_unit(pool: asyncpg.Pool, sd: date, periods: list[int]) -> list[asyncpg.Record]:
+async def pricing_stack_delta_by_bm_unit(pool: asyncpg.Pool, window: list[tuple[date, int]]) -> list[asyncpg.Record]:
     """Real accepted-offer/reduced-accepted-bid volume per BM unit, summed
     from the pricing stack's own already-computed `pricing_stack_rows` --
     the same reversal-aware, CADL-aware acceptance data the pricing stack
@@ -201,13 +201,14 @@ async def pricing_stack_delta_by_bm_unit(pool: asyncpg.Pool, sd: date, periods: 
     """
     return await pool.fetch(
         """
-        SELECT settlement_date, settlement_period, bm_unit, SUM(delta) AS delta
-        FROM pricing_stack_rows
-        WHERE settlement_date = $1 AND settlement_period = ANY($2::int[])
-          AND bm_unit NOT LIKE 'disbsad_%'
-        GROUP BY settlement_date, settlement_period, bm_unit
+        SELECT r.settlement_date, r.settlement_period, r.bm_unit, SUM(r.delta) AS delta
+        FROM pricing_stack_rows r
+        JOIN UNNEST($1::date[], $2::int[]) AS win(settlement_date, settlement_period)
+          ON r.settlement_date = win.settlement_date AND r.settlement_period = win.settlement_period
+        WHERE r.bm_unit NOT LIKE 'disbsad_%'
+        GROUP BY r.settlement_date, r.settlement_period, r.bm_unit
         """,
-        sd, periods,
+        *_window_arrays(window),
     )
 
 
@@ -396,7 +397,7 @@ async def fpn_aggregated_for_periods(pool: asyncpg.Pool, window: list[tuple[date
     )
 
 
-async def pricing_stack_niv_by_period(pool: asyncpg.Pool, sd: date, periods: list[int]) -> list[asyncpg.Record]:
+async def pricing_stack_niv_by_period(pool: asyncpg.Pool, window: list[tuple[date, int]]) -> list[asyncpg.Record]:
     """The pricing stack's own real, already-settled NIV per period
     (`total_delta` -- see engine/imbalance_price.py's docstring; it's the
     same value repeated on every row of a period's `pricing_stack_rows`,
@@ -407,12 +408,13 @@ async def pricing_stack_niv_by_period(pool: asyncpg.Pool, sd: date, periods: lis
     """
     return await pool.fetch(
         """
-        SELECT settlement_date, settlement_period, MAX(total_delta) AS niv_sp_max
-        FROM pricing_stack_rows
-        WHERE settlement_date = $1 AND settlement_period = ANY($2::int[])
-        GROUP BY settlement_date, settlement_period
+        SELECT r.settlement_date, r.settlement_period, MAX(r.total_delta) AS niv_sp_max
+        FROM pricing_stack_rows r
+        JOIN UNNEST($1::date[], $2::int[]) AS win(settlement_date, settlement_period)
+          ON r.settlement_date = win.settlement_date AND r.settlement_period = win.settlement_period
+        GROUP BY r.settlement_date, r.settlement_period
         """,
-        sd, periods,
+        *_window_arrays(window),
     )
 
 
@@ -440,7 +442,7 @@ async def replace_pricing_stack_niv_spot_time_period(pool: asyncpg.Pool, sd: dat
     return len(rows)
 
 
-async def pricing_stack_niv_spot_time_by_period(pool: asyncpg.Pool, sd: date, periods: list[int]) -> list[asyncpg.Record]:
+async def pricing_stack_niv_spot_time_by_period(pool: asyncpg.Pool, window: list[tuple[date, int]]) -> list[asyncpg.Record]:
     """The pricing stack's real per-minute NIV trajectory across the current
     window -- see schema.sql's pricing_stack_niv_spot_time docstring.
     engine/fpn.py merges this onto its own per-minute `aggregated` table by
@@ -449,11 +451,12 @@ async def pricing_stack_niv_spot_time_by_period(pool: asyncpg.Pool, sd: date, pe
     """
     return await pool.fetch(
         """
-        SELECT settlement_date, settlement_period, spot_time, niv_spot_time_max
-        FROM pricing_stack_niv_spot_time
-        WHERE settlement_date = $1 AND settlement_period = ANY($2::int[])
+        SELECT n.settlement_date, n.settlement_period, n.spot_time, n.niv_spot_time_max
+        FROM pricing_stack_niv_spot_time n
+        JOIN UNNEST($1::date[], $2::int[]) AS win(settlement_date, settlement_period)
+          ON n.settlement_date = win.settlement_date AND n.settlement_period = win.settlement_period
         """,
-        sd, periods,
+        *_window_arrays(window),
     )
 
 
@@ -481,7 +484,7 @@ async def replace_pricing_stack_unit_delta_5min_period(pool: asyncpg.Pool, sd: d
     return len(rows)
 
 
-async def pricing_stack_unit_delta_5min_by_period(pool: asyncpg.Pool, sd: date, periods: list[int]) -> list[asyncpg.Record]:
+async def pricing_stack_unit_delta_5min_by_period(pool: asyncpg.Pool, window: list[tuple[date, int]]) -> list[asyncpg.Record]:
     """The pricing stack's real, per-BM-unit delta bucketed onto FUELINST's
     own 5-minute grid, across the current window -- see schema.sql's
     pricing_stack_unit_delta_5min docstring. engine/fpn.py's
@@ -490,11 +493,12 @@ async def pricing_stack_unit_delta_5min_by_period(pool: asyncpg.Pool, sd: date, 
     """
     return await pool.fetch(
         """
-        SELECT settlement_date, settlement_period, bm_unit, start_time, delta
-        FROM pricing_stack_unit_delta_5min
-        WHERE settlement_date = $1 AND settlement_period = ANY($2::int[])
+        SELECT u.settlement_date, u.settlement_period, u.bm_unit, u.start_time, u.delta
+        FROM pricing_stack_unit_delta_5min u
+        JOIN UNNEST($1::date[], $2::int[]) AS win(settlement_date, settlement_period)
+          ON u.settlement_date = win.settlement_date AND u.settlement_period = win.settlement_period
         """,
-        sd, periods,
+        *_window_arrays(window),
     )
 
 

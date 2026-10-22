@@ -258,13 +258,14 @@ class FpnRunner:
 
     async def _read_stack_rows(self) -> tuple[list[dict], list[dict], list[dict], list[dict]]:
         """The pricing stack's saved rows for the rolling window (what the decision table is built from)."""
-        cur = current_period()
-        periods = [sp for sd, sp in rolling_window() if sd == cur.settlement_date]
+        # The window as (date, period) pairs. Filtering on the current settlement date alone dropped the last periods of the
+        # previous day just after midnight: they got no NIV or acceptance deltas, so their Delta, Wind_d, CCGT_d ... were recomputed as zero.
+        window = rolling_window()
         return (
-            [dict(r) for r in await db.pricing_stack_delta_by_bm_unit(self.pool, cur.settlement_date, periods)],
-            [dict(r) for r in await db.pricing_stack_niv_by_period(self.pool, cur.settlement_date, periods)],
-            [dict(r) for r in await db.pricing_stack_niv_spot_time_by_period(self.pool, cur.settlement_date, periods)],
-            [dict(r) for r in await db.pricing_stack_unit_delta_5min_by_period(self.pool, cur.settlement_date, periods)],
+            [dict(r) for r in await db.pricing_stack_delta_by_bm_unit(self.pool, window)],
+            [dict(r) for r in await db.pricing_stack_niv_by_period(self.pool, window)],
+            [dict(r) for r in await db.pricing_stack_niv_spot_time_by_period(self.pool, window)],
+            [dict(r) for r in await db.pricing_stack_unit_delta_5min_by_period(self.pool, window)],
         )
 
     async def _recompute_tail(self) -> None:

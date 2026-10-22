@@ -489,3 +489,29 @@ def test_demand_grid_uses_the_settlement_date_not_the_utc_date_in_summer_time():
     at = demand[demand["spot_time"] == pd.Timestamp("2026-10-22T23:10:00Z")]
     assert len(at) == 1 and at["spot_latest_ndf"].notna().all()
     assert (demand["settlementDate"] == pd.Timestamp("2026-10-22")).sum() == 60       # 22:00-22:59 UTC only
+
+
+def test_stack_rows_are_read_for_the_whole_window_across_midnight(monkeypatch):
+    # Just after midnight the window still holds the last periods of the previous settlement day. They were read with the
+    # current date only, so they got no NIV and no acceptance deltas and were recomputed as zero (Delta, Wind_d, CCGT_d, ...).
+    import asyncio
+    from datetime import date
+    from citadel.engine import fpn_runner
+
+    window = [(date(2026, 10, 22), 46), (date(2026, 10, 22), 47), (date(2026, 10, 22), 48), (date(2026, 10, 23), 1)]
+    seen = []
+
+    def recorder(name):
+        async def fetch(pool, w):
+            seen.append((name, w))
+            return []
+        return fetch
+
+    monkeypatch.setattr(fpn_runner, "rolling_window", lambda: window)
+    for name in ("pricing_stack_delta_by_bm_unit", "pricing_stack_niv_by_period", "pricing_stack_niv_spot_time_by_period",
+                 "pricing_stack_unit_delta_5min_by_period"):
+        monkeypatch.setattr(fpn_runner.db, name, recorder(name))
+    runner = object.__new__(fpn_runner.FpnRunner)
+    runner.pool = object()
+    asyncio.run(runner._read_stack_rows())
+    assert len(seen) == 4 and all(w == window for _, w in seen)
