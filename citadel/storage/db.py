@@ -587,7 +587,9 @@ FUNDIES_DAY_AHEAD_COLUMNS = [
     "indo_da_ndf_delta", "fake_wind_ot_da_winfor_delta", "domestic_tight_delta", "interconnector_ng", "latest_resid",
 ]
 
-FUNDIES_ENTSOE_FLOWS_COLUMNS = ["eleclink_net", "uk_ifa_net", "uk_ifa2_net", "uk_nl_net", "uk_be_net", "uk_norway_net", "uk_dk_net"]
+FUNDIES_ENTSOE_SCHEDULED_COLUMNS = ["eleclink_net", "uk_ifa_net", "uk_ifa2_net", "uk_nl_net", "uk_be_net", "uk_norway_net", "uk_dk_net"]
+# The total (intraday-updated) schedule under its plain name, the day-ahead schedule under `da_<name>`.
+FUNDIES_ENTSOE_FLOWS_COLUMNS = FUNDIES_ENTSOE_SCHEDULED_COLUMNS + ["da_" + c for c in FUNDIES_ENTSOE_SCHEDULED_COLUMNS]
 FUNDIES_SEMO_FLOWS_COLUMNS = ["intew_net", "intmoyle_net", "intgrnl_net"]
 FUNDIES_IMBALNGC_COLUMNS = ["imbalngc"]
 FUNDIES_LOLP_COLUMNS = ["derated_margin", "lolp", "publish_time"]
@@ -626,6 +628,34 @@ async def fundies_cache_rows(pool: asyncpg.Pool, table: str, sds: list[date]) ->
         f"SELECT * FROM {table} WHERE settlement_date = ANY($1::date[])",  # noqa: S608
         sds,
     )
+
+
+def _missing(v) -> bool:
+    return v is None or (isinstance(v, float) and v != v)
+
+
+def merge_scheduled_flows(rows: list[dict]) -> list[dict]:
+    """One value per pair per period: the total (intraday-updated) schedule where ENTSO-E has published one, the
+    day-ahead schedule until then. The plain column names carry the merged value; the `da_` columns are left as
+    they are, and `<name>_source` says which one the plain value came from ("intraday" or "day-ahead")."""
+    out = []
+    for r in rows:
+        r = dict(r)
+        for c in FUNDIES_ENTSOE_SCHEDULED_COLUMNS:
+            total, dayahead = r.get(c), r.get("da_" + c)
+            if not _missing(total):
+                r[c + "_source"] = "intraday"
+            elif not _missing(dayahead):
+                r[c], r[c + "_source"] = dayahead, "day-ahead"
+            else:
+                r[c], r[c + "_source"] = None, None
+        out.append(r)
+    return out
+
+
+async def fundies_entsoe_rows(pool: asyncpg.Pool, sds: list[date]) -> list[dict]:
+    """The ENTSO-E scheduled flows for these dates, day-ahead and intraday already merged (see above)."""
+    return merge_scheduled_flows([dict(r) for r in await fundies_cache_rows(pool, "fundies_entsoe_flows", sds)])
 
 
 async def fundies_epex_existing_delivery_dates(pool: asyncpg.Pool) -> set[date]:

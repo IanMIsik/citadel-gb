@@ -312,14 +312,15 @@ class FundiesRunner:
             date_range = entsoe_flows.get_entsoe_date_range()
             flows = await entsoe_flows.fetch_all_pairs(self.settings.entsoe_key, date_range)
             if not flows.empty:
-                flows = flows.rename(columns=fundies_engine.ENTSOE_NET_COLUMN_RENAME)
+                flows = flows.rename(columns=fundies_engine.ENTSOE_NET_COLUMN_RENAME | {
+                    "da_" + k: "da_" + v for k, v in fundies_engine.ENTSOE_NET_COLUMN_RENAME.items()})
                 sd, sp = fundies_engine._sp_from_timestamps(pd.to_datetime(flows["gmt_time"], utc=True))
                 flows = fundies_engine.broadcast_hourly_to_half_hourly(
                     flows.assign(settlementDate=sd, settlementPeriod=sp).drop(columns=["gmt_time"])
                 )
                 cache_rows = [
                     {"settlement_date": r["settlementDate"], "settlement_period": r["settlementPeriod"],
-                     **{c: r.get(c) for c in db.FUNDIES_ENTSOE_FLOWS_COLUMNS}}
+                     **{c: (None if pd.isna(r.get(c)) else r.get(c)) for c in db.FUNDIES_ENTSOE_FLOWS_COLUMNS}}
                     for r in flows.to_dict("records")
                 ]
                 await db.upsert_fundies_cache(self.pool, "fundies_entsoe_flows", db.FUNDIES_ENTSOE_FLOWS_COLUMNS, cache_rows)
@@ -446,7 +447,7 @@ class FundiesRunner:
             cur.settlement_date - timedelta(days=1), cur.settlement_date, cur.settlement_date + timedelta(days=1),
         } | {sd for sd, _ in rolling_window()})
 
-        entsoe_rows = await db.fundies_cache_rows(self.pool, "fundies_entsoe_flows", dates)
+        entsoe_rows = await db.fundies_entsoe_rows(self.pool, dates)
         semo_rows = await db.fundies_cache_rows(self.pool, "fundies_semo_flows", dates)
         imbalngc_rows = await db.fundies_cache_rows(self.pool, "fundies_imbalngc", dates)
         lolp_rows = await db.fundies_cache_rows(self.pool, "fundies_lolp", dates)

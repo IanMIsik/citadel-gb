@@ -859,6 +859,14 @@ td[data-heat="interconnector_ng"] {
   font-weight: 700;
 }
 
+/* Interconnector values still on ENTSO-E's day-ahead schedule (no intraday revision yet): italic with a faint dotted
+   underline, so they read as "provisional" next to the upright intraday ones. The tooltip says which is which. */
+td[data-source="day-ahead"] {
+  font-style: italic;
+  text-decoration: underline dotted rgba(255, 255, 255, 0.4);
+  text-underline-offset: 3px;
+}
+
 /* A non-zero loss of load probability (fundies.js's `lolp` row): bold white on its amber/orange/red level colour. */
 td[data-alert="1"] {
   color: #fff;

@@ -538,7 +538,14 @@ async def fundies_real_time(settlement_date: date | None = None):
 async def fundies_day_ahead(settlement_date: date | None = None):
     sd = settlement_date or current_period().settlement_date
     records = await db.fundies_day_ahead_for_date(app.state.pool, sd)
-    return {"settlement_date": sd.isoformat(), "rows": [_clean_record(r) for r in records]}
+    rows = [_clean_record(r) for r in records]
+    # Which ENTSO-E schedule each interconnector value came from ("intraday" or "day-ahead"), for the table's tooltips.
+    sources = {r["settlement_period"]: r for r in await db.fundies_entsoe_rows(app.state.pool, [sd])}
+    for row in rows:
+        src = sources.get(row["settlement_period"], {})
+        for col in db.FUNDIES_ENTSOE_SCHEDULED_COLUMNS:
+            row[col + "_source"] = src.get(col + "_source")
+    return {"settlement_date": sd.isoformat(), "rows": rows}
 
 
 @app.get("/api/fundies/interconnectors")
@@ -549,7 +556,7 @@ async def fundies_interconnectors(settlement_date: date | None = None):
     scheduled-vs-real overlay.
     """
     sd = settlement_date or current_period().settlement_date
-    entsoe_rows = await db.fundies_cache_rows(app.state.pool, "fundies_entsoe_flows", [sd])
+    entsoe_rows = await db.fundies_entsoe_rows(app.state.pool, [sd])
     semo_rows = await db.fundies_cache_rows(app.state.pool, "fundies_semo_flows", [sd])
     real_rows = await db.fundies_real_time_for_date(app.state.pool, sd)
     return {

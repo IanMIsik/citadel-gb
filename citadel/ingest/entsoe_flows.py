@@ -39,24 +39,23 @@ PAIRS: list[tuple[str, str]] = [
 
 
 def get_entsoe_date_range(now: pd.Timestamp | None = None) -> list[pd.Timestamp]:
-    """Yesterday and today always (the Fundies date selector lets a trader
-    look at yesterday's fundamentals too, and ENTSO-E's own scheduled-
-    exchange history is queryable same as any other day); tomorrow too
-    once London local time reaches 15:00 -- ENTSO-E's day-ahead schedules
-    for tomorrow aren't published before then, same cutoff as the
-    notebook's own get_entsoe_date_range() (which only ever looked at
-    today/tomorrow, since the notebook's own Sheet had no "yesterday" view).
+    """Yesterday, today and tomorrow, always. Tomorrow is asked for from the start of the day, not only after a
+    cut-off hour: ENTSO-E answers with whatever it has for the range, so tomorrow's day-ahead schedules appear
+    in the cache the first time they are published (typically early-to-mid afternoon) instead of waiting for a
+    fixed clock time.
     """
     now = (now or pd.Timestamp.now(tz=LONDON)).tz_convert(LONDON)
     today = now.normalize()
-    dates = [today - pd.Timedelta(days=1), today]
-    if now.hour >= 15:
-        dates.append(today + pd.Timedelta(days=1))
-    return dates
+    return [today - pd.Timedelta(days=1), today, today + pd.Timedelta(days=1)]
+
+
+# ENTSO-E's per-host connection pool is small; a handful of requests at a time keeps it from thrashing.
+_REQUEST_SLOTS = 8
 
 
 async def _fetch_direction(
-    client: EntsoePandasClient, from_country: str, to_country: str, start: pd.Timestamp, end: pd.Timestamp, dayahead: bool
+    client: EntsoePandasClient, from_country: str, to_country: str, start: pd.Timestamp, end: pd.Timestamp, dayahead: bool,
+    slots: asyncio.Semaphore | None = None,
 ) -> pd.Series:
     # entsoe-py's @month_limited decorator (which splits the request into
     # per-month chunks under the hood) requires `start`/`end` as keyword
@@ -64,44 +63,51 @@ async def _fetch_direction(
     # "missing 2 required keyword-only arguments: 'start' and 'end'"
     # despite the underlying method's own signature accepting them
     # positionally.
-    return await asyncio.to_thread(
-        lambda: client.query_scheduled_exchanges(from_country, to_country, start=start, end=end, dayahead=dayahead)
-    )
+    def call():
+        return client.query_scheduled_exchanges(from_country, to_country, start=start, end=end, dayahead=dayahead)
+
+    if slots is None:
+        return await asyncio.to_thread(call)
+    async with slots:
+        return await asyncio.to_thread(call)
 
 
 async def fetch_pair_net_flow(
-    client: EntsoePandasClient, from_country: str, to_country: str, start: pd.Timestamp, end: pd.Timestamp
+    client: EntsoePandasClient, from_country: str, to_country: str, start: pd.Timestamp, end: pd.Timestamp,
+    dayahead: bool = False, slots: asyncio.Semaphore | None = None,
 ) -> pd.Series | None:
-    """Net flow from `from_country` to `to_country` (positive = net export
-    from `from_country`), named f"{from_country}_to_{to_country}_net",
-    UTC-indexed. Tries the intraday schedule first, falls back to the
-    day-ahead schedule on any failure (same as the notebook's own
-    fetch_pair_flows) -- ENTSO-E commonly has gaps for some pairs/periods
-    (the notebook notes Norway specifically can lack the day's last hour),
-    so a single pair failing returns None for that pair only, not the
-    whole batch.
+    """Net flow from `from_country` to `to_country` (positive = net export from `from_country`), UTC-indexed,
+    for ONE of the two ENTSO-E schedules:
+
+    - `dayahead=False`: the TOTAL commercial schedule (day-ahead plus every intraday revision), named
+      f"{from_country}_to_{to_country}_net". It only covers the days that have intraday revisions so far
+      (often just today), and is the more accurate figure wherever it exists.
+    - `dayahead=True`: the day-ahead schedule, named f"da_{from_country}_to_{to_country}_net". It covers
+      tomorrow as soon as it is published.
+
+    The two are fetched independently (a failure in one never costs the other) and stored side by side;
+    db.merge_scheduled_flows() puts the total over the day-ahead value period by period, so an intraday value
+    replaces the day-ahead one the moment it comes through. A pair with no data for a schedule returns None
+    for that schedule only (ENTSO-E commonly has gaps; Norway can lack the day's last hour).
     """
-    name = f"{from_country}_to_{to_country}_net"
-    for dayahead in (False, True):
-        try:
-            flow_out, flow_in = await asyncio.gather(
-                _fetch_direction(client, from_country, to_country, start, end, dayahead),
-                _fetch_direction(client, to_country, from_country, start, end, dayahead),
-            )
-            net = flow_in.tz_convert("UTC") - flow_out.tz_convert("UTC")
-            net.name = name
-            return net
-        except Exception:
-            if dayahead:
-                logger.warning("ENTSO-E fetch failed for %s (both intraday and day-ahead)", name, exc_info=True)
-                return None
-    return None
+    name = f"{'da_' if dayahead else ''}{from_country}_to_{to_country}_net"
+    try:
+        flow_out, flow_in = await asyncio.gather(
+            _fetch_direction(client, from_country, to_country, start, end, dayahead, slots),
+            _fetch_direction(client, to_country, from_country, start, end, dayahead, slots),
+        )
+        net = flow_in.tz_convert("UTC") - flow_out.tz_convert("UTC")
+        net.name = name
+        return net
+    except Exception:
+        logger.warning("ENTSO-E %s fetch failed for %s", "day-ahead" if dayahead else "total-schedule", name, exc_info=True)
+        return None
 
 
 async def fetch_all_pairs(api_key: str, date_range: list[pd.Timestamp]) -> pd.DataFrame:
-    """One column per PAIRS entry, UTC-indexed (column `gmt_time`), net
-    flow in MW, covering the whole span of `date_range` (its earliest
-    entry through one day past its latest).
+    """Two columns per PAIRS entry -- the total schedule (f"{from}_to_{to}_net") and the day-ahead one (the same
+    name with a `da_` prefix) -- UTC-indexed (column `gmt_time`), net flow in MW, covering the whole span of
+    `date_range` (its earliest entry through one day past its latest).
 
     Fetches each pair exactly ONCE across that whole span, not once per
     (day, pair) combination -- confirmed live: looping per day produced
@@ -120,7 +126,9 @@ async def fetch_all_pairs(api_key: str, date_range: list[pd.Timestamp]) -> pd.Da
     client = EntsoePandasClient(api_key=api_key, timeout=45)
     start = min(date_range)
     end = max(date_range) + pd.Timedelta(days=1)
-    tasks = [fetch_pair_net_flow(client, from_c, to_c, start, end) for from_c, to_c in PAIRS]
+    slots = asyncio.Semaphore(_REQUEST_SLOTS)
+    tasks = [fetch_pair_net_flow(client, from_c, to_c, start, end, dayahead, slots)
+             for dayahead in (False, True) for from_c, to_c in PAIRS]
 
     results = await asyncio.gather(*tasks)
     series_list = [s for s in results if s is not None]

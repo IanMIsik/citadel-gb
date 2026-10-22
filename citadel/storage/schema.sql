@@ -352,6 +352,16 @@ CREATE TABLE IF NOT EXISTS fundies_entsoe_flows (
     PRIMARY KEY (settlement_date, settlement_period)
 );
 
+-- Day-ahead schedule for each pair, kept beside the total (intraday-updated) schedule above. The page shows the
+-- total value where there is one and the day-ahead value until then (db.merge_scheduled_flows).
+ALTER TABLE fundies_entsoe_flows ADD COLUMN IF NOT EXISTS da_eleclink_net DOUBLE PRECISION;
+ALTER TABLE fundies_entsoe_flows ADD COLUMN IF NOT EXISTS da_uk_ifa_net DOUBLE PRECISION;
+ALTER TABLE fundies_entsoe_flows ADD COLUMN IF NOT EXISTS da_uk_ifa2_net DOUBLE PRECISION;
+ALTER TABLE fundies_entsoe_flows ADD COLUMN IF NOT EXISTS da_uk_nl_net DOUBLE PRECISION;
+ALTER TABLE fundies_entsoe_flows ADD COLUMN IF NOT EXISTS da_uk_be_net DOUBLE PRECISION;
+ALTER TABLE fundies_entsoe_flows ADD COLUMN IF NOT EXISTS da_uk_norway_net DOUBLE PRECISION;
+ALTER TABLE fundies_entsoe_flows ADD COLUMN IF NOT EXISTS da_uk_dk_net DOUBLE PRECISION;
+
 CREATE TABLE IF NOT EXISTS fundies_semo_flows (
     settlement_date   DATE NOT NULL,
     settlement_period INTEGER NOT NULL,

@@ -89,6 +89,13 @@ function fmtLolp(value) {
   return value < 0.0001 ? value.toExponential(1) : String(parseFloat(value.toFixed(4)));
 }
 
+// Interconnector flows come from ENTSO-E's total schedule (day-ahead plus every intraday revision) where one has been
+// published, and from its day-ahead schedule until then -- the API says which, per cell.
+const SCHEDULE_SOURCE_TIPS = {
+  "intraday": "Intraday: ENTSO-E total schedule (day-ahead plus intraday revisions)",
+  "day-ahead": "Day-ahead schedule: no intraday revision published yet, replaced automatically when one is",
+};
+
 function fmtCell(value, native, digits, prefix) {
   if (value === null || value === undefined || Number.isNaN(value)) return "";
   const scaled = native ? value : value / 1000;
@@ -293,7 +300,10 @@ function renderFundiesTable(rtRows, daRows) {
       const sign = Number.isNaN(v) ? "" : String(v);
       const heatAttr = cfg.heat ? ` data-heat="${cfg.heat}"` : "";
       const alertAttr = cfg.lolp && v > 0 ? ' data-alert="1"' : "";
-      return `<td data-name="${cfg.key}"${heatAttr}${alertAttr} data-sign="${sign}" style="${style}">${text}</td>`;
+      const source = Number.isNaN(v) ? null : merged.get(SETTLEMENT_PERIODS[i])[`${cfg.key}_source`];
+      const tip = SCHEDULE_SOURCE_TIPS[source];
+      const sourceAttr = tip ? ` data-source="${source}" title="${tip}"` : "";
+      return `<td data-name="${cfg.key}"${heatAttr}${alertAttr}${sourceAttr} data-sign="${sign}" style="${style}">${text}</td>`;
     }).join("");
     const rowClass = cfg.rt ? ' class="fundies-rt-row"' : "";
     // A blank, borderless spacer row between metric groups (interconnectors,
@@ -309,9 +319,11 @@ function renderFundiesTable(rtRows, daRows) {
 
 // ---- loss of load probability pop-up -------------------------------------------------------------------------
 // Looks at today and tomorrow (whatever date is on screen) for any period that has not finished yet and has a
-// non-zero LOLP, and raises one pop-up + the alarm whenever a (period, value) not yet announced on this page
-// shows up. Runs after every Fundies update.
-const lolpAnnounced = new Set();
+// non-zero LOLP, and raises one pop-up + the alarm for each period not yet announced on this page -- and again for a
+// period already announced only if its LOLP has at least doubled since (NESO republishes every half hour and the
+// figure drifts slightly, which should not ring the alarm each time). Runs after every Fundies update.
+const lolpAnnounced = new Map();      // "date:sp" -> the LOLP last announced
+const LOLP_REALERT_FACTOR = 2;
 
 function londonNowParts() {
   const f = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false });
@@ -350,9 +362,10 @@ async function checkLolpAlerts() {
       rows.forEach((r) => {
         if (!(Number(r.lolp) > 0)) return;
         if (date === today && r.settlement_period * 30 <= now.minutes) return;     // period already over
-        const key = `${date}:${r.settlement_period}:${r.lolp}`;
-        if (lolpAnnounced.has(key)) return;
-        lolpAnnounced.add(key);
+        const key = `${date}:${r.settlement_period}`;
+        const before = lolpAnnounced.get(key);
+        if (before !== undefined && Number(r.lolp) < before * LOLP_REALERT_FACTOR) return;
+        lolpAnnounced.set(key, Number(r.lolp));
         fresh.push({ date, sp: r.settlement_period, lolp: Number(r.lolp), margin: r.derated_margin });
       });
     }
