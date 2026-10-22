@@ -315,8 +315,14 @@ async def fpn_aggregated_for_period(pool: asyncpg.Pool, sd: date, sp: int) -> li
     )
 
 
-async def fpn_by_fuel_sp_summary(pool: asyncpg.Pool, sd: date, periods: list[int]) -> list[asyncpg.Record]:
-    """Per (settlement_period, fuel_type) period-average of fpn_spot_vol/
+def _window_arrays(window: list[tuple[date, int]]) -> tuple[list[date], list[int]]:
+    """A (date, period) window as the two parallel arrays UNNEST() joins on. Filtering on one date plus a list of periods dropped
+    every period of the next settlement day, so SP1 and SP2 vanished from the FPN page while SP47-48 were current."""
+    return [sd for sd, _ in window], [sp for _, sp in window]
+
+
+async def fpn_by_fuel_sp_summary(pool: asyncpg.Pool, window: list[tuple[date, int]]) -> list[asyncpg.Record]:
+    """Per (settlement_date, settlement_period, fuel_type) period-average of fpn_spot_vol/
     mel_mil_drop/market_gen_vs_adj_fpn -- backs the FPN-by-fuel, MEL/MIL-
     drop, and market-gen-vs-adjusted-FPN tables on the FPN Analytics page
     (fpn_delta, the period-over-period FPN change, is derived from this
@@ -324,21 +330,22 @@ async def fpn_by_fuel_sp_summary(pool: asyncpg.Pool, sd: date, periods: list[int
     """
     return await pool.fetch(
         """
-        SELECT settlement_period, fuel_type,
-               AVG(fpn_spot_vol) AS fpn_spot_vol,
-               AVG(mel_spot_vol) AS mel_spot_vol,
-               AVG(mel_mil_drop) AS mel_mil_drop,
-               AVG(market_gen_vs_adj_fpn) AS market_gen_vs_adj_fpn
-        FROM fpn_by_fuel
-        WHERE settlement_date = $1 AND settlement_period = ANY($2::int[])
-        GROUP BY settlement_period, fuel_type
-        ORDER BY settlement_period, fuel_type
+        SELECT f.settlement_date, f.settlement_period, f.fuel_type,
+               AVG(f.fpn_spot_vol) AS fpn_spot_vol,
+               AVG(f.mel_spot_vol) AS mel_spot_vol,
+               AVG(f.mel_mil_drop) AS mel_mil_drop,
+               AVG(f.market_gen_vs_adj_fpn) AS market_gen_vs_adj_fpn
+        FROM fpn_by_fuel f
+        JOIN UNNEST($1::date[], $2::int[]) AS win(settlement_date, settlement_period)
+          ON f.settlement_date = win.settlement_date AND f.settlement_period = win.settlement_period
+        GROUP BY f.settlement_date, f.settlement_period, f.fuel_type
+        ORDER BY f.settlement_date, f.settlement_period, f.fuel_type
         """,
-        sd, periods,
+        *_window_arrays(window),
     )
 
 
-async def fpn_decision_drivers_sp(pool: asyncpg.Pool, sd: date, periods: list[int]) -> list[asyncpg.Record]:
+async def fpn_decision_drivers_sp(pool: asyncpg.Pool, window: list[tuple[date, int]]) -> list[asyncpg.Record]:
     """Per-settlement-period averages of the decision table's own drivers
     -- backs both the compact AUC/delta/niv_error/dmd_risk/dmd_error/unexp
     table and the niv_estimate decision table, one row per period instead
@@ -346,7 +353,7 @@ async def fpn_decision_drivers_sp(pool: asyncpg.Pool, sd: date, periods: list[in
     """
     return await pool.fetch(
         """
-        SELECT settlement_period,
+        SELECT a.settlement_date, a.settlement_period,
                AVG(area_under_curve) AS auc,
                AVG(delta) AS delta,
                AVG(niv_error) AS niv_error,
@@ -362,24 +369,30 @@ async def fpn_decision_drivers_sp(pool: asyncpg.Pool, sd: date, periods: list[in
                AVG(other_gen_deviation) AS other_gen_deviation,
                AVG(niv_estimate) AS niv_estimate,
                AVG(niv_sp_max) AS niv_sp_max
-        FROM fpn_aggregated
-        WHERE settlement_date = $1 AND settlement_period = ANY($2::int[])
-        GROUP BY settlement_period
-        ORDER BY settlement_period
+        FROM fpn_aggregated a
+        JOIN UNNEST($1::date[], $2::int[]) AS win(settlement_date, settlement_period)
+          ON a.settlement_date = win.settlement_date AND a.settlement_period = win.settlement_period
+        GROUP BY a.settlement_date, a.settlement_period
+        ORDER BY a.settlement_date, a.settlement_period
         """,
-        sd, periods,
+        *_window_arrays(window),
     )
 
 
-async def fpn_aggregated_for_periods(pool: asyncpg.Pool, sd: date, periods: list[int]) -> list[asyncpg.Record]:
+async def fpn_aggregated_for_periods(pool: asyncpg.Pool, window: list[tuple[date, int]]) -> list[asyncpg.Record]:
     """Per-minute rows across the whole rolling window (not just the
     current settlement period) -- backs the real reference app "Forecast Chart",
     which plots every SP in the window as one continuous multi-line series,
     not just the ~30 minutes of whichever period is current.
     """
     return await pool.fetch(
-        "SELECT * FROM fpn_aggregated WHERE settlement_date = $1 AND settlement_period = ANY($2::int[]) ORDER BY spot_time",
-        sd, periods,
+        """
+        SELECT a.* FROM fpn_aggregated a
+        JOIN UNNEST($1::date[], $2::int[]) AS win(settlement_date, settlement_period)
+          ON a.settlement_date = win.settlement_date AND a.settlement_period = win.settlement_period
+        ORDER BY a.spot_time
+        """,
+        *_window_arrays(window),
     )
 
 
@@ -485,19 +498,20 @@ async def pricing_stack_unit_delta_5min_by_period(pool: asyncpg.Pool, sd: date, 
     )
 
 
-async def fpn_market_gen_vs_adj_fpn_series(pool: asyncpg.Pool, sd: date, periods: list[int]) -> list[asyncpg.Record]:
+async def fpn_market_gen_vs_adj_fpn_series(pool: asyncpg.Pool, window: list[tuple[date, int]]) -> list[asyncpg.Record]:
     """Per-minute, per-fuel-type `market_gen_vs_adj_fpn` across the window
     -- backs the real "Market_gen vs Adj_fpn" chart on the reference app home page
     (per-fuel-type toggleable lines, not one aggregate line).
     """
     return await pool.fetch(
         """
-        SELECT spot_time, fuel_type, market_gen_vs_adj_fpn
-        FROM fpn_by_fuel
-        WHERE settlement_date = $1 AND settlement_period = ANY($2::int[])
-        ORDER BY spot_time
+        SELECT f.spot_time, f.fuel_type, f.market_gen_vs_adj_fpn
+        FROM fpn_by_fuel f
+        JOIN UNNEST($1::date[], $2::int[]) AS win(settlement_date, settlement_period)
+          ON f.settlement_date = win.settlement_date AND f.settlement_period = win.settlement_period
+        ORDER BY f.spot_time
         """,
-        sd, periods,
+        *_window_arrays(window),
     )
 
 

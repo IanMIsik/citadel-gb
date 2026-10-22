@@ -928,7 +928,10 @@ def build_spot_time_grids(start: pd.Timestamp, end: pd.Timestamp) -> tuple[pd.Da
     spot_time_utc = demand_spot_times["spot_time"]
     if spot_time_utc.dt.tz is None:
         spot_time_utc = spot_time_utc.dt.tz_localize("UTC")
-    demand_spot_times["settlementDate"] = pd.to_datetime(demand_spot_times["spot_time"].dt.date)
+    # The settlement DATE is the London calendar date, like the period. The UTC date is a day early for the first hour of every
+    # settlement day in summer time (SP1-SP2 are 23:00-00:00 UTC of the day before), so those minutes carried the wrong key, never
+    # matched the forecast rows published for the real date, and the demand side (NDF, INDO, AUC, NIV error) was empty for them.
+    demand_spot_times["settlementDate"] = pd.to_datetime(spot_time_utc.dt.tz_convert(stack_engine.LONDON).dt.date)
     demand_spot_times["settlementPeriod"] = stack_engine._settlement_period_col(spot_time_utc)
 
     mid_spot_times = demand_spot_times[["spot_time"]].copy()

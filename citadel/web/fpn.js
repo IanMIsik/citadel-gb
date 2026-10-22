@@ -45,6 +45,21 @@ const DELTA_SERIES = [
   { key: "niv_error", label: "niv_error", color: "green" },
 ];
 
+// Rows carry their own settlement_date. Ordering by the period number alone puts SP1 (tomorrow) before SP45 (today) in the
+// window that straddles midnight, and makes "the latest period" SP48 instead of SP1.
+function spOrder(r) {
+  return `${r.settlement_date || ""}|${String(r.settlement_period).padStart(2, "0")}`;
+}
+
+function bySpOrder(a, b) {
+  const x = spOrder(a), y = spOrder(b);
+  return x < y ? -1 : x > y ? 1 : 0;
+}
+
+function sortedPeriods(rows) {
+  return [...new Map(rows.slice().sort(bySpOrder).map((r) => [r.settlement_period, r])).keys()];
+}
+
 function fmt(value, digits = 1) {
   return value == null || Number.isNaN(Number(value)) ? "--" : Number(value).toFixed(digits);
 }
@@ -350,7 +365,7 @@ function renderFuelPivot(tableId, rows, valueKey, digits = 0, shadeMode = null) 
   const table = document.getElementById(tableId);
   const cell = shadeMode === "delta" ? tdDeltaShaded : shadeMode === "magnitude" ? tdShaded : td;
   const fuelTypes = [...new Set(rows.map((r) => r.fuel_type))].filter(Boolean).sort();
-  const periods = [...new Set(rows.map((r) => r.settlement_period))].sort((a, b) => a - b);
+  const periods = sortedPeriods(rows);
   const byKey = new Map(rows.map((r) => [`${r.settlement_period}|${r.fuel_type}`, r[valueKey]]));
 
   table.querySelector("thead tr").innerHTML = "<th>Fuel</th>" + periods.map((sp) => `<th>SP${sp}</th>`).join("");
@@ -386,10 +401,11 @@ function computeFpnDelta(byFuelSp) {
   }
   const out = [];
   for (const [fuel_type, rows] of byFuel) {
-    rows.sort((a, b) => a.settlement_period - b.settlement_period);
+    rows.sort(bySpOrder);
     rows.forEach((row, i) => {
       const previous = rows[i - 1];
       out.push({
+        settlement_date: row.settlement_date,
         settlement_period: row.settlement_period,
         fuel_type,
         fpn_delta: previous ? row.fpn_spot_vol - previous.fpn_spot_vol : null,
@@ -418,7 +434,7 @@ function excludeInterconnectorsAndNatgrid(rows) {
 // table on the page rather than this pair's own previous row-per-SP shape.
 function renderMetricPivot(tableId, rows, columns, labels) {
   const table = document.getElementById(tableId);
-  const periods = [...new Set(rows.map((r) => r.settlement_period))].sort((a, b) => a - b);
+  const periods = sortedPeriods(rows);
   const byPeriod = new Map(rows.map((r) => [r.settlement_period, r]));
 
   table.querySelector("thead tr").innerHTML = "<th>Metric</th>" + periods.map((sp) => `<th>SP${sp}</th>`).join("");
@@ -480,7 +496,7 @@ async function loadDashboard() {
   const melValues = byFuelSp.map((r) => r.mel_spot_vol).filter((v) => v != null);
   setFigure("stat-avg-of-mells", melValues.length ? melValues.reduce((a, b) => a + b, 0) / melValues.length : null);
 
-  const latestSp = Math.max(...byFuelSp.map((r) => r.settlement_period));
+  const latestSp = byFuelSp.length ? byFuelSp.reduce((a, b) => (bySpOrder(a, b) >= 0 ? a : b)).settlement_period : null;
   const latestDropSum = byFuelSp.filter((r) => r.settlement_period === latestSp)
     .reduce((sum, r) => sum + (r.mel_mil_drop || 0), 0);
   setFigure("stat-sum-mel-mil-drop", byFuelSp.length ? latestDropSum : null);
@@ -626,7 +642,7 @@ function decisionInputNumber(id) {
 
 function latestByPeriod(rows) {
   if (!rows.length) return null;
-  return rows.reduce((a, b) => (a.settlement_period > b.settlement_period ? a : b));
+  return rows.reduce((a, b) => (bySpOrder(a, b) >= 0 ? a : b));
 }
 
 // FPN for a specific fuel type at a specific (trader-chosen) settlement

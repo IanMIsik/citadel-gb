@@ -454,3 +454,38 @@ def test_generic_interconnector_units_get_their_code_from_the_name_never_other()
     assert dict(zip(off["bmUnit"], off["FT"])) == {**expected_inter, "T_D": "WIND"}
     # with the fallback: batteries etc. become OTHER; the unplaceable interconnector unit is dropped, not OTHER
     assert dict(zip(on["bmUnit"], on["FT"])) == {**expected_inter, "E_A": "OTHER", "E_B": "OTHER", "T_D": "WIND"}
+
+
+def test_dashboard_window_keeps_the_next_settlement_day_across_midnight():
+    # SP48 is current: the window runs SP45..SP48 of one day and SP1..SP2 of the next. The FPN dashboard used to keep only the
+    # current date's periods, so the first two periods of the new day were missing from every table and chart.
+    from datetime import date
+    from citadel.settlement import window_around
+    from citadel.storage.db import _window_arrays
+
+    window = window_around(date(2026, 10, 22), 48)
+    dates, periods = _window_arrays(window)
+    assert (date(2026, 10, 23), 1) in window and (date(2026, 10, 23), 2) in window
+    assert list(zip(dates, periods)) == window
+    assert len(dates) == len(periods) == 6
+
+
+def test_demand_grid_uses_the_settlement_date_not_the_utc_date_in_summer_time():
+    # 2026-10-22 is still British Summer Time: SP1 of settlement day 23 Oct starts at 23:00 UTC on the 22nd. The grid used the UTC
+    # date, so those minutes were keyed (22 Oct, SP1) and never met the NDF/INDO rows published for (23 Oct, SP1).
+    import pandas as pd
+    from citadel.engine.fpn import build_demand_frame, build_spot_time_grids
+
+    start, end = pd.Timestamp("2026-10-22T22:00:00Z"), pd.Timestamp("2026-10-23T01:00:00Z")
+    grid, _ = build_spot_time_grids(start, end)
+    row = grid[grid["spot_time"] == pd.Timestamp("2026-10-22T23:10:00Z")].iloc[0]
+    assert (row["settlementDate"], row["settlementPeriod"]) == (pd.Timestamp("2026-10-23"), 1)
+
+    def published(value):
+        return [{"settlementDate": d, "settlementPeriod": sp, "publishTime": "2026-10-22T20:00:00Z", "demand": value + sp}
+                for d, sp in [("2026-10-22", 48), ("2026-10-23", 1), ("2026-10-23", 2), ("2026-10-23", 3)]]
+
+    demand = build_demand_frame(published(30000), [], [], [], [], start, end)
+    at = demand[demand["spot_time"] == pd.Timestamp("2026-10-22T23:10:00Z")]
+    assert len(at) == 1 and at["spot_latest_ndf"].notna().all()
+    assert (demand["settlementDate"] == pd.Timestamp("2026-10-22")).sum() == 60       # 22:00-22:59 UTC only

@@ -339,13 +339,13 @@ async def fpn_dashboard():
     window, not just the current one).
     """
     cur = current_period()
+    # The window as (date, period) pairs: near midnight it holds the end of one settlement day and the start of the next.
     periods = window_around(cur.settlement_date, cur.settlement_period)
-    same_date_periods = [sp for sd, sp in periods if sd == cur.settlement_date]
 
-    by_fuel_sp = await db.fpn_by_fuel_sp_summary(app.state.pool, cur.settlement_date, same_date_periods)
-    decision_drivers_sp = await db.fpn_decision_drivers_sp(app.state.pool, cur.settlement_date, same_date_periods)
-    market_gen_vs_adj_fpn_series = await db.fpn_market_gen_vs_adj_fpn_series(app.state.pool, cur.settlement_date, same_date_periods)
-    aggregated_window = await db.fpn_aggregated_for_periods(app.state.pool, cur.settlement_date, same_date_periods)
+    by_fuel_sp = await db.fpn_by_fuel_sp_summary(app.state.pool, periods)
+    decision_drivers_sp = await db.fpn_decision_drivers_sp(app.state.pool, periods)
+    market_gen_vs_adj_fpn_series = await db.fpn_market_gen_vs_adj_fpn_series(app.state.pool, periods)
+    aggregated_window = await db.fpn_aggregated_for_periods(app.state.pool, periods)
     return {
         "settlement_date": cur.settlement_date.isoformat(),
         "current_settlement_period": cur.settlement_period,
