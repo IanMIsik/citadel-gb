@@ -135,6 +135,35 @@ class FpnBuffers:
         self.neso_trades: list[dict] = []
 
 
+_PERSIST_KEYS = {
+    "fpn_by_fuel": ("settlement_date", "settlement_period", "spot_time", "fuel_type"),
+    "fpn_worst_deviants": ("bm_unit", "settlement_date", "settlement_period", "spot_time"),
+    "fpn_aggregated": ("settlement_date", "settlement_period", "spot_time"),
+}
+
+
+def _drop_duplicate_keys(table: str, rows: list[dict]) -> list[dict]:
+    """A recompute that produces two rows for one primary key (a source republished or double-counted something) used to fail the
+    WHOLE persist with a unique-key violation, so nothing new reached the database -- including the FUELINST table written after it.
+    Keep the last row for each key, and say loudly which rows collided and in which columns they differ, so the cause can be found."""
+    key_cols = _PERSIST_KEYS.get(table)
+    if not key_cols or not rows:
+        return rows
+    kept: dict[tuple, dict] = {}
+    seen: dict[tuple, list[dict]] = {}
+    for r in rows:
+        k = tuple(r.get(c) for c in key_cols)
+        seen.setdefault(k, []).append(r)
+        kept[k] = r
+    dups = {k: v for k, v in seen.items() if len(v) > 1}
+    if dups:
+        k, v = next(iter(dups.items()))
+        differing = sorted(c for c in v[0] if any(x.get(c) != v[0].get(c) for x in v[1:]))
+        logger.warning("%s: %d keys had more than one row in this recompute (kept the last of each). First: %s x%d, columns that differ: %s",
+                       table, len(dups), dict(zip(key_cols, k)), len(v), differing[:12])
+    return list(kept.values())
+
+
 def _rows_for(df: pd.DataFrame, rename: dict[str, str]) -> list[dict]:
     if df.empty:
         return []
@@ -496,18 +525,24 @@ class FpnRunner:
 
         writes = []
         for table, columns, rows in tables:
+            rows = _drop_duplicate_keys(table, rows)
             by_period: dict[tuple, list[dict]] = {}
             for row in rows:
                 by_period.setdefault((row["settlement_date"], row["settlement_period"]), []).append(row)
             for (sd, sp), period_rows in by_period.items():
                 writes.append(_write(table, columns, sd, int(sp), period_rows))
-        if writes:
-            await asyncio.gather(*writes)
+        outcomes = await asyncio.gather(*writes, return_exceptions=True) if writes else []
+        failures = [o for o in outcomes if isinstance(o, BaseException)]
 
+        # The FUELINST generation table is written even when a period table failed above: it used to be skipped, so one bad period froze
+        # the FUELINST rows on the FPN page (2026-10-22: stuck for three hours).
         generation_rows = _rows_for(results.get("generation_by_fuel", pd.DataFrame()), {"TS": "ts"})
         if generation_rows:
             await db.upsert_fpn_generation_by_fuel(self.pool, generation_rows)
             await db.prune_fpn_generation_by_fuel(self.pool, datetime.now(timezone.utc) - GENERATION_BY_FUEL_RETENTION)
+        if failures:
+            logger.error("FPN persist: %d of %d period writes failed; the first: %r", len(failures), len(writes), failures[0])
+            raise failures[0]
 
     def _remit_window(self, detected_at: datetime, now: datetime) -> tuple[str, str]:
         # REMIT's own `from`/`to` window is capped at 7 days -- start a day

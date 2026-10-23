@@ -984,6 +984,9 @@ def _latest_publish_per_period(records: list[dict], value_field: str, out_name: 
     latest = df.groupby(["settlementDate", "settlementPeriod"])["publishTime"].max().reset_index()
     df = pd.merge(df, latest, on=["settlementDate", "settlementPeriod", "publishTime"])
     df = df[["settlementDate", "settlementPeriod", value_field]].rename(columns={value_field: out_name})
+    # Elexon sometimes publishes the very same record twice (2026-10-22: NDF/TSDF rows with one publishTime, repeated). Left in, they multiply
+    # every 5-minute row of that period in the joins downstream, and the duplicate keys made the whole FPN save fail.
+    df = df.drop_duplicates(subset=["settlementDate", "settlementPeriod"], keep="last")
     df["settlementDate"] = pd.to_datetime(df["settlementDate"])
     return df.sort_values(["settlementDate", "settlementPeriod"]).reset_index(drop=True)
 

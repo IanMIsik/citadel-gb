@@ -456,6 +456,71 @@ def test_generic_interconnector_units_get_their_code_from_the_name_never_other()
     assert dict(zip(on["bmUnit"], on["FT"])) == {**expected_inter, "E_A": "OTHER", "E_B": "OTHER", "T_D": "WIND"}
 
 
+# ---------------------------------------------------------------------------------------------------------------
+# a record Elexon publishes twice must not break the save (2026-10-22: NDF/TSDF rows repeated, the FPN save failed on duplicate keys
+# and the FUELINST generation table was never written again)
+# ---------------------------------------------------------------------------------------------------------------
+
+def test_a_record_published_twice_is_one_row_per_period():
+    from citadel.engine.fpn import _latest_publish_per_period
+
+    rows = [
+        {"settlementDate": "2026-10-22", "settlementPeriod": 29, "publishTime": "2026-10-22T13:18:00Z", "demand": 27459},
+        {"settlementDate": "2026-10-22", "settlementPeriod": 29, "publishTime": "2026-10-22T13:18:00Z", "demand": 27459},      # the repeat
+        {"settlementDate": "2026-10-22", "settlementPeriod": 29, "publishTime": "2026-10-22T12:48:00Z", "demand": 27000},      # older: dropped
+        {"settlementDate": "2026-10-22", "settlementPeriod": 30, "publishTime": "2026-10-22T13:18:00Z", "demand": 28000},
+    ]
+    out = _latest_publish_per_period(rows, "demand", "latest_ndf")
+    assert len(out) == 2 and out["latest_ndf"].tolist() == [27459, 28000]
+
+
+def test_duplicate_keys_in_a_recompute_are_reported_and_the_last_row_kept(caplog):
+    import logging
+
+    from citadel.engine.fpn_runner import _drop_duplicate_keys
+
+    rows = [{"settlement_date": "d", "settlement_period": 30, "spot_time": "13:45", "dmd_risk": 1.0},
+            {"settlement_date": "d", "settlement_period": 30, "spot_time": "13:45", "dmd_risk": 2.0},
+            {"settlement_date": "d", "settlement_period": 30, "spot_time": "13:50", "dmd_risk": 3.0}]
+    with caplog.at_level(logging.WARNING, logger="citadel.engine.fpn_runner"):
+        kept = _drop_duplicate_keys("fpn_aggregated", rows)
+    assert [r["dmd_risk"] for r in kept] == [2.0, 3.0]
+    assert "1 keys had more than one row" in caplog.text and "dmd_risk" in caplog.text
+    assert _drop_duplicate_keys("fpn_aggregated", rows[:1]) == rows[:1] and _drop_duplicate_keys("unknown_table", rows) == rows
+
+
+def test_one_failing_period_write_does_not_stop_the_fuelinst_generation_table_being_written(monkeypatch):
+    import asyncio
+
+    import pandas as pd
+
+    from citadel.engine import fpn_runner
+
+    written = {"periods": [], "generation": 0}
+
+    async def replace(pool, table, key_cols, sd, sp, rows, columns):
+        if sp == 31:
+            raise RuntimeError("duplicate key")
+        written["periods"].append(sp)
+
+    async def upsert_generation(pool, rows):
+        written["generation"] += len(rows)
+
+    async def prune(pool, cutoff):
+        return 0
+
+    monkeypatch.setattr(fpn_runner.db, "replace_fpn_period_rows", replace)
+    monkeypatch.setattr(fpn_runner.db, "upsert_fpn_generation_by_fuel", upsert_generation)
+    monkeypatch.setattr(fpn_runner.db, "prune_fpn_generation_by_fuel", prune)
+    runner = object.__new__(fpn_runner.FpnRunner)
+    runner.pool = object()
+    agg = pd.DataFrame({"settlementDate": ["2026-10-22"] * 3, "settlementPeriod": [30, 31, 32], "spot_time": pd.to_datetime(["2026-10-22 13:45", "2026-10-22 14:00", "2026-10-22 14:30"])})
+    gen = pd.DataFrame({"TS": pd.to_datetime(["2026-10-22 13:45"]), "fuel_type": ["WIND"]})
+    with pytest.raises(RuntimeError, match="duplicate key"):
+        asyncio.run(runner._persist({"aggregated": agg, "generation_by_fuel": gen}))
+    assert sorted(written["periods"]) == [30, 32] and written["generation"] == 1               # the other periods and the FUELINST table were written anyway
+
+
 def test_dashboard_window_keeps_the_next_settlement_day_across_midnight():
     # SP48 is current: the window runs SP45..SP48 of one day and SP1..SP2 of the next. The FPN dashboard used to keep only the
     # current date's periods, so the first two periods of the new day were missing from every table and chart.
