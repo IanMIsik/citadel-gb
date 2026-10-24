@@ -69,3 +69,16 @@ def test_one_schedule_failing_does_not_cost_the_other():
     end = start + pd.Timedelta(days=2)
     assert asyncio.run(entsoe_flows.fetch_pair_net_flow(Flaky(), "GB", "NO", start, end, dayahead=False)) is None
     assert asyncio.run(entsoe_flows.fetch_pair_net_flow(Flaky(), "GB", "NO", start, end, dayahead=True)) is not None
+
+
+def test_semo_window_covers_yesterdays_first_periods_today_and_tomorrow():
+    from datetime import datetime, timezone
+    from citadel.ingest import semo
+
+    # Early morning UTC on 24 Oct (BST): the old window ended at today's 00:00 before 15:00, so today was never fetched.
+    start, end = semo.query_window(datetime(2026, 10, 24, 8, 30, tzinfo=timezone.utc))
+    assert start <= "2026-10-22T23:00:00"          # SP1 of settlement day 23 Oct (summer time) starts at 23:00 UTC on the 22nd
+    assert end >= "2026-10-26T00:00:00"            # all of tomorrow, including the last period of a 50-period day (23:30 UTC on the 25th)
+    for hour in (0, 14, 15, 23):
+        s, e = semo.query_window(datetime(2026, 10, 24, hour, 5, tzinfo=timezone.utc))
+        assert (s, e) == (start, end)               # the same every hour: no cut-off clock time

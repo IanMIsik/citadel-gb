@@ -329,13 +329,8 @@ class FundiesRunner:
         self._dirty.set()
 
     async def _refresh_semo(self) -> None:
-        # Starts from yesterday (not just today) so the Fundies date
-        # selector's "Yesterday" option has scheduled Ireland/NI flows too
-        # -- same reasoning as entsoe_flows.get_entsoe_date_range()'s own
-        # yesterday inclusion.
-        now = datetime.now(timezone.utc)
-        start = (now - timedelta(days=1)).strftime("%Y-%m-%dT00:00:00")
-        end = (now + timedelta(hours=24)).strftime("%Y-%m-%dT00:00:00") if now.hour >= 15 else now.strftime("%Y-%m-%dT00:00:00")
+        # Yesterday (the Fundies date selector offers it) through tomorrow; see semo.query_window().
+        start, end = semo.query_window(datetime.now(timezone.utc))
         try:
             ida1, ida2 = await asyncio.gather(
                 semo.fetch_scheduled_flows(self._http, "IDA1", start, end),
