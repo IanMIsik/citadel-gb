@@ -580,3 +580,60 @@ def test_stack_rows_are_read_for_the_whole_window_across_midnight(monkeypatch):
     runner.pool = object()
     asyncio.run(runner._read_stack_rows())
     assert len(seen) == 4 and all(w == window for _, w in seen)
+
+
+def test_settlement_period_column_matches_the_settlement_calendar_through_both_clock_changes():
+    # 2026-10-25 has 50 periods (clocks go back at 02:00 BST) and 2027-03-28 has 46. The column used to read the wall clock
+    # (hour * 2 + ...), which repeats SP3-SP4 on the 50-period day and mis-numbers every later period of it by two.
+    import pandas as pd
+    from datetime import timedelta
+    from citadel.engine.stack import _settlement_period_col
+    from citadel.settlement import periods_in_day, utc_to_settlement
+
+    for start in ("2026-10-23T12:00:00Z", "2027-03-26T12:00:00Z"):
+        times = pd.Series(pd.date_range(start, periods=48 * 4, freq="30min", tz="UTC"))
+        got = _settlement_period_col(times).tolist()
+        assert got == [utc_to_settlement(t.to_pydatetime())[1] for t in times]
+
+    day = pd.Series(pd.date_range("2026-10-24T23:00:00Z", periods=50, freq="30min"))
+    assert _settlement_period_col(day).tolist() == list(range(1, 51))                         # SP1..SP50, none repeated
+    assert _settlement_period_col(pd.Series([pd.Timestamp("2026-10-26T00:00:00Z")])).tolist() == [1]
+    assert [periods_in_day(d) for d in (pd.Timestamp("2026-10-24").date(), pd.Timestamp("2026-10-25").date(), pd.Timestamp("2027-03-28").date())] == [48, 50, 46]
+
+
+def test_hourly_flows_fan_out_to_all_fifty_periods_on_the_long_day():
+    import pandas as pd
+    from citadel.engine.fundies import broadcast_hourly_to_half_hourly
+
+    hourly = pd.DataFrame({"settlementPeriod": list(range(1, 51, 2)), "x": range(25)})
+    out = broadcast_hourly_to_half_hourly(hourly)
+    assert sorted(out["settlementPeriod"]) == list(range(1, 51))
+
+
+def test_epex_hours_map_to_all_fifty_periods_on_the_long_day(monkeypatch):
+    import asyncio
+    from datetime import date
+    from citadel.engine import fpn_runner  # noqa: F401  (imports the engine package the same way the app does)
+    from citadel.engine import fundies_runner
+
+    stored = []
+
+    async def upsert(pool, table, columns, rows):
+        stored.extend(rows)
+
+    monkeypatch.setattr(fundies_runner.db, "upsert_fundies_cache", upsert)
+    runner = object.__new__(fundies_runner.FundiesRunner)
+    runner.pool = object()
+
+    def run(day, labels):
+        stored.clear()
+        monkeypatch.setattr(fundies_runner.epex, "parse_auction_data",
+                            lambda html: {"hourly_data": [{"hour_range": lab, "price": 50.0 + i, "volume": 1.0} for i, lab in enumerate(labels)]})
+        asyncio.run(runner._store_epex_auction("<html>", day))
+        return sorted(r["settlement_period"] for r in stored)
+
+    long_day = [f"{h:02d}:00-{h + 1:02d}:00" for h in range(25)]            # a label that repeats / runs past 24 is not trusted
+    long_day[2] = long_day[3] = "02B:00-03:00"                                # odd labels must not break it
+    assert run(date(2026, 10, 25), long_day) == list(range(1, 51))
+    normal = [f"{h:02d}:00-{(h + 1) % 24:02d}:00" for h in range(24)]
+    assert run(date(2026, 10, 24), normal) == list(range(1, 49))

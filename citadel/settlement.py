@@ -21,6 +21,11 @@ def _local_midnight_utc(d: date) -> datetime:
     return datetime(d.year, d.month, d.day, 0, 0, tzinfo=LONDON).astimezone(UTC)
 
 
+def periods_in_day(d: date) -> int:
+    """48, or 46 / 50 on the days the clocks go forward / back."""
+    return int((_local_midnight_utc(d + timedelta(days=1)) - _local_midnight_utc(d)).total_seconds() // (PERIOD_MINUTES * 60))
+
+
 def sp_start_utc(d: date, sp: int) -> datetime:
     if sp < 1:
         raise ValueError(f"settlement period must be >= 1, got {sp}")

@@ -37,7 +37,7 @@ import pandas as pd
 from ..config import Settings
 from ..ingest import elexon_rest, entsoe_flows, epex, neso, pvlive, semo
 from ..ingest.natgrid_store import normalise_disbsad
-from ..settlement import current_period, rolling_window
+from ..settlement import current_period, periods_in_day, rolling_window
 from ..storage import db
 from . import fundies as fundies_engine
 from .fpn import fuel_type_reference
@@ -375,8 +375,11 @@ class FundiesRunner:
     async def _store_epex_auction(self, html: str, delivery_date: date) -> None:
         parsed = epex.parse_auction_data(html)
         cache_rows = []
-        for row in parsed["hourly_data"]:
-            hour = int(row["hour_range"].split("-")[0].split(":")[0])
+        hourly = parsed["hourly_data"]
+        dst_day = periods_in_day(delivery_date) != 48 and len(hourly) * 2 == periods_in_day(delivery_date)
+        for i, row in enumerate(hourly):
+            # 23- and 25-hour days: the i-th hour starts at SP 2i+1 (the label repeats or skips an hour); otherwise the label says which hour.
+            hour = i if dst_day else int(row["hour_range"].split("-")[0].split(":")[0])
             sp = hour * 2 + 1
             for offset in (0, 1):
                 cache_rows.append({

@@ -6,12 +6,22 @@
 // precedent (the real app never built this as its own page); reuses this
 // project's own established Chart.js `.graph-container` pattern.
 
-const SP_LABELS = Array.from({ length: 48 }, (_, i) => {
-  const totalMinutes = i * 30;
-  const hh = String(Math.floor(totalMinutes / 60)).padStart(2, "0");
-  const mm = totalMinutes % 60 === 0 ? "00" : "30";
-  return `${hh}:${mm}`;
-});
+// 48 points on a normal day, 50 on the day the clocks go back (SP5 onward is an hour later on the wall clock than it looks).
+function spLabels(n) {
+  return Array.from({ length: n }, (_, i) => {
+    const totalMinutes = (i - (n === 50 && i + 1 >= 5 ? 2 : 0)) * 30;
+    const hh = String(Math.floor(totalMinutes / 60)).padStart(2, "0");
+    const mm = totalMinutes % 60 === 0 ? "00" : "30";
+    return `${hh}:${mm}`;
+  });
+}
+let SP_COUNT = 48;
+const SP_LABELS = spLabels(48);
+
+function setSpCount(...rowSets) {
+  const maxSp = Math.max(0, ...rowSets.flat().map((r) => r.settlement_period));
+  SP_COUNT = maxSp > 48 ? 50 : 48;
+}
 
 const CHARTS = [
   { canvas: "ic-eleclink", scheduledSource: "entsoe", scheduledKey: "eleclink_net", realKey: "real_eleclink_net" },
@@ -72,7 +82,7 @@ function makeLineChart(canvasId, tickFontSize = 10) {
 
 function seriesFromRows(rows, key) {
   const byPeriod = new Map(rows.map((r) => [r.settlement_period, r]));
-  return Array.from({ length: 48 }, (_, i) => {
+  return Array.from({ length: SP_COUNT }, (_, i) => {
     const row = byPeriod.get(i + 1);
     const v = row ? row[key] : null;
     return v === null || v === undefined ? null : Number(v);
@@ -90,7 +100,7 @@ const aggregateChart = makeLineChart("ic-aggregate");
 const REAL_SUM_KEYS = [...CHARTS.map((c) => c.realKey), "ng_vol"];
 function realAggregateSeries(realRows) {
   const byPeriod = new Map(realRows.map((r) => [r.settlement_period, r]));
-  return Array.from({ length: 48 }, (_, i) => {
+  return Array.from({ length: SP_COUNT }, (_, i) => {
     const row = byPeriod.get(i + 1);
     if (!row) return null;
     let sum = 0;
@@ -111,6 +121,9 @@ async function loadAll() {
   const da = (await daResp.json()).rows || [];
   const bySource = { entsoe: data.entsoe || [], semo: data.semo || [] };
   const real = data.real || [];
+  setSpCount(bySource.entsoe, bySource.semo, da, real);
+  charts.forEach(({ chart }) => { chart.data.labels = spLabels(SP_COUNT); });
+  aggregateChart.data.labels = spLabels(SP_COUNT);
   charts.forEach(({ chart, scheduledSource, scheduledKey, realKey }) => {
     chart.data.datasets[0].data = seriesFromRows(bySource[scheduledSource], scheduledKey);
     chart.data.datasets[1].data = seriesFromRows(real, realKey);

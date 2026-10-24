@@ -237,11 +237,46 @@ const LONDON_PARTS = new Intl.DateTimeFormat("en-GB", {
   timeZone: "Europe/London", hour: "2-digit", minute: "2-digit", hourCycle: "h23",
 });
 
-// SP number + HH:MM in London time (the market's clock) for one instant.
+// London time and settlement periods. A settlement day starts at London midnight and has 48 half-hour periods -- 46 the day
+// the clocks go forward and 50 the day they go back -- so a period number is "half-hours since London midnight + 1", never
+// the wall-clock reading (after the clocks go back the wall clock repeats 01:00-02:00).
+const LONDON_FULL = new Intl.DateTimeFormat("en-GB", {
+  timeZone: "Europe/London", hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit",
+  hour: "2-digit", minute: "2-digit", second: "2-digit",
+});
+function londonParts(ms) {
+  return Object.fromEntries(LONDON_FULL.formatToParts(new Date(ms)).map((x) => [x.type, x.value]));
+}
+function londonOffsetMs(ms) {
+  const p = londonParts(ms);
+  return Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute, +p.second) - Math.floor(ms / 1000) * 1000;
+}
+function londonMidnightMs(iso) {                 // the instant a settlement day (YYYY-MM-DD) starts
+  const [y, m, d] = iso.split("-").map(Number);
+  const guess = Date.UTC(y, m - 1, d);
+  return guess - londonOffsetMs(guess - 3600000);   // the offset in force an hour before that midnight's UTC date began
+}
+function addDaysIsoUtc(iso, n) {
+  const t = new Date(`${iso}T00:00:00Z`);
+  t.setUTCDate(t.getUTCDate() + n);
+  return t.toISOString().slice(0, 10);
+}
+function periodsInDay(iso) {
+  return Math.round((londonMidnightMs(addDaysIsoUtc(iso, 1)) - londonMidnightMs(iso)) / 1800000);
+}
+function spStartClock(iso, sp) {                 // "HH:MM" London time at which period `sp` of settlement day `iso` starts
+  const p = londonParts(londonMidnightMs(iso) + (sp - 1) * 1800000);
+  return `${p.hour}:${p.minute}`;
+}
+
+// SP number + HH:MM in London time (the market's clock) for one instant. `mins` is the wall-clock minute of the day, which
+// is only used to find period boundaries; the period number counts from the start of the settlement day.
 function londonSp(t) {
-  const parts = Object.fromEntries(LONDON_PARTS.formatToParts(new Date(t)).map((p) => [p.type, p.value]));
+  const ms = new Date(t).getTime();
+  const parts = londonParts(ms);
+  const date = `${parts.year}-${parts.month}-${parts.day}`;
   const mins = Number(parts.hour) * 60 + Number(parts.minute);
-  return { sp: Math.floor(mins / 30) + 1, mins, clock: `${parts.hour}:${parts.minute}` };
+  return { sp: Math.floor((ms - londonMidnightMs(date)) / 1800000) + 1, mins, clock: `${parts.hour}:${parts.minute}` };
 }
 
 function makeMarketGenChart(canvasId) {

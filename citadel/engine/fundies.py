@@ -43,7 +43,7 @@ from .fpn import fuel_type_reference  # noqa: F401  (re-exported for callers tha
 # half-hour periods of the hour. NOT a DST handler (that's `utc_to_settlement`
 # below, via real zoneinfo) -- purely an hourly -> half-hourly fan-out.
 _HOUR_TO_SP_PAIRS = pd.DataFrame(
-    [(odd, new) for odd in range(1, 49, 2) for new in (odd, odd + 1)],
+    [(odd, new) for odd in range(1, 51, 2) for new in (odd, odd + 1)],      # up to SP50, the 50-period day
     columns=["settlementPeriod", "_broadcastSp"],
 )
 

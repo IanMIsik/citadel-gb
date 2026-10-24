@@ -53,14 +53,43 @@ const PERIODS_AFTER_LIVE = 2;
 
 if (window.ChartDataLabels) Chart.register(window.ChartDataLabels);
 
-// One absolute, ever-increasing period index per (date, sp) pair, treating
-// every calendar day as exactly 48 periods -- wrong on the two real
-// DST-transition days a year (46/50 periods), rendered the same
-// simplified way fundies.js's own SETTLEMENT_PERIODS comment already
-// accepts for this app; good enough for "how many periods apart" maths.
+// London time and settlement periods. A settlement day starts at London midnight and has 48 half-hour periods -- 46 the day
+// the clocks go forward and 50 the day they go back -- so a period number is "half-hours since London midnight + 1", never
+// the wall-clock reading (after the clocks go back the wall clock repeats 01:00-02:00).
+const LONDON_FULL = new Intl.DateTimeFormat("en-GB", {
+  timeZone: "Europe/London", hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit",
+  hour: "2-digit", minute: "2-digit", second: "2-digit",
+});
+function londonParts(ms) {
+  return Object.fromEntries(LONDON_FULL.formatToParts(new Date(ms)).map((x) => [x.type, x.value]));
+}
+function londonOffsetMs(ms) {
+  const p = londonParts(ms);
+  return Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute, +p.second) - Math.floor(ms / 1000) * 1000;
+}
+function londonMidnightMs(iso) {                 // the instant a settlement day (YYYY-MM-DD) starts
+  const [y, m, d] = iso.split("-").map(Number);
+  const guess = Date.UTC(y, m - 1, d);
+  return guess - londonOffsetMs(guess - 3600000);   // the offset in force an hour before that midnight's UTC date began
+}
+function addDaysIsoUtc(iso, n) {
+  const t = new Date(`${iso}T00:00:00Z`);
+  t.setUTCDate(t.getUTCDate() + n);
+  return t.toISOString().slice(0, 10);
+}
+function periodsInDay(iso) {
+  return Math.round((londonMidnightMs(addDaysIsoUtc(iso, 1)) - londonMidnightMs(iso)) / 1800000);
+}
+function spStartClock(iso, sp) {                 // "HH:MM" London time at which period `sp` of settlement day `iso` starts
+  const p = londonParts(londonMidnightMs(iso) + (sp - 1) * 1800000);
+  return `${p.hour}:${p.minute}`;
+}
+
+// One absolute, ever-increasing period index per (date, sp) pair: half-hours since the epoch at the start of that
+// period, so it stays exact on the 46- and 50-period days the clocks change.
 function periodIndex(dateIso, sp) {
-  const days = Math.floor(new Date(`${dateIso}T00:00:00Z`).getTime() / 86400000);
-  return days * 48 + (sp - 1);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(dateIso))) return NaN;      // not a plain date: no index (comparisons with it are false, as before)
+  return Math.round(londonMidnightMs(dateIso) / 1800000) + (sp - 1);
 }
 
 let liveSd = null;
@@ -187,7 +216,8 @@ const LONDON_FMT = new Intl.DateTimeFormat("en-GB", {
 function londonSp(ms) {
   const p = Object.fromEntries(LONDON_FMT.formatToParts(new Date(ms)).map((x) => [x.type, x.value]));
   const hh = Number(p.hour) % 24, mm = Number(p.minute);
-  return { date: `${p.year}-${p.month}-${p.day}`, sp: hh * 2 + Math.floor(mm / 30) + 1, clock: `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}` };
+  const date = `${p.year}-${p.month}-${p.day}`;
+  return { date, sp: Math.floor((ms - londonMidnightMs(date)) / 1800000) + 1, clock: `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}` };
 }
 
 // Makes every settlement period unmistakable: alternating shaded bands, a firm line at each

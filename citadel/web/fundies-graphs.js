@@ -3,12 +3,22 @@
 // only had the fundies TABLE); built in this project's own established
 // Chart.js `.graph-container` style instead (see fpn.js's makeChart()).
 
-const SP_LABELS = Array.from({ length: 48 }, (_, i) => {
-  const totalMinutes = i * 30;
-  const hh = String(Math.floor(totalMinutes / 60)).padStart(2, "0");
-  const mm = totalMinutes % 60 === 0 ? "00" : "30";
-  return `${hh}:${mm}`;
-});
+// 48 points on a normal day, 50 on the day the clocks go back (SP5 onward is an hour later on the wall clock than it looks).
+function spLabels(n) {
+  return Array.from({ length: n }, (_, i) => {
+    const totalMinutes = (i - (n === 50 && i + 1 >= 5 ? 2 : 0)) * 30;
+    const hh = String(Math.floor(totalMinutes / 60)).padStart(2, "0");
+    const mm = totalMinutes % 60 === 0 ? "00" : "30";
+    return `${hh}:${mm}`;
+  });
+}
+let SP_COUNT = 48;
+const SP_LABELS = spLabels(48);
+
+function setSpCount(...rowSets) {
+  const maxSp = Math.max(0, ...rowSets.flat().map((r) => r.settlement_period));
+  SP_COUNT = maxSp > 48 ? 50 : 48;
+}
 
 function makeLineChart(canvasId, series) {
   const ctx = document.getElementById(canvasId);
@@ -41,7 +51,7 @@ function makeLineChart(canvasId, series) {
 
 function seriesFromRows(rows, key) {
   const byPeriod = new Map(rows.map((r) => [r.settlement_period, r]));
-  return Array.from({ length: 48 }, (_, i) => {
+  return Array.from({ length: SP_COUNT }, (_, i) => {
     const row = byPeriod.get(i + 1);
     const v = row ? row[key] : null;
     return v === null || v === undefined ? null : Number(v);
@@ -101,6 +111,8 @@ async function loadAll() {
   const rt = (await rtResp.json()).rows || [];
   const da = (await daResp.json()).rows || [];
 
+  setSpCount(rt, da);
+  [demandChart, windChart, solarChart].forEach((c) => { c.data.labels = spLabels(SP_COUNT); });
   demandChart.data.datasets[0].data = seriesFromRows(rt, "latest_ndf");
   demandChart.data.datasets[1].data = seriesFromRows(da, "da_ndf");
   demandChart.data.datasets[2].data = seriesFromRows(rt, "indo");

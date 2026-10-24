@@ -94,11 +94,15 @@ def custom_round(x: float, base: int = 5) -> int:
 
 def _settlement_period_col(spot_time_utc: pd.Series) -> pd.Series:
     """Settlement period (1-based, 30-minute) for a UTC-aware instant --
-    derived via proper Europe/London conversion so this is correct across
-    the BST transition, unlike a fixed offset.
+    counted from the start of its settlement day (London midnight), so the
+    46- and 50-period days the clocks change are numbered correctly. Reading
+    the wall clock instead (hour * 2 + ...) repeats SP3-SP4 when the clocks go
+    back and mis-numbers every later period of that day by two.
     """
-    local = spot_time_utc.dt.tz_convert(LONDON)
-    return local.dt.hour * 2 + (local.dt.minute // 30) + 1
+    utc = spot_time_utc.dt.tz_convert("UTC")
+    day_start = spot_time_utc.dt.tz_convert(LONDON).dt.normalize().dt.tz_convert("UTC")
+    minutes = ((utc - day_start).dt.total_seconds() // 60).astype("int64")
+    return minutes // 30 + 1
 
 
 def vectorized_exploder(df: pd.DataFrame) -> pd.DataFrame:

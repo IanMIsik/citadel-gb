@@ -5,7 +5,39 @@
 // rare 46/50-period DST-transition days are rendered the same simplified
 // way the real reference app table always did -- SP 1-48 fixed).
 
-const SETTLEMENT_PERIODS = Array.from({ length: 48 }, (_, i) => i + 1);
+// London time and settlement periods. A settlement day starts at London midnight and has 48 half-hour periods -- 46 the day
+// the clocks go forward and 50 the day they go back -- so a period number is "half-hours since London midnight + 1", never
+// the wall-clock reading (after the clocks go back the wall clock repeats 01:00-02:00).
+const LONDON_FULL = new Intl.DateTimeFormat("en-GB", {
+  timeZone: "Europe/London", hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit",
+  hour: "2-digit", minute: "2-digit", second: "2-digit",
+});
+function londonParts(ms) {
+  return Object.fromEntries(LONDON_FULL.formatToParts(new Date(ms)).map((x) => [x.type, x.value]));
+}
+function londonOffsetMs(ms) {
+  const p = londonParts(ms);
+  return Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute, +p.second) - Math.floor(ms / 1000) * 1000;
+}
+function londonMidnightMs(iso) {                 // the instant a settlement day (YYYY-MM-DD) starts
+  const [y, m, d] = iso.split("-").map(Number);
+  const guess = Date.UTC(y, m - 1, d);
+  return guess - londonOffsetMs(guess - 3600000);   // the offset in force an hour before that midnight's UTC date began
+}
+function addDaysIsoUtc(iso, n) {
+  const t = new Date(`${iso}T00:00:00Z`);
+  t.setUTCDate(t.getUTCDate() + n);
+  return t.toISOString().slice(0, 10);
+}
+function periodsInDay(iso) {
+  return Math.round((londonMidnightMs(addDaysIsoUtc(iso, 1)) - londonMidnightMs(iso)) / 1800000);
+}
+function spStartClock(iso, sp) {                 // "HH:MM" London time at which period `sp` of settlement day `iso` starts
+  const p = londonParts(londonMidnightMs(iso) + (sp - 1) * 1800000);
+  return `${p.hour}:${p.minute}`;
+}
+
+let SETTLEMENT_PERIODS = Array.from({ length: 48 }, (_, i) => i + 1);     // reset for the selected day by loadAll()
 
 function todayIso() {
   const d = new Date();
@@ -240,12 +272,7 @@ function renderDateHeader(rowId) {
         ${opt(tomorrow)}
       </select>
     </th>` +
-    SETTLEMENT_PERIODS.map((sp) => {
-      const totalMinutes = (sp - 1) * 30;
-      const hh = String(Math.floor(totalMinutes / 60)).padStart(2, "0");
-      const mm = totalMinutes % 60 === 0 ? "00" : "30";
-      return `<th class="fundies-hour">${hh}:${mm}</th>`;
-    }).join("");
+    SETTLEMENT_PERIODS.map((sp) => `<th class="fundies-hour">${spStartClock(selectedDate, sp)}</th>`).join("");
   document.getElementById("fundies-date-select").addEventListener("change", (e) => {
     selectedDate = e.target.value;
     loadAll();
@@ -331,15 +358,10 @@ function londonNowParts() {
   return { date: `${p.year}-${p.month}-${p.day}`, minutes: (Number(p.hour) % 24) * 60 + Number(p.minute) };
 }
 
-function spClock(sp) {
-  const m = (sp - 1) * 30;
-  return `${String(Math.floor(m / 60)).padStart(2, "0")}:${m % 60 === 0 ? "00" : "30"}`;
-}
-
 function showLolpToast(items) {
   if (typeof playTripAlarm === "function") playTripAlarm();
   const lines = items.map((i) =>
-    `<div class="trip-toast-body">${i.date === londonNowParts().date ? "Today" : i.date} SP${i.sp} (${spClock(i.sp)}) &middot; LOLP ${fmtLolp(i.lolp)}` +
+    `<div class="trip-toast-body">${i.date === londonNowParts().date ? "Today" : i.date} SP${i.sp} (${spStartClock(i.date, i.sp)}) &middot; LOLP ${fmtLolp(i.lolp)}` +
     (i.margin == null ? "" : ` &middot; derated margin ${(i.margin / 1000).toFixed(1)} GW`) + `</div>`).join("");
   const el = document.createElement("div");
   el.className = "trip-toast";
@@ -361,7 +383,7 @@ async function checkLolpAlerts() {
       const rows = (await (await fetch(`/api/fundies/real-time?settlement_date=${date}`)).json()).rows || [];
       rows.forEach((r) => {
         if (!(Number(r.lolp) > 0)) return;
-        if (date === today && r.settlement_period * 30 <= now.minutes) return;     // period already over
+        if (londonMidnightMs(date) + r.settlement_period * 1800000 <= Date.now()) return;     // period already over
         const key = `${date}:${r.settlement_period}`;
         const before = lolpAnnounced.get(key);
         if (before !== undefined && Number(r.lolp) < before * LOLP_REALERT_FACTOR) return;
@@ -376,6 +398,7 @@ async function checkLolpAlerts() {
 }
 
 async function loadAll() {
+  SETTLEMENT_PERIODS = Array.from({ length: periodsInDay(selectedDate) }, (_, i) => i + 1);
   renderDateHeader("fundies-date-header");
   renderSpHeader("fundies-sp-header");
   const [rtResp, daResp] = await Promise.all([
